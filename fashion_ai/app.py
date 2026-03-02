@@ -1343,6 +1343,16 @@ class HybridRecommendationEngine:
 # Initialize engine
 engine = HybridRecommendationEngine()
 
+# Lazy database connection for local profile storage
+_db_users = None
+
+def get_users_collection():
+    global _db_users
+    if _db_users is None:
+        from database import users as users_col
+        _db_users = users_col
+    return _db_users
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -1649,6 +1659,72 @@ async def simulate_user(user_id: int):
     return generator.generate_user(user_id)
 
 # ============================================================================
+# LOCAL FRONTEND INTEGRATION ENDPOINTS
+# ============================================================================
+
+@app.post("/api/save-profile")
+async def save_profile(payload: Dict[str, Any]):
+    """Save user profile from the frontend ProfileWizard"""
+    try:
+        email = payload.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+
+        # Upsert user by email
+        get_users_collection().update_one(
+            {"email": email},
+            {"$set": {
+                "email": email,
+                "name": payload.get("name", ""),
+                "gender": payload.get("gender", ""),
+                "age": payload.get("age", 0),
+                "location": payload.get("location", ""),
+                "body_measurements": payload.get("body_measurements", {}),
+                "style_profile": payload.get("style_profile", {}),
+                "updated_at": datetime.now().isoformat()
+            }},
+            upsert=True
+        )
+        print(f"✅ Profile saved for {email}")
+        return {"status": "success", "email": email}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error saving profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/recommendations/{email}")
+async def get_recommendations_by_email(
+    email: str,
+    limit: int = Query(10, ge=1, le=50)
+):
+    """Get recommendations by email - used by the frontend"""
+    try:
+        # Look up user in MongoDB
+        user = get_users_collection().find_one({"email": email})
+        user_id = user.get("user_id", hash(email) % 100000) if user else hash(email) % 100000
+
+        # Get recommendations from the engine
+        result = engine.recommend(user_id=user_id, context={}, top_k=limit)
+
+        # Return in the shape the frontend expects: { recommendations: [...] }
+        recommendations = []
+        for item in result.items:
+            item_dict = item.model_dump()
+            # Map fields the frontend expects
+            item_dict["catalog_item_id"] = item_dict.get("id")
+            item_dict["final_score"] = item_dict.get("score", 0.5)
+            item_dict["catalog_3d_assets"] = []
+            recommendations.append(item_dict)
+
+        return {"recommendations": recommendations}
+    except Exception as e:
+        print(f"❌ Error getting recommendations for {email}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # RUN CONFIGURATION
 # ============================================================================
 if __name__ == "__main__":
@@ -1656,4 +1732,4 @@ if __name__ == "__main__":
     print("🚀 Starting HueIQ Advanced Hybrid Recommendation Engine v3.0")
     print(f"📡 Boss API: {config.BOSS_API_URL}")
     print(f"🔑 Token: {config.BOSS_TOKEN[:20]}...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=8002, reload=True)

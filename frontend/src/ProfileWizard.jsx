@@ -97,7 +97,7 @@ export default function ProfileWizard() {
 
     try {
       const res = await fetch(
-        "https://hueiq-main-site-1.purplesand-63becfba.westus2.azurecontainerapps.io/test-integration/save-profile",
+        "/test-integration/save-profile",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

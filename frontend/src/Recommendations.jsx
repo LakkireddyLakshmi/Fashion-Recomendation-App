@@ -176,7 +176,7 @@ const Recommendations = () => {
       try {
         setLoading(true);
         const response = await axios.get(
-          `https://hueiq-main-site-1.purplesand-63becfba.westus2.azurecontainerapps.io/test-integration/recommendations/${encodeURIComponent(email)}`,
+          `/test-integration/recommendations/${encodeURIComponent(email)}`,
           { params: { limit: 50 } },
         );
 
