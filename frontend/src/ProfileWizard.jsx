@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Recommendations from "./recommendations";
 // ─── Constants ────────────────────────────────────────────────────────────────
-const API_BASE = "http://127.0.0.1:8002";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8002";
 
 const COLORS = [
   "black",
@@ -49,213 +49,245 @@ const SHOE_SIZES = ["5", "6", "7", "8", "9", "10", "11", "12"];
 
 // ─── Styles (injected once) ────────────────────────────────────────────────────
 const STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --ink: #0e0e0e;
-    --paper: #f5f0ea;
-    --gold: #c9a84c;
-    --gold-light: #e8d49a;
-    --muted: #7a7168;
-    --border: rgba(14,14,14,0.12);
-    --card-bg: #fdfaf6;
-    --error: #c0392b;
-    --success: #2d6a4f;
-    --step-size: 36px;
+    --deep: #1A003F;
+    --deep-alt: #0a0014;
+    --pink: #FAB7FB;
+    --pink-dim: rgba(250,183,251,0.6);
+    --pink-glow: rgba(250,183,251,0.15);
+    --purple: #9b59b6;
+    --cyan: #00d4ff;
+    --gold: #f0c040;
+    --glass: rgba(255,255,255,0.06);
+    --glass-border: rgba(255,255,255,0.1);
+    --glass-hover: rgba(255,255,255,0.1);
+    --text: #ffffff;
+    --text-dim: rgba(255,255,255,0.55);
+    --text-muted: rgba(255,255,255,0.35);
+    --error: #ff6b6b;
+    --success: #51cf66;
+    --input-bg: rgba(255,255,255,0.07);
+    --input-border: rgba(255,255,255,0.12);
+    --step-size: 40px;
   }
 
-  body { background: var(--paper); }
-
-  .fw-root {
-    min-height: 100vh;
-    background: var(--paper);
-    font-family: 'DM Sans', sans-serif;
-    color: var(--ink);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 0 16px 60px;
-    position: relative;
+  body {
+    background: var(--deep-alt);
     overflow-x: hidden;
   }
 
-  /* Grain overlay */
-  .fw-root::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-    pointer-events: none;
-    z-index: 0;
-    opacity: 0.4;
+  /* ─── Root ─── */
+  .fw-root {
+    min-height: 100vh;
+    font-family: 'Inter', sans-serif;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 20px 80px;
+    position: relative;
+    overflow: hidden;
+    background: var(--deep-alt);
   }
 
-  /* Header */
+  /* Animated gradient background */
+  .fw-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .fw-bg-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.5;
+    animation: fw-float 20s ease-in-out infinite alternate;
+  }
+  .fw-bg-blob:nth-child(1) {
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, #ff00aa 0%, transparent 70%);
+    top: -15%; left: -10%;
+    animation-duration: 18s;
+  }
+  .fw-bg-blob:nth-child(2) {
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, #7b2ff7 0%, transparent 70%);
+    top: 20%; right: -15%;
+    animation-duration: 22s;
+    animation-delay: -5s;
+  }
+  .fw-bg-blob:nth-child(3) {
+    width: 450px; height: 450px;
+    background: radial-gradient(circle, #00d4ff 0%, transparent 70%);
+    bottom: -10%; left: 20%;
+    animation-duration: 25s;
+    animation-delay: -10s;
+  }
+  .fw-bg-blob:nth-child(4) {
+    width: 350px; height: 350px;
+    background: radial-gradient(circle, #f0c040 0%, transparent 70%);
+    bottom: 5%; left: -5%;
+    animation-duration: 20s;
+    animation-delay: -15s;
+    opacity: 0.3;
+  }
+  @keyframes fw-float {
+    0% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(30px, -20px) scale(1.05); }
+    66% { transform: translate(-20px, 15px) scale(0.95); }
+    100% { transform: translate(10px, -10px) scale(1.02); }
+  }
+
+  /* ─── Header ─── */
   .fw-header {
     width: 100%;
-    max-width: 720px;
-    padding: 48px 0 32px;
+    max-width: 800px;
+    padding: 50px 0 24px;
     text-align: center;
     position: relative;
     z-index: 1;
   }
-  .fw-brand {
-    font-family: 'Cormorant Garamond', serif;
-    font-size: clamp(11px, 1.4vw, 13px);
-    font-weight: 400;
-    letter-spacing: 0.35em;
-    text-transform: uppercase;
-    color: var(--gold);
-    margin-bottom: 8px;
+  .fw-welcome {
+    font-family: 'Inter', sans-serif;
+    font-size: clamp(16px, 2.5vw, 20px);
+    font-weight: 300;
+    color: var(--text-dim);
+    margin-bottom: 4px;
   }
   .fw-title {
-    font-family: 'Cormorant Garamond', serif;
-    font-size: clamp(38px, 6vw, 58px);
-    font-weight: 300;
-    line-height: 1.05;
-    letter-spacing: -0.02em;
-    color: var(--ink);
-  }
-  .fw-title em {
-    font-style: italic;
-    font-weight: 400;
-    color: var(--gold);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(42px, 7vw, 72px);
+    font-weight: 700;
+    line-height: 1.0;
+    letter-spacing: -0.03em;
+    background: linear-gradient(135deg, #ffffff 0%, var(--pink) 50%, var(--cyan) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
-  /* Progress stepper */
+  /* ─── Tab Stepper ─── */
   .fw-stepper {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0;
-    margin: 32px 0 0;
+    gap: 4px;
+    margin: 32px auto 0;
     position: relative;
     z-index: 1;
-    width: 100%;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 60px;
+    padding: 5px;
+    backdrop-filter: blur(20px);
     max-width: 600px;
+    width: 100%;
   }
-  .fw-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
+  .fw-step-tab {
     flex: 1;
-    position: relative;
-  }
-  .fw-step:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    top: calc(var(--step-size) / 2);
-    left: calc(50% + var(--step-size) / 2);
-    width: calc(100% - var(--step-size));
-    height: 1px;
-    background: var(--border);
-    transition: background 0.5s ease;
-  }
-  .fw-step.done:not(:last-child)::after,
-  .fw-step.active:not(:last-child)::after {
-    background: var(--gold);
-  }
-  .fw-step-circle {
-    width: var(--step-size);
-    height: var(--step-size);
-    border-radius: 50%;
-    border: 1.5px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: 'Cormorant Garamond', serif;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--muted);
-    background: var(--card-bg);
-    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-    position: relative;
-    z-index: 2;
-  }
-  .fw-step.active .fw-step-circle {
-    border-color: var(--gold);
-    background: var(--ink);
-    color: var(--gold);
-    transform: scale(1.1);
-    box-shadow: 0 0 0 4px rgba(201,168,76,0.15);
-  }
-  .fw-step.done .fw-step-circle {
-    border-color: var(--gold);
-    background: var(--gold);
-    color: var(--ink);
-  }
-  .fw-step-label {
-    font-size: 11px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    color: var(--muted);
-    text-transform: uppercase;
+    gap: 8px;
+    padding: 12px 16px;
+    border-radius: 50px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
     white-space: nowrap;
-    transition: color 0.3s;
+    outline: none;
   }
-  .fw-step.active .fw-step-label { color: var(--ink); }
-  .fw-step.done .fw-step-label { color: var(--gold); }
+  .fw-step-tab:hover {
+    color: var(--text-dim);
+    background: rgba(255,255,255,0.04);
+  }
+  .fw-step-tab.active {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  }
+  .fw-step-tab.done {
+    color: var(--pink-dim);
+  }
+  .fw-step-tab .tab-icon {
+    font-size: 15px;
+    line-height: 1;
+  }
+  @media (max-width: 500px) {
+    .fw-step-tab span.tab-text { display: none; }
+    .fw-step-tab { padding: 12px; }
+  }
 
-  /* Main card */
+  /* ─── Main Card (Glassmorphism) ─── */
   .fw-card {
     width: 100%;
-    max-width: 720px;
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: clamp(28px, 5vw, 52px) clamp(24px, 6vw, 60px);
-    margin-top: 32px;
+    max-width: 800px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    padding: clamp(28px, 5vw, 48px) clamp(24px, 6vw, 52px);
+    margin-top: 28px;
     position: relative;
     z-index: 1;
-    box-shadow: 0 2px 40px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.04);
+    backdrop-filter: blur(40px);
+    box-shadow: 0 8px 60px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06);
     overflow: hidden;
-  }
-  .fw-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--gold), var(--gold-light), var(--gold));
   }
 
   /* Step content transitions */
   .fw-step-content {
-    animation: fw-slide-in 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+    animation: fw-slide-in 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
   }
   @keyframes fw-slide-in {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(16px); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
   .fw-step-heading {
-    font-family: 'Cormorant Garamond', serif;
-    font-size: clamp(24px, 4vw, 34px);
-    font-weight: 300;
-    letter-spacing: -0.01em;
-    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(26px, 4vw, 36px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #fff;
     margin-bottom: 6px;
   }
-  .fw-step-heading em { font-style: italic; color: var(--gold); }
+  .fw-step-heading em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--pink), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
   .fw-step-sub {
-    font-size: 13px;
-    color: var(--muted);
+    font-size: 14px;
+    color: var(--text-dim);
     margin-bottom: 32px;
     line-height: 1.6;
   }
 
   /* Divider */
   .fw-divider {
-    width: 40px;
-    height: 1px;
-    background: var(--gold);
+    width: 50px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--pink), var(--cyan));
     margin: 16px 0 28px;
-    opacity: 0.6;
+    border-radius: 2px;
+    opacity: 0.7;
   }
 
-  /* Form grid */
+  /* ─── Form grid ─── */
   .fw-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -268,98 +300,115 @@ const STYLES = `
   }
   .fw-field-full { grid-column: 1 / -1; }
 
-  /* Field */
+  /* ─── Field ─── */
   .fw-field { display: flex; flex-direction: column; gap: 6px; }
   .fw-label {
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--muted);
+    color: var(--text-dim);
   }
-  .fw-label span { color: var(--error); margin-left: 2px; }
+  .fw-label span { color: var(--pink); margin-left: 2px; }
 
   .fw-input, .fw-select, .fw-textarea {
     width: 100%;
-    padding: 11px 14px;
-    font-family: 'DM Sans', sans-serif;
+    padding: 14px 18px;
+    font-family: 'Inter', sans-serif;
     font-size: 14px;
     font-weight: 400;
-    color: var(--ink);
-    background: white;
-    border: 1px solid var(--border);
-    border-radius: 3px;
+    color: #fff;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 50px;
     outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: all 0.25s ease;
     appearance: none;
   }
-  .fw-input:focus, .fw-select:focus, .fw-textarea:focus {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 3px rgba(201,168,76,0.12);
+  .fw-textarea {
+    border-radius: 16px;
+    resize: vertical;
+    min-height: 80px;
+    line-height: 1.5;
   }
-  .fw-input::placeholder { color: #bbb; }
-  .fw-textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+  .fw-input:focus, .fw-select:focus, .fw-textarea:focus {
+    border-color: var(--pink);
+    box-shadow: 0 0 0 3px var(--pink-glow), 0 0 20px var(--pink-glow);
+    background: rgba(255,255,255,0.1);
+  }
+  .fw-input::placeholder, .fw-textarea::placeholder { color: var(--text-muted); }
   .fw-select-wrap {
     position: relative;
   }
   .fw-select-wrap::after {
     content: '▾';
     position: absolute;
-    right: 14px;
+    right: 18px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--muted);
+    color: var(--text-muted);
     pointer-events: none;
     font-size: 12px;
   }
+  .fw-select option {
+    background: #1a003f;
+    color: #fff;
+  }
 
-  /* Chip selectors */
+  /* ─── Chip selectors ─── */
   .fw-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
   }
   .fw-chip {
-    padding: 7px 16px;
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    font-size: 12.5px;
+    padding: 9px 18px;
+    border: 1px solid var(--glass-border);
+    border-radius: 50px;
+    font-size: 13px;
     font-weight: 400;
-    color: var(--muted);
-    background: white;
+    color: var(--text-dim);
+    background: var(--glass);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.25s;
     user-select: none;
     letter-spacing: 0.02em;
+    backdrop-filter: blur(10px);
   }
-  .fw-chip:hover { border-color: var(--gold); color: var(--ink); }
+  .fw-chip:hover {
+    border-color: var(--pink);
+    color: #fff;
+    background: rgba(250,183,251,0.08);
+  }
   .fw-chip.selected {
-    background: var(--ink);
-    border-color: var(--ink);
-    color: var(--gold);
+    background: linear-gradient(135deg, rgba(250,183,251,0.2), rgba(0,212,255,0.15));
+    border-color: var(--pink);
+    color: #fff;
     font-weight: 500;
+    box-shadow: 0 0 16px var(--pink-glow);
   }
 
-  /* Color swatches */
+  /* ─── Color swatches ─── */
   .fw-swatches {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
   }
-  .fw-swatch-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+  .fw-swatch-wrap { display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer; }
   .fw-swatch {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     border: 2.5px solid transparent;
-    transition: all 0.2s;
+    transition: all 0.25s;
     position: relative;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
-  .fw-swatch:hover { transform: scale(1.1); }
+  .fw-swatch:hover { transform: scale(1.12); }
   .fw-swatch.selected {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 3px rgba(201,168,76,0.2);
-    transform: scale(1.12);
+    border-color: var(--pink);
+    box-shadow: 0 0 0 3px var(--pink-glow), 0 0 16px var(--pink-glow);
+    transform: scale(1.15);
   }
   .fw-swatch.selected::after {
     content: '✓';
@@ -369,78 +418,89 @@ const STYLES = `
     align-items: center;
     justify-content: center;
     font-size: 14px;
+    font-weight: 700;
     color: white;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
   }
-  .fw-swatch-label { font-size: 10px; color: var(--muted); text-align: center; max-width: 40px; line-height: 1.2; }
+  .fw-swatch-label { font-size: 10px; color: var(--text-muted); text-align: center; max-width: 44px; line-height: 1.2; }
 
-  /* Skin tone row */
-  .fw-tones { display: flex; gap: 10px; flex-wrap: wrap; }
+  /* ─── Skin tone row ─── */
+  .fw-tones { display: flex; gap: 12px; flex-wrap: wrap; }
   .fw-tone {
-    width: 38px; height: 38px; border-radius: 50%;
+    width: 42px; height: 42px; border-radius: 50%;
     border: 2.5px solid transparent;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.25s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
-  .fw-tone:hover { transform: scale(1.1); }
-  .fw-tone.selected { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,168,76,0.25); transform: scale(1.12); }
+  .fw-tone:hover { transform: scale(1.12); }
+  .fw-tone.selected {
+    border-color: var(--pink);
+    box-shadow: 0 0 0 3px var(--pink-glow), 0 0 16px var(--pink-glow);
+    transform: scale(1.15);
+  }
 
-  /* Body shape grid */
+  /* ─── Body shape grid ─── */
   .fw-shapes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   @media (max-width: 420px) { .fw-shapes { grid-template-columns: repeat(2, 1fr); } }
   .fw-shape-card {
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 14px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 16px 10px;
     text-align: center;
     cursor: pointer;
-    transition: all 0.2s;
-    background: white;
+    transition: all 0.25s;
+    background: var(--glass);
+    backdrop-filter: blur(10px);
   }
-  .fw-shape-card:hover { border-color: var(--gold); }
-  .fw-shape-card.selected { border-color: var(--gold); background: var(--ink); }
-  .fw-shape-card .shape-icon { font-size: 26px; margin-bottom: 6px; line-height: 1; }
-  .fw-shape-card .shape-name { font-size: 11.5px; color: var(--muted); text-transform: capitalize; }
-  .fw-shape-card.selected .shape-name { color: var(--gold); }
+  .fw-shape-card:hover { border-color: var(--pink); background: rgba(250,183,251,0.06); }
+  .fw-shape-card.selected {
+    border-color: var(--pink);
+    background: linear-gradient(135deg, rgba(250,183,251,0.15), rgba(0,212,255,0.1));
+    box-shadow: 0 0 20px var(--pink-glow);
+  }
+  .fw-shape-card .shape-icon { font-size: 28px; margin-bottom: 6px; line-height: 1; }
+  .fw-shape-card .shape-name { font-size: 12px; color: var(--text-dim); text-transform: capitalize; }
+  .fw-shape-card.selected .shape-name { color: var(--pink); }
 
-  /* Measurement input with unit badge */
+  /* ─── Measurement input ─── */
   .fw-measure-wrap { position: relative; }
   .fw-measure-unit {
     position: absolute;
-    right: 12px; top: 50%;
+    right: 18px; top: 50%;
     transform: translateY(-50%);
     font-size: 11px;
-    color: var(--muted);
+    color: var(--text-muted);
     letter-spacing: 0.05em;
     font-weight: 500;
     pointer-events: none;
   }
-  .fw-measure-wrap .fw-input { padding-right: 40px; }
+  .fw-measure-wrap .fw-input { padding-right: 44px; }
 
-  /* Progress bar inside card */
+  /* ─── Progress bar ─── */
   .fw-progress-bar {
     height: 2px;
-    background: var(--border);
+    background: rgba(255,255,255,0.06);
     border-radius: 2px;
     margin-bottom: 28px;
     overflow: hidden;
   }
   .fw-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--gold), var(--gold-light));
+    background: linear-gradient(90deg, var(--pink), var(--cyan));
     border-radius: 2px;
     transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
 
-  /* Error / notice */
+  /* ─── Error ─── */
   .fw-error {
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 12px 16px;
-    background: #fff5f5;
-    border: 1px solid rgba(192,57,43,0.2);
-    border-radius: 3px;
+    background: rgba(255,107,107,0.1);
+    border: 1px solid rgba(255,107,107,0.25);
+    border-radius: 12px;
     font-size: 13px;
     color: var(--error);
     margin-bottom: 20px;
@@ -452,28 +512,28 @@ const STYLES = `
     75% { transform: translateX(6px); }
   }
 
-  /* Navigation buttons */
+  /* ─── Navigation buttons ─── */
   .fw-nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-top: 36px;
     padding-top: 24px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid rgba(255,255,255,0.06);
     gap: 12px;
   }
   .fw-nav-spacer { flex: 1; }
 
   .fw-btn {
-    padding: 13px 28px;
-    border-radius: 3px;
-    font-family: 'DM Sans', sans-serif;
+    padding: 14px 28px;
+    border-radius: 50px;
+    font-family: 'Inter', sans-serif;
     font-size: 13px;
-    font-weight: 500;
-    letter-spacing: 0.06em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.25s;
     border: none;
     outline: none;
     display: flex;
@@ -481,45 +541,57 @@ const STYLES = `
     gap: 8px;
   }
   .fw-btn-secondary {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    color: var(--text-dim);
+    backdrop-filter: blur(10px);
   }
-  .fw-btn-secondary:hover { border-color: var(--ink); color: var(--ink); }
+  .fw-btn-secondary:hover { border-color: rgba(255,255,255,0.25); color: #fff; }
+
   .fw-btn-primary {
-    background: var(--ink);
-    color: var(--gold);
+    background: linear-gradient(135deg, var(--pink), #d580ff);
+    color: var(--deep);
     min-width: 180px;
     justify-content: center;
+    font-weight: 700;
+    box-shadow: 0 4px 24px rgba(250,183,251,0.3);
   }
-  .fw-btn-primary:hover { background: #1a1a1a; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+  .fw-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(250,183,251,0.4);
+  }
   .fw-btn-primary:active { transform: translateY(0); }
-  .fw-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-  .fw-btn-gold {
-    background: var(--gold);
-    color: var(--ink);
-    font-weight: 600;
-  }
-  .fw-btn-gold:hover { background: var(--gold-light); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(201,168,76,0.35); }
+  .fw-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-  /* Spinner */
+  .fw-btn-gold {
+    background: linear-gradient(135deg, var(--pink), var(--cyan));
+    color: var(--deep);
+    font-weight: 700;
+    box-shadow: 0 4px 24px rgba(250,183,251,0.3);
+  }
+  .fw-btn-gold:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(250,183,251,0.45);
+  }
+
+  /* ─── Spinner ─── */
   .fw-spinner {
     width: 16px; height: 16px;
-    border: 2px solid rgba(201,168,76,0.3);
-    border-top-color: var(--gold);
+    border: 2px solid rgba(26,0,63,0.2);
+    border-top-color: var(--deep);
     border-radius: 50%;
     animation: fw-spin 0.7s linear infinite;
   }
   @keyframes fw-spin { to { transform: rotate(360deg); } }
 
-  /* Success screen */
+  /* ─── Success screen ─── */
   .fw-success {
     text-align: center;
     padding: 20px 0 0;
   }
   .fw-success-icon {
     width: 72px; height: 72px;
-    background: var(--ink);
+    background: linear-gradient(135deg, var(--pink), var(--cyan));
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -534,15 +606,22 @@ const STYLES = `
     to   { opacity: 1; transform: scale(1); }
   }
   .fw-success-title {
-    font-family: 'Cormorant Garamond', serif;
+    font-family: 'Space Grotesk', sans-serif;
     font-size: 36px;
-    font-weight: 300;
+    font-weight: 600;
     margin-bottom: 8px;
+    color: #fff;
   }
-  .fw-success-title em { font-style: italic; color: var(--gold); }
-  .fw-success-sub { font-size: 14px; color: var(--muted); margin-bottom: 32px; }
+  .fw-success-title em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--pink), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .fw-success-sub { font-size: 14px; color: var(--text-dim); margin-bottom: 32px; }
 
-  /* ── Recommendations grid ── */
+  /* ─── Recommendations grid ─── */
   .fw-recs-header {
     display: flex;
     align-items: baseline;
@@ -552,14 +631,14 @@ const STYLES = `
     gap: 8px;
   }
   .fw-recs-title {
-    font-family: 'Cormorant Garamond', serif;
+    font-family: 'Space Grotesk', sans-serif;
     font-size: 22px;
-    font-weight: 400;
-    color: var(--ink);
+    font-weight: 600;
+    color: #fff;
   }
   .fw-recs-count {
     font-size: 12px;
-    color: var(--muted);
+    color: var(--text-muted);
     letter-spacing: 0.06em;
   }
 
@@ -570,29 +649,30 @@ const STYLES = `
   }
 
   .fw-rec-card {
-    background: white;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
     overflow: hidden;
     cursor: pointer;
-    transition: all 0.25s;
+    transition: all 0.3s;
     animation: fw-card-in 0.4s ease both;
     animation-delay: var(--delay, 0ms);
+    backdrop-filter: blur(10px);
   }
   @keyframes fw-card-in {
     from { opacity: 0; transform: translateY(14px); }
     to   { opacity: 1; transform: translateY(0); }
   }
   .fw-rec-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 8px 28px rgba(0,0,0,0.08);
-    border-color: var(--gold-light);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(250,183,251,0.12);
+    border-color: rgba(250,183,251,0.2);
   }
   .fw-rec-img-wrap {
     width: 100%;
     aspect-ratio: 3/4;
     overflow: hidden;
-    background: #f0ece6;
+    background: rgba(255,255,255,0.03);
     position: relative;
   }
   .fw-rec-img {
@@ -600,33 +680,34 @@ const STYLES = `
     object-fit: cover;
     transition: transform 0.4s ease;
   }
-  .fw-rec-card:hover .fw-rec-img { transform: scale(1.04); }
+  .fw-rec-card:hover .fw-rec-img { transform: scale(1.05); }
   .fw-rec-badge {
     position: absolute;
     top: 10px; left: 10px;
-    padding: 3px 8px;
+    padding: 4px 10px;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    border-radius: 2px;
+    border-radius: 50px;
   }
-  .fw-rec-badge.new { background: var(--ink); color: var(--gold); }
+  .fw-rec-badge.new { background: var(--pink); color: var(--deep); }
   .fw-rec-badge.sale { background: var(--error); color: white; }
 
   .fw-rec-score {
     position: absolute;
     top: 10px; right: 10px;
-    width: 32px; height: 32px;
+    width: 34px; height: 34px;
     border-radius: 50%;
-    background: rgba(255,255,255,0.9);
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(10px);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 9.5px;
+    font-size: 10px;
     font-weight: 700;
-    color: var(--gold);
-    border: 1px solid rgba(201,168,76,0.3);
+    color: var(--pink);
+    border: 1px solid rgba(250,183,251,0.2);
   }
 
   .fw-rec-body {
@@ -636,13 +717,13 @@ const STYLES = `
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--gold);
+    color: var(--pink-dim);
     margin-bottom: 4px;
   }
   .fw-rec-name {
     font-size: 13.5px;
     font-weight: 500;
-    color: var(--ink);
+    color: #fff;
     margin-bottom: 4px;
     line-height: 1.35;
     white-space: nowrap;
@@ -651,7 +732,7 @@ const STYLES = `
   }
   .fw-rec-brand {
     font-size: 11px;
-    color: var(--muted);
+    color: var(--text-muted);
     margin-bottom: 8px;
   }
   .fw-rec-bottom {
@@ -660,28 +741,28 @@ const STYLES = `
     justify-content: space-between;
   }
   .fw-rec-price {
-    font-family: 'Cormorant Garamond', serif;
+    font-family: 'Space Grotesk', sans-serif;
     font-size: 17px;
     font-weight: 600;
-    color: var(--ink);
+    color: #fff;
   }
   .fw-rec-price .original {
     font-size: 12px;
-    color: var(--muted);
+    color: var(--text-muted);
     text-decoration: line-through;
     margin-right: 4px;
     font-weight: 400;
   }
   .fw-rec-rating {
     font-size: 11px;
-    color: var(--muted);
+    color: var(--gold);
     display: flex;
     align-items: center;
     gap: 3px;
   }
   .fw-rec-reason {
     font-size: 10.5px;
-    color: var(--muted);
+    color: var(--text-muted);
     margin-top: 6px;
     line-height: 1.4;
     font-style: italic;
@@ -690,7 +771,6 @@ const STYLES = `
     text-overflow: ellipsis;
   }
 
-  /* Colors inside rec card */
   .fw-rec-colors {
     display: flex;
     gap: 4px;
@@ -699,39 +779,38 @@ const STYLES = `
   .fw-rec-color-dot {
     width: 10px; height: 10px;
     border-radius: 50%;
-    border: 1px solid rgba(0,0,0,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
   }
 
-  /* Loading skeleton */
+  /* ─── Loading skeleton ─── */
   .fw-skeleton {
-    background: linear-gradient(90deg, #ede9e2 25%, #f5f2ed 50%, #ede9e2 75%);
+    background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%);
     background-size: 200% 100%;
     animation: fw-skeleton 1.4s infinite;
-    border-radius: 4px;
+    border-radius: 8px;
   }
   @keyframes fw-skeleton {
     from { background-position: 200% 0; }
     to   { background-position: -200% 0; }
   }
   .fw-skel-card {
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
     overflow: hidden;
   }
   .fw-skel-img { aspect-ratio: 3/4; width: 100%; }
   .fw-skel-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-  .fw-skel-line { height: 10px; border-radius: 3px; }
+  .fw-skel-line { height: 10px; border-radius: 4px; }
 
-  /* Rec empty */
   .fw-recs-empty {
     grid-column: 1 / -1;
     text-align: center;
     padding: 40px 20px;
-    color: var(--muted);
+    color: var(--text-muted);
     font-size: 14px;
   }
 
-  /* Filter bar */
+  /* ─── Filter bar ─── */
   .fw-filter-bar {
     display: flex;
     gap: 8px;
@@ -739,41 +818,52 @@ const STYLES = `
     margin-bottom: 20px;
   }
   .fw-filter-chip {
-    padding: 6px 14px;
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    font-size: 11.5px;
-    color: var(--muted);
-    background: white;
+    padding: 8px 16px;
+    border: 1px solid var(--glass-border);
+    border-radius: 50px;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: var(--glass);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.25s;
     letter-spacing: 0.04em;
+    backdrop-filter: blur(10px);
+    font-family: 'Inter', sans-serif;
   }
   .fw-filter-chip:hover, .fw-filter-chip.active {
-    background: var(--ink);
-    border-color: var(--ink);
-    color: var(--gold);
+    background: linear-gradient(135deg, rgba(250,183,251,0.15), rgba(0,212,255,0.1));
+    border-color: var(--pink);
+    color: #fff;
   }
 
-  /* Footer note */
+  /* ─── Footer note ─── */
   .fw-note {
-    font-size: 11px;
-    color: var(--muted);
+    font-size: 12px;
+    color: var(--text-muted);
     text-align: center;
-    margin-top: 24px;
-    opacity: 0.7;
+    margin-top: 28px;
+    opacity: 0.6;
   }
 
-  /* Section label */
+  /* ─── Section label ─── */
   .fw-section-label {
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--muted);
+    color: var(--text-dim);
     margin: 22px 0 12px;
   }
   .fw-section-label:first-child { margin-top: 0; }
+
+  .fw-brand {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pink-dim);
+    margin-bottom: 4px;
+  }
 `;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -800,13 +890,15 @@ const TONE_COLORS = {
   deep: "#3d2314",
 };
 const SHAPE_ICONS = {
-  hourglass: "⏳",
-  pear: "🍐",
-  rectangle: "▭",
-  apple: "🍎",
-  "inverted triangle": "△",
-  athletic: "⚡",
+  hourglass: "\u23F3",
+  pear: "\uD83C\uDF50",
+  rectangle: "\u25AD",
+  apple: "\uD83C\uDF4E",
+  "inverted triangle": "\u25B3",
+  athletic: "\u26A1",
 };
+
+const STEP_ICONS = ["\u2B50", "\uD83D\uDCA0", "\u2728", "\u2726"];
 
 function ChipGroup({ options, selected, onToggle, max = Infinity }) {
   return (
@@ -845,7 +937,7 @@ function ColorSwatches({ selected, onToggle }) {
             className={`fw-swatch ${selected.includes(c) ? "selected" : ""}`}
             style={{
               background: COLOR_MAP[c] || "#ccc",
-              border: c === "white" ? "1.5px solid #ddd" : undefined,
+              border: c === "white" ? "1.5px solid rgba(255,255,255,0.3)" : undefined,
             }}
           />
           <span className="fw-swatch-label">{c}</span>
@@ -1020,15 +1112,15 @@ function RecCard({ item, index }) {
           <div className="fw-rec-price">
             {discountedPrice ? (
               <>
-                <span className="original">₹{price}</span>₹{discountedPrice}
+                <span className="original">{"\u20B9"}{price}</span>{"\u20B9"}{discountedPrice}
               </>
             ) : (
-              `₹${price}`
+              `\u20B9${price}`
             )}
           </div>
           {item.rating && (
             <div className="fw-rec-rating">
-              ★ {Number(item.rating).toFixed(1)}
+              {"\u2605"} {Number(item.rating).toFixed(1)}
             </div>
           )}
         </div>
@@ -1097,7 +1189,6 @@ function RecommendationsPanel({ email }) {
 
   return (
     <div style={{ marginTop: 8 }}>
-      {/* Filter bar */}
       {items.length > 0 && (
         <div className="fw-filter-bar">
           {categories.map((cat) => (
@@ -1115,7 +1206,6 @@ function RecommendationsPanel({ email }) {
         </div>
       )}
 
-      {/* Header */}
       <div className="fw-recs-header">
         <div className="fw-recs-title">Your Picks</div>
         {!loading && (
@@ -1125,16 +1215,15 @@ function RecommendationsPanel({ email }) {
         )}
       </div>
 
-      {/* Content */}
       {loading ? (
         <SkeletonGrid count={6} />
       ) : error ? (
         <div className="fw-recs-empty">
-          <div style={{ fontSize: 32, marginBottom: 12 }}>✦</div>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>{"\u2726"}</div>
           <div>Couldn't load recommendations.</div>
           <button
             className="fw-btn fw-btn-secondary"
-            style={{ marginTop: 14, fontSize: 12 }}
+            style={{ marginTop: 14, fontSize: 12, margin: '14px auto 0' }}
             onClick={fetchRecs}
           >
             Try again
@@ -1142,7 +1231,7 @@ function RecommendationsPanel({ email }) {
         </div>
       ) : paged.length === 0 ? (
         <div className="fw-recs-empty">
-          <div style={{ fontSize: 32, marginBottom: 12 }}>✦</div>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>{"\u2726"}</div>
           No recommendations found yet.
         </div>
       ) : (
@@ -1183,7 +1272,7 @@ function StepBasic({ form, setForm, userEmail, setUserEmail, error }) {
         Tell us who you are — we'll build everything else around you.
       </p>
       <div className="fw-divider" />
-      {error && <div className="fw-error">⚠ {error}</div>}
+      {error && <div className="fw-error">{"\u26A0"} {error}</div>}
       <div className="fw-grid">
         <div className="fw-field fw-field-full">
           <label className="fw-label">
@@ -1192,7 +1281,7 @@ function StepBasic({ form, setForm, userEmail, setUserEmail, error }) {
           <input
             className="fw-input"
             type="email"
-            placeholder="you@example.com"
+            placeholder="example123@gmail.com"
             value={userEmail}
             onChange={(e) => setUserEmail(e.target.value)}
           />
@@ -1204,7 +1293,7 @@ function StepBasic({ form, setForm, userEmail, setUserEmail, error }) {
           <input
             className="fw-input"
             name="name"
-            placeholder="Your name"
+            placeholder="Enter Name"
             value={form.name}
             onChange={set}
           />
@@ -1219,7 +1308,7 @@ function StepBasic({ form, setForm, userEmail, setUserEmail, error }) {
             type="number"
             min="10"
             max="100"
-            placeholder="e.g. 28"
+            placeholder="Age"
             value={form.age}
             onChange={set}
           />
@@ -1235,7 +1324,7 @@ function StepBasic({ form, setForm, userEmail, setUserEmail, error }) {
               value={form.gender}
               onChange={set}
             >
-              <option value="">Select gender</option>
+              <option value="">Gender</option>
               <option value="female">Female</option>
               <option value="male">Male</option>
               <option value="non-binary">Non-binary</option>
@@ -1248,7 +1337,7 @@ function StepBasic({ form, setForm, userEmail, setUserEmail, error }) {
           <input
             className="fw-input"
             name="location"
-            placeholder="e.g. Mumbai"
+            placeholder="City"
             value={form.location}
             onChange={set}
           />
@@ -1270,7 +1359,7 @@ function StepStyle({ form, setForm, error }) {
         Help us understand your visual language and what draws you in.
       </p>
       <div className="fw-divider" />
-      {error && <div className="fw-error">⚠ {error}</div>}
+      {error && <div className="fw-error">{"\u26A0"} {error}</div>}
 
       <div className="fw-section-label">Skin tone</div>
       <SkinTones
@@ -1282,7 +1371,7 @@ function StepStyle({ form, setForm, error }) {
         Favourite colours{" "}
         <span
           style={{
-            color: "var(--muted)",
+            color: "var(--text-muted)",
             fontWeight: 400,
             textTransform: "none",
             letterSpacing: 0,
@@ -1332,7 +1421,7 @@ function StepMeasurements({ form, setForm, error }) {
         For a truly perfect fit. All fields are optional except height & weight.
       </p>
       <div className="fw-divider" />
-      {error && <div className="fw-error">⚠ {error}</div>}
+      {error && <div className="fw-error">{"\u26A0"} {error}</div>}
 
       <div className="fw-section-label">Body shape</div>
       <BodyShapes
@@ -1433,7 +1522,6 @@ function StepMeasurements({ form, setForm, error }) {
   );
 }
 
-// REPLACE WITH:
 function StepSuccess({ form, userEmail }) {
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -1444,10 +1532,10 @@ function StepSuccess({ form, userEmail }) {
 
 // ─── Main wizard ──────────────────────────────────────────────────────────────
 const STEPS = [
-  { label: "Identity" },
-  { label: "Aesthetic" },
-  { label: "Fit" },
-  { label: "Discover" },
+  { label: "Basic Info", icon: "\u2B50" },
+  { label: "Style", icon: "\uD83D\uDCA0" },
+  { label: "Measurements", icon: "\u2728" },
+  { label: "Finish", icon: "\u2726" },
 ];
 
 const INITIAL_FORM = {
@@ -1479,7 +1567,6 @@ export default function ProfileWizard() {
   const [form, setForm] = useState(INITIAL_FORM);
   const cardRef = useRef(null);
 
-  // Pre-fill email from localStorage
   useEffect(() => {
     const saved = localStorage.getItem("hueiq_email");
     if (saved) setUserEmail(saved);
@@ -1590,31 +1677,41 @@ export default function ProfileWizard() {
     <>
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
       <div className="fw-root">
-        <div className="fw-header">
-          <div className="fw-brand">HueIQ · Personal Style Engine</div>
-          <h1 className="fw-title">
-            Dress with
-            <br />
-            <em>intention</em>
-          </h1>
+        {/* Animated gradient background blobs */}
+        <div className="fw-bg">
+          <div className="fw-bg-blob" />
+          <div className="fw-bg-blob" />
+          <div className="fw-bg-blob" />
+          <div className="fw-bg-blob" />
+        </div>
 
-          {/* Stepper */}
+        <div className="fw-header">
+          <p className="fw-welcome">Welcome to</p>
+          <h1 className="fw-title">FashionAI</h1>
+
+          {/* Tab Stepper */}
           <div className="fw-stepper">
             {STEPS.map((s, i) => (
-              <div
+              <button
                 key={i}
-                className={`fw-step ${i < step ? "done" : i === step ? "active" : ""}`}
+                className={`fw-step-tab ${i < step ? "done" : i === step ? "active" : ""}`}
+                onClick={() => {
+                  if (i < step) {
+                    setError("");
+                    setStep(i);
+                  }
+                }}
+                type="button"
               >
-                <div className="fw-step-circle">{i < step ? "✓" : i + 1}</div>
-                <span className="fw-step-label">{s.label}</span>
-              </div>
+                <span className="tab-icon">{s.icon}</span>
+                <span className="tab-text">{s.label}</span>
+              </button>
             ))}
           </div>
         </div>
 
         {/* Card */}
         <div className="fw-card" ref={cardRef}>
-          {/* Linear progress */}
           {step < 3 && (
             <div className="fw-progress-bar">
               <div
@@ -1624,7 +1721,6 @@ export default function ProfileWizard() {
             </div>
           )}
 
-          {/* Steps */}
           {step === 0 && (
             <StepBasic
               form={form}
@@ -1647,7 +1743,7 @@ export default function ProfileWizard() {
             <div className="fw-nav">
               {step > 0 ? (
                 <button className="fw-btn fw-btn-secondary" onClick={prevStep}>
-                  ← Back
+                  {"\u2190"} Back
                 </button>
               ) : (
                 <div className="fw-nav-spacer" />
@@ -1655,7 +1751,7 @@ export default function ProfileWizard() {
 
               {step < 2 ? (
                 <button className="fw-btn fw-btn-primary" onClick={nextStep}>
-                  Continue →
+                  Continue {"\u2192"}
                 </button>
               ) : (
                 <button
@@ -1665,10 +1761,10 @@ export default function ProfileWizard() {
                 >
                   {loading ? (
                     <>
-                      <div className="fw-spinner" /> Saving…
+                      <div className="fw-spinner" /> Saving...
                     </>
                   ) : (
-                    "✦ Get my recommendations"
+                    "\u2726 Get my recommendations"
                   )}
                 </button>
               )}

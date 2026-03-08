@@ -17,7 +17,7 @@ import React, {
 /* ─── CONSTANTS ───────────────────────────────────────────────────────────── */
 const BOSS_API =
   "https://hueiq-core-api.purplesand-63becfba.westus2.azurecontainerapps.io";
-const LOCAL_API = "http://127.0.0.1:8002";
+const LOCAL_API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8002";
 
 /* ─── FALLBACK IMAGES ─────────────────────────────────────────────────────── */
 const FB = {
