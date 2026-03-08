@@ -1,13 +1,12 @@
 services:
-  # ── Backend: FastAPI Python Web Service ──
+  # ── Backend: FastAPI Web Service ──
   - type: web
     name: hueiq-backend
     runtime: python
     region: oregon
     plan: standard
-    rootDir: fashion_ai
-    buildCommand: pip install -r ../requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd fashion_ai && uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
