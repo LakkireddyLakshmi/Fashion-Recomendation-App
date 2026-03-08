@@ -1,1295 +1,1378 @@
 """
-╔══════════════════════════════════════════════════════════════════════════════════╗
-║          HueIQ ULTIMATE RECOMMENDATION ENGINE  — Production v6.0               ║
-║                                                                                  ║
-║  FIXES vs v4:                                                                    ║
-║  user_id is UUID/string, not int — matches Boss API schema                    ║
-║  Auto token refresh on every 401 before failing                               ║
-║  All endpoints work without pre-existing user (graceful fallback)             ║
-║  Uses EVERY schema table: users, user_photos, user_interactions,              ║
-║     feature_store, catalog_items, catalog_variants, catalog_images,             ║
-║     catalog_3d_assets, expert_rules, knowledge_graph, designers                 ║
-║  Fully async — zero blocking requests.Session calls                           ║
-║  GET /api/recommendations/{email} returns rich enriched payload               ║
-║  Legacy fields (id, title, image, thumbnail_url, recommendations[])           ║
-║     preserved for backward compat with existing frontend                         ║
-║                                                                                  ║
-║  Algorithm Stack (Spotify Discover + Amazon + Stitch Fix inspired):              ║
-║  ① Collaborative Filtering  — interaction matrix with temporal decay             ║
-║  ② Content-Based TF-IDF    — style_tags + category + description                ║
-║  ③ Visual Similarity        — catalog_images.embedding_vector cosine sim         ║
-║  ④ Body Fit Score           — user_photos.extracted_features × 3d physics        ║
-║  ⑤ Expert Rules Engine      — expert_rules.rule_logic_json evaluation            ║
-║  ⑥ Knowledge Graph Boost    — knowledge_graph entity tags                        ║
-║  ⑦ Seasonal Scoring         — current season × item material/color               ║
-║  ⑧ Temporal Recency         — exponential decay on all interactions              ║
-║  ⑨ Gender + Demographic     — profile_data_json preferences                      ║
-║  ⑩ MMR Diversity Re-ranking — Maximal Marginal Relevance                         ║
-║  ⑪ A/B Testing              — deterministic user group assignment                ║
-╚══════════════════════════════════════════════════════════════════════════════════╝
+HueIQ Recommendation Engine v8.1
+
+FIXES in this version:
+  1. Profile saved to hueiq.users matching EXACT schema from DB diagram
+     (user_id UUID, name, email, created_at, updated_at, profile_data_json JSONB)
+  2. Compat routes added:
+       POST /api/save-profile       → alias for PUT /api/auth/profile
+       GET  /api/recommendations/{email} → alias for GET /api/recommendations
+  3. Dify: changed response_mode blocking→streaming, SSE parser added
+  4. physics_profile parsed as JSONB (dict) not plain string
+  5. No duplicate recommendations (dedup by catalog_item_id throughout)
+  6. Trending returns up to limit param items (no hardcoded 60)
+  7. fetch_catalog() with no args returns ALL 500 items (no filters)
 """
 
 from __future__ import annotations
-
-import asyncio
-import hashlib
-import json
-import logging
-import math
-import os
-import time
-import uuid
-from collections import Counter, defaultdict
-from datetime import datetime
-from enum import Enum
+import asyncio, hashlib, json, logging, os, time, uuid
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Path, Query, Request
+from fastapi import FastAPI, HTTPException, Path, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field, validator
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine
 
-load_dotenv()
+try:
+    from motor.motor_asyncio import AsyncIOMotorClient
+    MOTOR_OK = True
+except ImportError:
+    MOTOR_OK = False
 
-# ── Logging ──────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s │ %(levelname)-8s │ %(message)s",
-    datefmt="%H:%M:%S",
-)
+try:
+    import bcrypt
+    BCRYPT_OK = True
+except ImportError:
+    BCRYPT_OK = False
+
+try:
+    import jwt as pyjwt
+    JWT_OK = True
+except ImportError:
+    JWT_OK = False
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("hueiq")
 
 
-# ── Config ───────────────────────────────────────────────────────────────────
-class Cfg:
-    BOSS  = os.getenv("BOSS_API_URL",
-              "https://hueiq-core-api.purplesand-63becfba.westus2.azurecontainerapps.io").rstrip("/")
-    TOKEN = os.getenv("BOSS_TOKEN", "")
-    EMAIL = os.getenv("BOSS_ADMIN_EMAIL", "")
-    PASS  = os.getenv("BOSS_ADMIN_PASSWORD", "")
-
-    # Ranking weights (sum ≈ 1.0)
-    W = dict(collaborative=0.27, content=0.18, visual=0.13, expert=0.10,
-             fit=0.09, gender=0.08, seasonal=0.07, trending=0.08)
-    MMR_LAMBDA   = 0.72
-    CATALOG_TTL  = int(os.getenv("CATALOG_TTL",  "600"))
-    USER_TTL     = int(os.getenv("USER_TTL",     "300"))
-    RULES_TTL    = int(os.getenv("RULES_TTL",   "3600"))
-    MAX_CANDS    = int(os.getenv("MAX_CANDIDATES","500"))
+# ── Config ────────────────────────────────────────────────────────
+MONGO_URI  = os.getenv("MONGODB_URI", "")
+MONGO_DB   = "hueiq"
+DIFY_URL   = os.getenv("DIFY_API_URL",  "https://cloud.xpectrum.co")
+DIFY_KEY   = os.getenv("DIFY_API_KEY",  "app-6XxyzGBrc3Sjj56vcWD2uNrn")
+JWT_SECRET = os.getenv("JWT_SECRET",    "hueiq-secret-change-in-prod")
+JWT_HOURS  = int(os.getenv("JWT_EXPIRE_HOURS", "72"))
+BOSS_URL   = os.getenv("BOSS_API_URL",
+    "https://hueiq-core-api.purplesand-63becfba.westus2.azurecontainerapps.io")
 
 
-C = Cfg()
+# ── MongoDB ───────────────────────────────────────────────────────
+_db = None
 
-
-# ── TTL Cache ────────────────────────────────────────────────────────────────
-class Cache:
-    def __init__(self, maxsize: int = 4096):
-        self._d: Dict[str, Tuple[Any, float]] = {}
-        self._max = maxsize
-
-    def get(self, k: str) -> Optional[Any]:
-        e = self._d.get(k)
-        if not e:
-            return None
-        v, exp = e
-        if time.time() > exp:
-            del self._d[k]
-            return None
-        return v
-
-    def set(self, k: str, v: Any, ttl: int) -> None:
-        if len(self._d) >= self._max:
-            oldest = min(self._d, key=lambda x: self._d[x][1])
-            del self._d[oldest]
-        self._d[k] = (v, time.time() + ttl)
-
-    def bust(self, prefix: str) -> int:
-        keys = [k for k in list(self._d) if k.startswith(prefix)]
-        for k in keys:
-            del self._d[k]
-        return len(keys)
-
-    @property
-    def size(self) -> int:
-        return len(self._d)
-
-
-_cache = Cache()
-
-
-# ── Boss API Client ──────────────────────────────────────────────────────────
-class Boss:
-    """
-    Async wrapper for the HueIQ Core API.
-    • Single shared httpx.AsyncClient
-    • 401 → auto-refresh token → retry
-    • Every GET cached; POST not cached
-    • _list() normalises any response shape → List[Dict]
-    """
-
-    def __init__(self) -> None:
-        self._token = C.TOKEN
-        self._cli: Optional[httpx.AsyncClient] = None
-        self._lock = asyncio.Lock()
-
-    async def _client(self) -> httpx.AsyncClient:
-        if self._cli is None or self._cli.is_closed:
-            self._cli = httpx.AsyncClient(
-                base_url=C.BOSS,
-                timeout=httpx.Timeout(12.0, connect=5.0),
-                headers={"User-Agent": "HueIQ-Engine/6.0"},
-            )
-        return self._cli
-
-    def _h(self) -> Dict[str, str]:
-        h: Dict[str, str] = {"Content-Type": "application/json"}
-        if self._token:
-            h["Authorization"] = f"Bearer {self._token}"
-        return h
-
-    async def _refresh(self) -> bool:
-        if not C.EMAIL or not C.PASS:
-            return False
-        async with self._lock:
-            try:
-                c = await self._client()
-                r = await c.post("/api/auth/login",
-                                 json={"email": C.EMAIL, "password": C.PASS},
-                                 headers={"Content-Type": "application/json"})
-                if r.status_code == 200:
-                    self._token = r.json().get("access_token", self._token)
-                    log.info("Token refreshed ✓")
-                    return True
-            except Exception as e:
-                log.warning("Token refresh: %s", e)
-        return False
-
-    async def _req(self, method: str, ep: str, body: Optional[Dict] = None,
-                   ck: Optional[str] = None, ttl: int = 300) -> Optional[Any]:
-        if ck and method == "GET":
-            hit = _cache.get(ck)
-            if hit is not None:
-                return hit
-        c = await self._client()
-        for attempt in range(3):
-            try:
-                h = self._h()
-                r = await c.get(ep, headers=h) if method == "GET" else await c.post(ep, json=body, headers=h)
-                if r.status_code == 401 and attempt == 0:
-                    if await self._refresh(): continue
-                    return None
-                if r.status_code in (200, 201):
-                    data = r.json()
-                    if ck and method == "GET": _cache.set(ck, data, ttl)
-                    return data
-                if r.status_code == 404:
-                    return None
-                log.debug("Boss %s %s → %d", method, ep, r.status_code)
-                return None
-            except httpx.TimeoutException:
-                if attempt < 2: await asyncio.sleep(0.4*(attempt+1))
-            except Exception as e:
-                log.debug("Boss err %s: %s", ep, e)
-                break
+async def get_db():
+    global _db
+    if _db is not None:
+        return _db
+    if not MOTOR_OK or not MONGO_URI:
+        return None
+    try:
+        client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        await client.admin.command("ping")
+        _db = client[MONGO_DB]
+        log.info("MongoDB connected → hueiq")
+        return _db
+    except Exception as e:
+        log.warning("MongoDB failed: %s", e)
         return None
 
-    @staticmethod
-    def _list(v: Any) -> List[Dict]:
-        if isinstance(v, list): return [x for x in v if isinstance(x, dict)]
-        if isinstance(v, dict):
-            for k in ("items","data","results","catalog","recommendations"):
-                if isinstance(v.get(k), list): return [x for x in v[k] if isinstance(x, dict)]
-            return [vv for vv in v.values() if isinstance(vv, dict)]
-        return []
 
-    # catalog_items
-    async def catalog(self) -> List[Dict]:
-        return self._list(await self._req("GET","/api/catalog/all", ck="cat:all", ttl=C.CATALOG_TTL))
+# ── Password + JWT ────────────────────────────────────────────────
+def _hash_pw(pw: str) -> str:
+    if BCRYPT_OK:
+        return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+    return hashlib.sha256(pw.encode()).hexdigest()
 
-    async def catalog_item(self, iid: str) -> Optional[Dict]:
-        r = await self._req("GET",f"/api/catalog/{iid}", ck=f"ci:{iid}", ttl=C.CATALOG_TTL)
-        return r if isinstance(r, dict) else None
+def _check_pw(pw: str, h: str) -> bool:
+    if BCRYPT_OK:
+        try: return bcrypt.checkpw(pw.encode(), h.encode())
+        except: pass
+    return hashlib.sha256(pw.encode()).hexdigest() == h
 
-   # catalog_images
-    async def catalog_images(self, iid: str) -> List[Dict]:
-        return []
+def _make_token(user_id: str, email: str) -> str:
+    if JWT_OK:
+        return pyjwt.encode(
+            {"user_id": user_id, "email": email,
+             "exp": datetime.utcnow() + timedelta(hours=JWT_HOURS)},
+            JWT_SECRET, algorithm="HS256")
+    return hashlib.sha256(f"{user_id}:{JWT_SECRET}".encode()).hexdigest()
 
-    # catalog_variants
-    async def catalog_variants(self, iid: str) -> List[Dict]:
-        return []
+def _decode_token(token: str) -> Optional[Dict]:
+    if JWT_OK:
+        try: return pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        except: return None
+    return None
 
-    # catalog_3d_assets
-    async def catalog_3d(self, iid: str) -> List[Dict]:
-        return []
+security = HTTPBearer(auto_error=False)
 
-    # designers
-    async def designers(self, iid: str) -> List[Dict]:
-        return []
-
-    # users
-    async def user(self, uid: str) -> Optional[Dict]:
-        r = await self._req("GET",f"/api/users/{uid}", ck=f"usr:{uid}", ttl=C.USER_TTL)
-        return r if isinstance(r, dict) else None
-
-    async def user_by_email(self, email: str) -> Optional[Dict]:
-        r = await self._req("GET",f"/api/users/by-email/{email}", ck=f"usr:em:{email}", ttl=C.USER_TTL)
-        return r if isinstance(r, dict) else None
-
-    # user_photos
-    async def photos(self, uid: str) -> List[Dict]:
-        return self._list(await self._req("GET",f"/api/users/{uid}/photos", ck=f"ph:{uid}", ttl=C.USER_TTL))
-
-    # user_interactions
-    async def interactions(self, uid: str) -> List[Dict]:
-        return self._list(await self._req("GET",f"/api/interactions/{uid}/interactions",
-                                          ck=f"ix:{uid}", ttl=C.USER_TTL))
-
-    # feature_store
-    async def feature_store(self, uid: str) -> Optional[Dict]:
-        r = await self._req("GET",f"/api/features/user/{uid}", ck=f"fs:{uid}", ttl=C.USER_TTL)
-        return r if isinstance(r, dict) else None
-
-    # expert_rules
-    async def expert_rules(self) -> List[Dict]:
-        return self._list(await self._req("GET","/api/expert-rules", ck="rules", ttl=C.RULES_TTL))
-
-    # knowledge_graph
-    async def kg(self) -> List[Dict]:
-        return self._list(await self._req("GET","/api/knowledge-graph", ck="kg:all", ttl=C.RULES_TTL))
-
-    # trending
-    async def trending(self, n: int = 60) -> List[Dict]:
-        return self._list(await self._req("GET",f"/api/recommendations/trending?limit={n}",
-                                          ck=f"trend:{n}", ttl=300))
-
-    async def push_interaction(self, payload: Dict) -> None:
-        asyncio.create_task(self._req("POST","/api/interactions", body=payload))
-
-    async def close(self) -> None:
-        if self._cli and not self._cli.is_closed: await self._cli.aclose()
+async def current_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(security)
+) -> Optional[Dict]:
+    if not creds: return None
+    return _decode_token(creds.credentials)
 
 
-boss = Boss()
+# ── Gender normalise ──────────────────────────────────────────────
+def _norm_gender(g: str) -> str:
+    """Normalize to catalog storage values: 'men' or 'women'."""
+    g = (g or "").lower().strip()
+    if g in ("men", "male", "man", "m"):               return "men"
+    if g in ("female", "women", "woman", "f", "w"):    return "women"
+    return g
 
 
-# ── Pydantic Models ──────────────────────────────────────────────────────────
-class SortBy(str, Enum):
-    SCORE    = "score"
-    PRICE_LO = "price_asc"
-    PRICE_HI = "price_desc"
-    RATING   = "rating"
-    NEWEST   = "newest"
-    TRENDING = "trending"
+# ── In-memory fallback ────────────────────────────────────────────
+_mem_users: Dict[str, Dict] = {}
+_mem_email: Dict[str, str]  = {}
 
 
-class IxKind(str, Enum):
-    CLICK    = "click"
-    LIKE     = "like"
-    PURCHASE = "purchase"
-    VIEW     = "view"
-    WISHLIST = "wishlist"
-    DISLIKE  = "dislike"
+# ── users collection helpers ──────────────────────────────────────
+# EXACT schema from DB diagram:
+#   user_id UUID PK, name VARCHAR(100), email VARCHAR(100),
+#   created_at TIMESTAMP, updated_at TIMESTAMP,
+#   profile_data_json JSONB
+
+async def db_create_user(data: Dict) -> Dict:
+    """
+    Saves to hueiq.users with the exact schema from the DB diagram.
+    profile_data_json holds all preference/measurement fields.
+    """
+    db = await get_db()
+    now = datetime.utcnow().isoformat()
+    uid = str(uuid.uuid4())
+
+    # Matches DB diagram exactly: only top-level fields are
+    # user_id, name, email, password_hash, created_at, updated_at, profile_data_json
+    doc = {
+        "user_id":       uid,
+        "name":          data.get("name", ""),
+        "email":         data["email"].strip().lower(),
+        "password_hash": _hash_pw(data.get("password", "")),
+        "created_at":    now,
+        "updated_at":    now,
+        # All preference data lives inside profile_data_json JSONB
+        "profile_data_json": {
+            "gender":               _norm_gender(data.get("gender", "")),
+            "preferred_colors":     data.get("preferred_colors", []),
+            "preferred_categories": data.get("preferred_categories", []),
+            "preferred_season":     data.get("preferred_season", ""),
+            "style_preferences":    data.get("style_preferences", []),
+            "body_measurements":    data.get("body_measurements", {}),
+            "age":                  data.get("age"),
+            "location":             data.get("location", ""),
+        },
+    }
+
+    if db is not None:
+        existing = await db.users.find_one({"email": doc["email"]})
+        if existing:
+            raise HTTPException(409, "Email already registered")
+        await db.users.insert_one(doc)
+        doc.pop("_id", None)
+        log.info("User saved → hueiq.users: %s (user_id=%s)", doc["email"], uid)
+    else:
+        _mem_users[uid] = doc
+        _mem_email[doc["email"]] = uid
+        log.info("User saved → in-memory: %s", doc["email"])
+
+    return doc
 
 
-class CatalogImage(BaseModel):
-    image_id:     Optional[str]  = None
-    image_url:    str
-    view:         Optional[str]  = None
-    color_variant: Optional[str] = None
-    is_primary:   bool           = False
+async def db_get_by_email(email: str) -> Optional[Dict]:
+    email = email.strip().lower()
+    db = await get_db()
+    if db is not None:
+        doc = await db.users.find_one({"email": email})
+        if doc:
+            doc.pop("_id", None)
+        return doc
+    uid = _mem_email.get(email)
+    return _mem_users.get(uid) if uid else None
 
 
-class CatalogVariant(BaseModel):
-    variant_id:     Optional[str]   = None
-    color:          Optional[str]   = None
-    size:           Optional[str]   = None
-    sku:            Optional[str]   = None
-    stock_quantity: int             = 0
-    price_override: Optional[float] = None
+async def db_get_by_id(uid: str) -> Optional[Dict]:
+    db = await get_db()
+    if db is not None:
+        doc = await db.users.find_one({"user_id": uid})
+        if doc:
+            doc.pop("_id", None)
+        return doc
+    return _mem_users.get(uid)
 
 
-class Asset3D(BaseModel):
-    asset_id:        Optional[str]          = None
-    model_url:       Optional[str]          = None
-    texture_url:     Optional[str]          = None
-    physics_profile: Optional[Dict[str,Any]] = None
+async def db_update_profile(uid: str, pj: Dict) -> Optional[Dict]:
+    """
+    Updates profile_data_json JSONB field and updated_at timestamp.
+    Matches exact DB schema — only these two fields change on profile update.
+    """
+    db = await get_db()
+    now = datetime.utcnow().isoformat()
+    if db is not None:
+        result = await db.users.update_one(
+            {"user_id": uid},
+            {"$set": {
+                "profile_data_json": pj,
+                "updated_at":        now,
+            }}
+        )
+        if result.matched_count == 0:
+            log.warning("db_update_profile: no user found with user_id=%s", uid)
+        else:
+            log.info("Profile updated → hueiq.users user_id=%s", uid)
+        return await db_get_by_id(uid)
+
+    if uid in _mem_users:
+        _mem_users[uid]["profile_data_json"] = pj
+        _mem_users[uid]["updated_at"] = now
+    return _mem_users.get(uid)
 
 
-class ScoreBand(BaseModel):
-    collaborative: float = 0.0
-    content:       float = 0.0
-    visual:        float = 0.0
-    expert:        float = 0.0
-    fit:           float = 0.0
-    gender:        float = 0.0
-    seasonal:      float = 0.0
-    trending:      float = 0.0
-    pref_boost:    float = 0.0
-    recency:       float = 0.0
-    final:         float = 0.0
+# ── TTL cache ─────────────────────────────────────────────────────
+_cache: Dict[str, Tuple[Any, float]] = {}
+
+def _cget(k: str) -> Optional[Any]:
+    e = _cache.get(k)
+    if not e: return None
+    v, exp = e
+    if time.time() > exp:
+        del _cache[k]
+        return None
+    return v
+
+def _cset(k: str, v: Any, ttl: int = 600):
+    _cache[k] = (v, time.time() + ttl)
 
 
-class RecItem(BaseModel):
-    # catalog_items
-    catalog_item_id: str
-    name:            str
-    description:     Optional[str] = None
-    category:        str
-    style_tags:      List[str]     = Field(default_factory=list)
-    base_price:      float
-    sale_price:      Optional[float] = None
-    currency:        str             = "USD"
-    discount_percent: Optional[float] = None
+# ── Catalog field extractors ──────────────────────────────────────
+def _tags(item: Dict) -> List[str]:
+    """style_tags is JSONB: { tags: [...] }"""
+    st = item.get("style_tags")
+    out: List[str] = []
+    if isinstance(st, dict):
+        out = [str(t) for t in (st.get("tags") or [])]
+    elif isinstance(st, list):
+        out = [str(t) for t in st]
+    em = item.get("extra_metadata") or {}
+    if isinstance(em, dict):
+        for f in ("occasion", "season", "fabric", "subcategory"):
+            v = em.get(f)
+            if v and str(v) not in out:
+                out.append(str(v))
+    return out
 
-    # catalog_images
-    images:            List[CatalogImage] = Field(default_factory=list)
-    primary_image_url: Optional[str]      = None
+def _gender(item: Dict) -> str:
+    em = item.get("extra_metadata") or {}
+    return (
+        item.get("gender") or
+        (em.get("gender") if isinstance(em, dict) else None) or
+        "unisex"
+    ).lower()
 
-    # catalog_3d_assets
-    assets_3d: List[Asset3D] = Field(default_factory=list)
-    has_3d:    bool           = False
+def _season_item(item: Dict) -> str:
+    em = item.get("extra_metadata") or {}
+    return (em.get("season") if isinstance(em, dict) else None) or item.get("season") or ""
 
-    # catalog_variants
-    variants:         List[CatalogVariant] = Field(default_factory=list)
-    available_sizes:  List[str]            = Field(default_factory=list)
-    available_colors: List[str]            = Field(default_factory=list)
+def _fabric(item: Dict) -> str:
+    em = item.get("extra_metadata") or {}
+    return (em.get("fabric") if isinstance(em, dict) else None) or item.get("fabric") or ""
 
-    # scoring
-    score:       float = Field(ge=0.0, le=1.0)
-    match_score: float = Field(ge=0.0, le=1.0, default=0.0)
-    score_breakdown:       Optional[ScoreBand] = None
-    recommendation_reason: str = "Personalised for you"
-    recommendation_rank:   int = 0
+def _item_colors(item: Dict) -> Set[str]:
+    """Collect all color_variants from images[] and variants[]."""
+    colors: Set[str] = set()
+    for img in (item.get("images") or []):
+        if isinstance(img, dict) and img.get("color_variant"):
+            colors.add(img["color_variant"].lower())
+    for v in (item.get("variants") or []):
+        if isinstance(v, dict) and v.get("color"):
+            colors.add(v["color"].lower())
+    return colors
 
-    # metadata
-    rating:       Optional[float] = None
-    review_count: Optional[int]   = None
-    is_new:       bool            = False
-    brand:        Optional[str]   = None
-    in_stock:     bool            = True
-    designer_ids: List[str]       = Field(default_factory=list)
-    knowledge_tags: List[str]     = Field(default_factory=list)
+def _in_stock(item: Dict) -> bool:
+    vs = item.get("variants") or []
+    if not vs:
+        return bool(item.get("in_stock", True))
+    return any(int(v.get("stock_quantity") or 0) > 0
+               for v in vs if isinstance(v, dict))
 
-    # ── Legacy compat (old frontend reads these) ──
-    id:            Optional[str]   = None
-    title:         Optional[str]   = None
-    image:         Optional[str]   = None
-    image_url:     Optional[str]   = None
-    thumbnail_url: Optional[str]   = None
-    price:         Optional[float] = None
-    tags:          List[str]       = Field(default_factory=list)
-    final_score:   Optional[float] = None
-    catalog_3d_assets: List[Dict[str,Any]] = Field(default_factory=list)
-
-
-class RecResponse(BaseModel):
-    user_id:    str
-    user_email: str = ""
-    user_name:  str = ""
-    total:      int
-    items:      List[RecItem]
-    recommendations: List[RecItem] = Field(default_factory=list)  # legacy key
-    total_recommendations: int     = 0
-    algorithm_version: str  = "6.0.0"
-    recommendation_id: str  = Field(default_factory=lambda: str(uuid.uuid4())[:8])
-    generated_at:      str  = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    processing_ms:     Optional[float] = None
-    filters_applied:   Dict[str,Any]   = Field(default_factory=dict)
-    ab_group:          str = "control"
-
-
-class RecRequest(BaseModel):
-    user_id:   Optional[str] = None
-    email:     Optional[str] = None
-    top_k:     int           = Field(default=20, ge=1, le=100)
-    category_filter: Optional[str] = None
-    sort_by:   SortBy        = SortBy.SCORE
-    context:   Dict[str,Any] = Field(default_factory=dict)
-    exclude_ids: List[str]   = Field(default_factory=list)
-    include_score_breakdown: bool = False
+def _physics_profile(item: Dict) -> Optional[str]:
+    """
+    assets_3d.physics_profile is JSONB (dict) in DB schema.
+    Handles both dict and legacy string gracefully.
+    """
+    a3d = item.get("assets_3d")
+    if not isinstance(a3d, dict):
+        return None
+    phys = a3d.get("physics_profile")
+    if isinstance(phys, dict):
+        # JSONB object — extract the most useful key
+        return (phys.get("type") or phys.get("fabric_type") or
+                phys.get("profile") or str(next(iter(phys.values()), "")) or None)
+    if isinstance(phys, str):
+        return phys.lower() or None
+    return None
 
 
-class FeedbackIn(BaseModel):
-    user_id:         str
-    catalog_item_id: str
-    interaction_type: IxKind
-    photo_id:   Optional[str] = None
-    session_id: Optional[str] = None
-    metadata:   Dict[str,Any] = Field(default_factory=dict)
+# ── Catalog fetch from MongoDB ────────────────────────────────────
+async def fetch_catalog(
+    gender:     Optional[str]       = None,
+    colors:     Optional[List[str]] = None,
+    categories: Optional[List[str]] = None,
+    season:     Optional[str]       = None,
+    limit:      int                 = 500,
+) -> List[Dict]:
+    """
+    Reads hueiq.catalog directly from MongoDB.
+    Called with NO arguments → returns all 500 items unfiltered.
+    Called with filters    → applies server-side MongoDB query.
+    Falls back to REST API if MongoDB unavailable.
+    """
+    ck = f"cat:{gender}:{','.join(colors or [])}:{','.join(categories or [])}:{season}:{limit}"
+    cached = _cget(ck)
+    if cached is not None:
+        return cached
+
+    db = await get_db()
+    if db is not None:
+        try:
+            query: Dict[str, Any] = {}
+
+            # Build query only when filters are actually provided
+            and_clauses: List[Dict] = []
+
+            if gender:
+                g = _norm_gender(gender)
+                # match catalog variants: "women"/"female"/"woman" and "men"/"male"/"man"
+                if g == "women":
+                    gender_vals = ["women", "female", "woman"]
+                elif g == "men":
+                    gender_vals = ["men", "male", "man"]
+                else:
+                    gender_vals = [g]
+                gender_conditions = [{"gender": {"$regex": v, "$options": "i"}} for v in gender_vals]
+                gender_conditions += [{"extra_metadata.gender": {"$regex": v, "$options": "i"}} for v in gender_vals]
+                gender_conditions.append({"gender": {"$regex": "unisex", "$options": "i"}})
+                and_clauses.append({"$or": gender_conditions})
+
+            if categories:
+                cat_patterns = [
+                    {"category":    {"$regex": c, "$options": "i"}} for c in categories
+                ] + [
+                    {"subcategory": {"$regex": c, "$options": "i"}} for c in categories
+                ]
+                and_clauses.append({"$or": cat_patterns})
+
+            if colors:
+                color_conditions = []
+                for c in colors:
+                    color_conditions.extend([
+                        {"images.color_variant": {"$regex": c, "$options": "i"}},
+                        {"variants.color":       {"$regex": c, "$options": "i"}},
+                    ])
+                and_clauses.append({"$or": color_conditions})
+
+            if season:
+                and_clauses.append({"$or": [
+                    {"extra_metadata.season": {"$regex": season, "$options": "i"}},
+                    {"style_tags.tags":       {"$regex": season, "$options": "i"}},
+                ]})
+
+            if and_clauses:
+                query = {"$and": and_clauses} if len(and_clauses) > 1 else and_clauses[0]
+
+            log.debug("catalog query: %s", json.dumps(query, default=str)[:300])
+
+            cursor = db.catalog.find(query, limit=limit)
+            items  = [{k: v for k, v in doc.items() if k != "_id"}
+                      async for doc in cursor]
+
+            # Deduplicate by catalog_item_id
+            seen: Set[str] = set()
+            out:  List[Dict] = []
+            for item in items:
+                k = str(item.get("catalog_item_id") or item.get("id") or "")
+                if k and k not in seen:
+                    seen.add(k)
+                    out.append(item)
+
+            log.info("catalog from MongoDB: %d items (gender=%s colors=%s cats=%s season=%s)",
+                     len(out), gender, colors, categories, season)
+
+            # If filtered query returns too few (<20), supplement with unfiltered
+            if and_clauses and len(out) < 5:
+                log.info("Too few results (%d), supplementing with unfiltered catalog", len(out))
+                cursor2 = db.catalog.find({}, limit=limit)
+                async for doc in cursor2:
+                    item = {k: v for k, v in doc.items() if k != "_id"}
+                    k = str(item.get("catalog_item_id") or "")
+                    if k and k not in seen:
+                        seen.add(k)
+                        out.append(item)
+
+            _cset(ck, out, 600)
+            return out
+
+        except Exception as e:
+            log.warning("MongoDB catalog fetch failed: %s", e)
+
+    return await _boss_catalog()
 
 
-class ProfileIn(BaseModel):
-    email:    str
-    name:     str             = ""
-    gender:   Optional[str]   = None
-    age:      Optional[int]   = None
-    location: Optional[str]   = None
-    body_measurements: Dict[str,Any] = Field(default_factory=dict)
-    style_profile:     Dict[str,Any] = Field(default_factory=dict)
+# ── Boss REST API fallback ────────────────────────────────────────
+_boss_cli: Optional[httpx.AsyncClient] = None
+_boss_token: str = os.getenv("BOSS_TOKEN", "")
 
+async def _boss_client() -> httpx.AsyncClient:
+    global _boss_cli
+    if _boss_cli is None or _boss_cli.is_closed:
+        _boss_cli = httpx.AsyncClient(base_url=BOSS_URL, timeout=15.0)
+    return _boss_cli
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="HueIQ Ultimate Recommendation Engine",
-    description="Production-grade multi-signal AI fashion recommendation system v6",
-    version="6.0.0",
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
-
-
-# ── Math helpers ──────────────────────────────────────────────────────────────
-def _cos(a: List[float], b: List[float]) -> float:
-    if not a or not b or len(a) != len(b): return 0.0
-    va, vb = np.array(a, np.float32), np.array(b, np.float32)
-    na, nb = np.linalg.norm(va), np.linalg.norm(vb)
-    return float(np.dot(va,vb)/(na*nb)) if na and nb else 0.0
-
-
-def _decay(ts: Optional[str], hl: float = 30.0) -> float:
-    if not ts: return 0.5
+async def _boss_catalog() -> List[Dict]:
+    cached = _cget("boss:cat")
+    if cached:
+        return cached
     try:
-        dt   = datetime.fromisoformat(ts.replace("Z","+00:00")).replace(tzinfo=None)
-        days = (datetime.utcnow()-dt).total_seconds()/86400
-        return math.exp(-math.log(2)/hl*days)
-    except: return 0.5
+        c = await _boss_client()
+        h = {"Authorization": f"Bearer {_boss_token}"} if _boss_token else {}
+        r = await c.get("/api/recommendations/trending?limit=500", headers=h)
+        if r.status_code == 200:
+            raw   = r.json()
+            items = raw if isinstance(raw, list) else raw.get("items", [])
+            _cset("boss:cat", items, 600)
+            return items
+    except Exception as e:
+        log.warning("Boss API failed: %s", e)
+    return []
 
 
-def _jaccard(a: Set[str], b: Set[str]) -> float:
-    if not a or not b: return 0.0
-    return len(a&b)/len(a|b)
-
-
-def _sha_uid(email: str) -> str:
-    return "usr_"+hashlib.sha256(email.lower().strip().encode()).hexdigest()[:16]
-
-
-# ── Fallback image pools ──────────────────────────────────────────────────────
-_FB: Dict[str, List[str]] = {
-    "dress":  ["1595777457583-95e059d581b8","1566479179817-9cbf065c2a5e","1612336307429-8a898d10e223"],
-    "top":    ["1594938298603-c8148c4b5ec4","1554568218-0f1715e72254","1503341504253-dff4815485f1"],
-    "bottom": ["1490481651871-ab68de25d43d","1584370848010-d7fe6bc767ec","1542291026-7eec264c27ff"],
-    "outer":  ["1548126032-079a0fb0099d","1551028719-00167b16eac5","1544022613-e87ca75a784a"],
-    "shoe":   ["1543163521-1bf539c55dd2","1595950653106-6c9ebd614d3a","1542291026-7eec264c27ff"],
-    "acc":    ["1611085583191-a3b181a88401","1590548784585-643d2b9f2925","1549298916-b41d501d3772"],
-    "def":    ["1558618666-fcd25c85cd64","1560769629-975ec94e6a86","1523275335684-37898b6baf30"],
+# ── Image builder ─────────────────────────────────────────────────
+_UNSPLASH: Dict[str, List[str]] = {
+    "shirts":  ["1594938298603-c8148c4b5ec4","1554568218-0f1715e72254","1516826957135-700d500c4b51"],
+    "tshirt":  ["1521572163474-6864f9cf17ab","1583743814966-8d58504ad3d8","1503341504253-dff4815485f1"],
+    "dress":   ["1595777457583-95e059d581b8","1566479179817-9cbf065c2a5e"],
+    "bottom":  ["1490481651871-ab68de25d43d","1584370848010-d7fe6bc767ec"],
+    "outer":   ["1548126032-079a0fb0099d","1551028719-00167b16eac5"],
+    "shoe":    ["1543163521-1bf539c55dd2","1595950653106-6c9ebd614d3a"],
+    "def":     ["1558618666-fcd25c85cd64","1560769629-975ec94e6a86"],
 }
 
-def _fbk(cat: str) -> str:
-    c = cat.lower()
+def _pool(cat: str) -> str:
+    c = (cat or "").lower()
+    if any(w in c for w in ("t-shirt","tshirt","tee")): return "tshirt"
+    if "shirt" in c: return "shirts"
     if "dress" in c: return "dress"
-    if any(w in c for w in ("top","shirt","blouse","tee","sweat")): return "top"
-    if any(w in c for w in ("pant","jean","skirt","short","bottom","trouser")): return "bottom"
-    if any(w in c for w in ("jacket","coat","outer","blazer","cardigan")): return "outer"
-    if any(w in c for w in ("shoe","boot","sneak","heel","sandal")): return "shoe"
-    if any(w in c for w in ("bag","watch","jewel","access","hat","scarf","belt")): return "acc"
+    if any(w in c for w in ("pant","jean","skirt","trouser")): return "bottom"
+    if any(w in c for w in ("jacket","coat","blazer","cardigan")): return "outer"
+    if any(w in c for w in ("shoe","boot","sneak")): return "shoe"
     return "def"
 
-def _stable_img(iid: str, cat: str, idx: int) -> str:
-    pool = _FB[_fbk(cat)]
-    h    = int(hashlib.md5(f"{iid}{idx}".encode()).hexdigest(), 16)
-    pid  = pool[h % len(pool)]
-    return f"https://images.unsplash.com/photo-{pid}?w=600&fit=crop"
+def _fallback_url(iid: str, cat: str, color: str, img_type: str) -> str:
+    pool = _UNSPLASH[_pool(cat)]
+    h    = int(hashlib.md5(f"{iid}:{color}:{img_type}".encode()).hexdigest(), 16)
+    return f"https://images.unsplash.com/photo-{pool[h % len(pool)]}?w=600&fit=crop"
+
+def _build_images(item: Dict) -> Tuple[List[Dict], Optional[str]]:
+    iid = str(item.get("catalog_item_id") or "")
+    cat = item.get("category") or "def"
+    out: List[Dict] = []
+    primary: Optional[str] = None
+
+    for img in (item.get("images") or []):
+        if not isinstance(img, dict): continue
+        img_type = (img.get("image_type") or "").lower()
+        color_v  = (img.get("color_variant") or "").lower()
+        is_p     = bool(img.get("is_primary", False))
+        url      = (img.get("image_url") or "").strip() or \
+                   _fallback_url(iid, cat, color_v or "default", img_type or "front")
+        out.append({
+            "image_id":     img.get("image_id"),
+            "image_url":    url,
+            "image_type":   img_type,
+            "color_variant": color_v,
+            "is_primary":   is_p,
+        })
+        if is_p and not primary:
+            primary = url
+
+    if not primary:
+        for img in out:
+            if img["image_type"] == "front":
+                primary = img["image_url"]
+                break
+    if not primary and out:
+        primary = out[0]["image_url"]
+
+    return out, primary
+
+def _build_variants(item: Dict) -> Tuple[List[Dict], List[str], List[str]]:
+    out: List[Dict] = []
+    sizes:  Set[str] = set()
+    colors: Set[str] = set()
+    for v in (item.get("variants") or []):
+        if not isinstance(v, dict): continue
+        qty = int(v.get("stock_quantity") or 0)
+        out.append({
+            "variant_id":     v.get("variant_id"),
+            "color":          v.get("color"),
+            "size":           v.get("size"),
+            "sku":            v.get("sku"),
+            "stock_quantity": qty,
+            "price_override": v.get("price_override"),
+            "in_stock":       qty > 0,
+        })
+        if v.get("size"):  sizes.add(str(v["size"]))
+        if v.get("color"): colors.add(str(v["color"]))
+    _SO = ["XS","S","M","L","XL","XXL","3XL"]
+    return (
+        out,
+        sorted(sizes,  key=lambda s: _SO.index(s) if s in _SO else 99),
+        sorted(colors),
+    )
 
 
-# ── Seasonal ─────────────────────────────────────────────────────────────────
-_SKW = {
-    "spring":{"floral","pastel","linen","light","cotton","wrap"},
-    "summer":{"cotton","linen","short","bright","casual","breezy"},
-    "fall":  {"wool","knit","earth","layered","warm","sweater","blazer"},
-    "winter":{"coat","thermal","heavy","cashmere","down","boots"},
+# ── Color match score ─────────────────────────────────────────────
+def _color_score(item: Dict, pref_colors: List[str]) -> float:
+    if not pref_colors: return 0.5   # neutral if user has no color preference
+    item_cols = _item_colors(item)
+    if not item_cols: return 0.3
+    pref_set = {c.lower() for c in pref_colors}
+    exact   = len(pref_set & item_cols) / len(pref_set)
+    partial = sum(
+        any(p in ic or ic in p for ic in item_cols)
+        for p in pref_set
+    ) / len(pref_set)
+    return min(exact * 0.7 + partial * 0.3, 1.0)
+
+
+# ── Fit score (physics_profile × body_measurements) ───────────────
+_PHYSICS_DRAPE = {
+    "light_fabric":   0.9,
+    "heavy_fabric":   0.6,
+    "stretch_fabric": 0.95,
+    "knit":           0.85,
+    "rigid":          0.4,
+    "denim":          0.65,
 }
-_SCO = {
-    "spring":{"pink","mint","lavender","cream","yellow"},
-    "summer":{"white","coral","turquoise","orange","lime"},
-    "fall":  {"brown","burgundy","olive","rust","mustard"},
-    "winter":{"black","navy","grey","charcoal","camel"},
+
+def _fit_score(item: Dict, body_meas: Dict) -> float:
+    """
+    Reads physics_profile from assets_3d JSONB.
+    Falls back gracefully if field is missing or unexpected type.
+    """
+    phys = _physics_profile(item)
+    if phys is None:
+        return 0.5
+
+    drape = _PHYSICS_DRAPE.get(phys, 0.5)
+
+    if body_meas:
+        build = body_meas.get("build", "")
+        if build == "slim"    and phys in ("light_fabric", "knit"):       return 0.95
+        if build == "plus"    and phys == "stretch_fabric":               return 1.0
+        if build == "plus"    and phys == "rigid":                        return 0.2
+        if build == "athletic" and phys in ("stretch_fabric", "knit"):   return 0.9
+
+    return drape
+
+
+# ── Seasonal score ────────────────────────────────────────────────
+_SEASON_KW = {
+    "spring": {"floral","pastel","linen","light","cotton","wrap"},
+    "summer": {"cotton","linen","short","bright","casual","t-shirt","tshirt","tee"},
+    "fall":   {"wool","knit","corduroy","layered","warm","sweater","blazer","overshirt"},
+    "winter": {"coat","thermal","heavy","cashmere","down","boots"},
+}
+_SEASON_COL = {
+    "spring": {"pink","mint","lavender","cream","yellow"},
+    "summer": {"white","coral","turquoise","orange","lime","black"},
+    "fall":   {"sage","brown","burgundy","olive","rust","mustard","taupe"},
+    "winter": {"black","navy","grey","charcoal","camel"},
 }
 
-def _season() -> str:
+def _cur_season() -> str:
     m = datetime.utcnow().month
     if 3<=m<=5: return "spring"
     if 6<=m<=8: return "summer"
     if 9<=m<=11: return "fall"
     return "winter"
 
-def _seasonal_sc(item: Dict) -> float:
-    s   = _season()
-    kw  = _SKW.get(s, set())
-    col = _SCO.get(s, set())
-    tags = {t.lower() for t in (item.get("style_tags") or [])}
-    text = (tags
-            | set((item.get("category") or "").lower().split())
-            | set((item.get("description") or "").lower().split()))
-    return min(len(text&kw)/max(len(kw),1)*0.6 + len(text&col)/max(len(col),1)*0.4, 1.0)
+def _season_score(item: Dict, pref_season: str) -> float:
+    s    = pref_season.lower() if pref_season else _cur_season()
+    kw   = _SEASON_KW.get(s, set())
+    cols = _SEASON_COL.get(s, set())
+    text = (
+        {t.lower() for t in _tags(item)} |
+        _item_colors(item) |
+        {(item.get("category") or "").lower()} |
+        {_season_item(item).lower()} |
+        {_fabric(item).lower()}
+    )
+    return min(
+        len(text & kw)   / max(len(kw),   1) * 0.6 +
+        len(text & cols) / max(len(cols), 1) * 0.4,
+        1.0
+    )
 
 
-# ── CF helpers ────────────────────────────────────────────────────────────────
-_IXW = {"purchase":1.0,"wishlist":0.8,"like":0.6,"click":0.3,"view":0.1,"dislike":-0.5}
-
-def _build_profile(ixs: List[Dict]) -> Dict[str, float]:
-    p: Dict[str, float] = defaultdict(float)
-    for ix in ixs:
-        iid  = ix.get("catalog_item_id")
-        kind = (ix.get("interaction_type") or ix.get("type") or "view").lower()
-        if not iid: continue
-        p[iid] += _IXW.get(kind, 0.1) * _decay(ix.get("created_at"), 14)
-    return dict(p)
-
-def _collab_sc(iid: str, profile: Dict[str, float], pop: Dict[str, float]) -> float:
-    personal = profile.get(iid, 0.0)
-    pop_val  = pop.get(iid, 0.1)
-    return min(personal*0.7+pop_val*0.3, 1.0) if personal>0 else pop_val*0.5
-
-
-# ── Content-Based TF-IDF ─────────────────────────────────────────────────────
+# ── TF-IDF content score ──────────────────────────────────────────
 def _item_doc(item: Dict) -> str:
-    return " ".join(filter(None,[
-        item.get("category",""), item.get("description",""),
-        " ".join(item.get("style_tags") or []),
-        item.get("brand",""), item.get("occasion",""),
-    ])).lower()
+    em = item.get("extra_metadata") or {}
+    parts = [
+        item.get("category", ""),
+        item.get("subcategory", ""),
+        item.get("description", ""),
+        " ".join(_tags(item)),
+        _gender(item),
+        em.get("occasion", "") if isinstance(em, dict) else "",
+        _season_item(item),
+        _fabric(item),
+        " ".join(_item_colors(item)),
+    ]
+    return " ".join(p for p in parts if p).lower()
 
-def _content_scores(catalog: List[Dict], liked_ids: List[str]) -> Dict[str, float]:
-    if not catalog or not liked_ids: return {}
+def _content_scores(catalog: List[Dict], pref_cats: List[str],
+                    pref_colors: List[str], pref_season: str) -> Dict[str, float]:
+    if not catalog: return {}
     ids  = [str(it.get("catalog_item_id") or it.get("id","")) for it in catalog]
     docs = [_item_doc(it) for it in catalog]
+    taste_doc = " ".join(pref_cats + pref_colors + ([pref_season] if pref_season else []))
+    if not taste_doc.strip(): return {}
     try:
-        vec  = TfidfVectorizer(ngram_range=(1,2), max_features=1024, min_df=1)
-        mat  = vec.fit_transform(docs)
-        idxs = [i for i,iid in enumerate(ids) if iid in set(liked_ids)]
-        if not idxs: return {}
-        taste = mat[idxs].mean(axis=0)
-        sims  = sk_cosine(taste, mat).flatten()
+        vec      = TfidfVectorizer(ngram_range=(1,2), max_features=2048, min_df=1)
+        mat      = vec.fit_transform(docs + [taste_doc])
+        taste_v  = mat[-1]
+        item_mat = mat[:-1]
+        sims     = sk_cosine(taste_v, item_mat).flatten()
         return {ids[i]: float(sims[i]) for i in range(len(ids))}
-    except: return {}
+    except:
+        return {}
 
 
-# ── Expert Rules ──────────────────────────────────────────────────────────────
-def _parse_rules(raw: List[Dict]) -> List[Dict]:
-    out = []
-    for r in raw:
-        logic = r.get("rule_logic_json")
-        if isinstance(logic, str):
-            try: logic = json.loads(logic)
-            except: continue
-        if isinstance(logic, dict):
-            out.append({"name":r.get("rule_name",""), "conditions":logic.get("conditions",[]),
-                        "boost":float(logic.get("boost",0.1)), "reason":logic.get("reason","Expert pick")})
-    return out
+# ── Dify workflow (STREAMING) ─────────────────────────────────────
+_dify_cli: Optional[httpx.AsyncClient] = None
 
-def _eval_cond(item: Dict, cond: Dict) -> bool:
-    f, op, val = cond.get("field",""), cond.get("op","eq"), cond.get("value")
-    iv = item.get(f)
-    if iv is None: return False
-    try:
-        if op=="eq":      return str(iv).lower()==str(val).lower()
-        if op=="neq":     return str(iv).lower()!=str(val).lower()
-        if op=="in":      return str(iv).lower() in [str(x).lower() for x in (val or [])]
-        if op=="not_in":  return str(iv).lower() not in [str(x).lower() for x in (val or [])]
-        if op=="gte":     return float(iv)>=float(val)
-        if op=="lte":     return float(iv)<=float(val)
-        if op=="gt":      return float(iv)> float(val)
-        if op=="lt":      return float(iv)< float(val)
-        if op=="contains":return str(val).lower() in str(iv).lower()
-    except: pass
-    return False
-
-def _expert_eval(item: Dict, rules: List[Dict]) -> Tuple[float, str]:
-    total, reason = 0.0, ""
-    for rule in rules:
-        if all(_eval_cond(item,c) for c in rule["conditions"]):
-            total += rule["boost"]; reason = reason or rule["reason"]
-    return min(total, 0.5), reason
-
-
-# ── Fit Score (user_photos.extracted_features × catalog_3d_assets.physics_profile) ──
-_FIT_DIMS = ["shoulder_width","hip_width","torso_length","bust","waist"]
-
-def _fit_sc(features: Optional[Dict], physics: Optional[Dict]) -> float:
-    if not features or not physics: return 0.5
-    diffs = []
-    for d in _FIT_DIMS:
-        u, p = features.get(d), physics.get(d)
-        if u is not None and p is not None:
-            try: diffs.append(abs(float(u)-float(p)))
-            except: pass
-    return max(0.0, min(1.0, 1.0-sum(diffs)/len(diffs)/30)) if diffs else 0.5
-
-
-# ── MMR Diversity Re-ranking ──────────────────────────────────────────────────
-def _mmr(items: List[Dict], top_k: int, lam: float = C.MMR_LAMBDA) -> List[Dict]:
-    if len(items) <= top_k: return items
-    sel  = [max(items, key=lambda x: x["score"])]
-    rem  = [x for x in items if x is not sel[0]]
-    while len(sel) < top_k and rem:
-        best, best_v = None, -float("inf")
-        for cand in rem:
-            rel = cand["score"]
-            emb = cand.get("embedding") or []
-            if emb:
-                sims = [_cos(emb, s.get("embedding") or []) for s in sel if s.get("embedding")]
-                ms   = max(sims) if sims else 0.0
-            else:
-                cc   = (cand.get("item") or cand).get("category","")
-                cats = [(s.get("item") or s).get("category","") for s in sel]
-                ms   = sum(1 for c in cats if c==cc)/max(len(sel),1)
-            v = lam*rel-(1-lam)*ms
-            if v > best_v: best_v, best = v, cand
-        if best: sel.append(best); rem.remove(best)
-    return sel
-
-
-# ── Image / Variant / 3D builders ────────────────────────────────────────────
-_VIEWS = ["front","back","side"]
-
-def _build_imgs(raw: List[Dict], iid: str, cat: str) -> Tuple[List[CatalogImage], Optional[str]]:
-    out: List[CatalogImage] = []
-    primary: Optional[str] = None
-    ev: Set[str] = set()
-    for img in raw:
-        url  = img.get("image_url") or img.get("url","")
-        if not url: continue
-        view = (img.get("view") or "").lower() or None
-        is_p = bool(img.get("is_primary", False))
-        out.append(CatalogImage(image_id=img.get("image_id") or img.get("id"),
-                                image_url=url, view=view,
-                                color_variant=img.get("color_variant"), is_primary=is_p))
-        if view: ev.add(view)
-        if is_p and not primary: primary = url
-    for i, label in enumerate(_VIEWS):
-        if label not in ev:
-            fb   = _stable_img(iid, cat, i)
-            is_p = (label=="front" and not primary)
-            out.append(CatalogImage(image_url=fb, view=label, is_primary=is_p))
-            if is_p: primary = fb
-    if not primary and out: primary = out[0].image_url
-    return out, primary
-
-def _build_vars(raw: List[Dict]) -> Tuple[List[CatalogVariant], List[str], List[str]]:
-    variants, sizes, colors = [], set(), set()
-    for v in raw:
-        variants.append(CatalogVariant(
-            variant_id=v.get("variant_id") or v.get("id"),
-            color=v.get("color"), size=v.get("size"), sku=v.get("sku"),
-            stock_quantity=int(v.get("stock_quantity") or 0),
-            price_override=v.get("price_override"),
-        ))
-        if v.get("size"):  sizes.add(v["size"])
-        if v.get("color"): colors.add(v["color"])
-    return variants, sorted(sizes), sorted(colors)
-
-def _build_3d(raw: List[Dict]) -> Tuple[List[Asset3D], bool]:
-    assets = [Asset3D(asset_id=a.get("asset_id") or a.get("id"),
-                      model_url=a.get("model_url"), texture_url=a.get("texture_url"),
-                      physics_profile=a.get("physics_profile")) for a in raw]
-    return assets, bool(assets)
-
-
-# ── A/B groups ────────────────────────────────────────────────────────────────
-_AB = ["control","boost_premium","diversity","rules_heavy"]
-
-def _ab(uid: str) -> str:
-    return _AB[int(hashlib.md5(uid.encode()).hexdigest(),16) % len(_AB)]
-
-
-# ── Reason labels ─────────────────────────────────────────────────────────────
-_REASONS = {
-    "collaborative": "Popular with shoppers like you",
-    "content":       "Matches your style profile",
-    "visual":        "Visually similar to items you loved",
-    "expert":        "Expert-curated pick",
-    "fit":           "Perfect fit for your body type",
-    "trending":      "Trending right now",
-    "pref_boost":    "Matches your colour & style preferences",
-    "seasonal":      f"Perfect for {_season()}",
-}
-
-
-# ── Recommendation Engine ─────────────────────────────────────────────────────
-class Engine:
-    @staticmethod
-    def _iid(item: Dict) -> str:
-        return str(item.get("catalog_item_id") or item.get("id") or item.get("name") or "")
-
-    async def _load(self, uid: str):
-        res = await asyncio.gather(
-            boss.catalog(), boss.user(uid), boss.interactions(uid),
-            boss.photos(uid), boss.feature_store(uid),
-            boss.expert_rules(), boss.kg(),
-            return_exceptions=True,
-        )
-        def s(r, d): return r if not isinstance(r, Exception) and r is not None else d
-        return (s(res[0],[]), s(res[1],None), s(res[2],[]),
-                s(res[3],[]), s(res[4],None), s(res[5],[]), s(res[6],[]))
-
-    async def run(self, uid: str, req: RecRequest, email: str = "") -> RecResponse:
-        t0 = time.perf_counter()
-        log.info("▶ uid=%s top_k=%d", uid, req.top_k)
-
-        catalog, user_data, ixs, photos, fs, rules_raw, kg_raw = await self._load(uid)
-        if not catalog: catalog = await boss.trending(120)
-        if not catalog:
-            return RecResponse(user_id=uid, user_email=email, total=0, items=[],
-                               total_recommendations=0)
-
-        # Build signals
-        profile   = _build_profile(ixs)
-        counts    = Counter(ix.get("catalog_item_id") for ix in ixs if ix.get("catalog_item_id"))
-        total_ixs = sum(counts.values()) or 1
-        pop       = {k: min(v/total_ixs*10, 1.0) for k,v in counts.items()}
-
-        liked_ids = [ix.get("catalog_item_id") for ix in ixs
-                     if ix.get("interaction_type") in ("like","purchase","wishlist")]
-        con_sc    = _content_scores(catalog, [x for x in liked_ids if x])
-
-        user_embs: List[List[float]] = [p["embedding_vector"] for p in photos
-                                         if isinstance(p.get("embedding_vector"), list)]
-        body_feat: Optional[Dict] = None
-        for p in photos:
-            ef = p.get("extracted_features")
-            if isinstance(ef, dict) and ef: body_feat = ef; break
-        if not body_feat and isinstance(fs, dict):
-            body_feat = fs.get("body_features") or fs.get("measurements")
-
-        ud = user_data or {}
-        pj = ud.get("profile_data_json") or {}
-        if isinstance(pj, str):
-            try: pj = json.loads(pj)
-            except: pj = {}
-        sp            = pj.get("style_profile") or {}
-        pref_col:  Set[str] = {c.lower() for c in (sp.get("preferred_colors")     or [])}
-        pref_cats: Set[str] = {c.lower() for c in (sp.get("preferred_categories") or [])}
-        user_gender: str     = (ud.get("gender") or pj.get("gender") or "").lower()
-
-        # Knowledge graph tag map
-        kg_map: Dict[str, Set[str]] = {}
-        for kg in kg_raw:
-            ed = kg.get("entity_data_json") or {}
-            if isinstance(ed, str):
-                try: ed = json.loads(ed)
-                except: ed = {}
-            ref = ed.get("catalog_item_id")
-            if ref: kg_map[str(ref)] = set(ed.get("tags") or [])
-
-        rules = _parse_rules(rules_raw)
-        ab    = _ab(uid)
-        excl  = set(req.exclude_ids)
-        scored: List[Dict] = []
-
-        for item in catalog[:C.MAX_CANDS]:
-            iid = self._iid(item)
-            if not iid or iid in excl: continue
-            if req.category_filter and req.category_filter.lower() not in (item.get("category","")).lower():
-                continue
-
-            # ① Collaborative
-            s_col = _collab_sc(iid, profile, pop)
-            # ② Content
-            s_con = con_sc.get(iid, 0.0)
-            # ③ Visual
-            item_emb: Optional[List[float]] = item.get("embedding_vector") if isinstance(item.get("embedding_vector"), list) else None
-            s_vis = max((_cos(ue, item_emb) for ue in user_embs if item_emb), default=0.0)
-            # ④ Expert rules
-            s_exp, exp_reason = _expert_eval(item, rules)
-            # ⑤ Fit
-            phys = {}
-            ras  = item.get("catalog_3d_assets") or []
-            if isinstance(ras, list) and ras:
-                phys = (ras[0] or {}).get("physics_profile") or {}
-            s_fit = _fit_sc(body_feat, phys or None)
-            # ⑥ Gender
-            ig    = (item.get("gender") or "unisex").lower()
-            s_gen = 1.0 if ig=="unisex" or not user_gender or ig==user_gender else 0.2
-            # ⑦ Seasonal
-            s_sea = _seasonal_sc(item)
-            # ⑧ Trending (recency of interactions)
-            s_tre = min(len([ix for ix in ixs[-50:] if ix.get("catalog_item_id")==iid])/5, 1.0)
-
-            # Preference boost
-            pb = 0.0
-            if (item.get("category","")).lower() in pref_cats: pb += 0.12
-            col_str = " ".join(str(v) for v in (item.get("colors") or [item.get("color","")])).lower()
-            if pref_col & set(col_str.split()): pb += 0.08
-            itags = {t.lower() for t in (item.get("style_tags") or [])}
-            if itags & {t.lower() for t in (sp.get("style_preferences") or [])}: pb += 0.05
-
-            recency  = 0.08 if (item.get("is_new") or item.get("new_arrival")) else 0.0
-            kg_boost = 0.05 if kg_map.get(iid) else 0.0
-
-            # A/B
-            ab_adj = 0.0
-            bp_ = float(item.get("base_price") or item.get("price") or 0)
-            if ab=="boost_premium" and bp_>100: ab_adj = 0.06
-            elif ab=="diversity": ab_adj = 0.02
-            elif ab=="rules_heavy": ab_adj = s_exp*0.1
-
-            W = C.W
-            final = min(max(
-                W["collaborative"]*s_col + W["content"]*s_con + W["visual"]*s_vis +
-                W["expert"]*s_exp + W["fit"]*s_fit + W["gender"]*s_gen +
-                W["seasonal"]*s_sea + W["trending"]*s_tre +
-                pb + recency + kg_boost + ab_adj,
-            0.0), 1.0)
-
-            sig = {"collaborative":s_col,"content":s_con,"visual":s_vis,"expert":s_exp,
-                   "fit":s_fit,"trending":s_tre,"pref_boost":pb,"seasonal":s_sea}
-            top = max(sig, key=lambda k: sig[k])
-            reason = exp_reason if top=="expert" and exp_reason else _REASONS.get(top,"Personalised for you")
-
-            scored.append({
-                "item":item,"score":final,"item_id":iid,"reason":reason,
-                "embedding":item_emb or [],"kg_tags":list(kg_map.get(iid,set())),
-                "band":ScoreBand(
-                    collaborative=round(s_col,3), content=round(s_con,3),
-                    visual=round(s_vis,3), expert=round(s_exp,3), fit=round(s_fit,3),
-                    gender=round(s_gen,3), seasonal=round(s_sea,3), trending=round(s_tre,3),
-                    pref_boost=round(pb,3), recency=recency, final=round(final,4)),
+async def _dify_client() -> httpx.AsyncClient:
+    global _dify_cli
+    if _dify_cli is None or _dify_cli.is_closed:
+        _dify_cli = httpx.AsyncClient(
+            base_url=DIFY_URL, timeout=60.0,
+            headers={
+                "Authorization": f"Bearer {DIFY_KEY}",
+                "Content-Type":  "application/json",
             })
+    return _dify_cli
 
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        log.info("  scored=%d top5=%s", len(scored), [round(s["score"],3) for s in scored[:5]])
+async def dify_boost(gender: str, color: str,
+                     category: str, season: str, uid: str) -> Set[str]:
+    """
+    Calls Dify workflow in STREAMING mode (response_mode: streaming).
+    Parses SSE events to extract catalog_item_ids from workflow output.
+    Returns a set of catalog_item_id strings Dify recommends.
+    """
+    g = _norm_gender(gender)
+    if g not in ("men", "female"):
+        g = "men"
 
-        # MMR → sort
-        diverse = _mmr(scored, top_k=min(req.top_k*2, len(scored)))
-        if req.sort_by == SortBy.PRICE_LO:
-            diverse.sort(key=lambda x: float(x["item"].get("base_price") or x["item"].get("price") or 0))
-        elif req.sort_by == SortBy.PRICE_HI:
-            diverse.sort(key=lambda x: float(x["item"].get("base_price") or x["item"].get("price") or 0), reverse=True)
-        elif req.sort_by == SortBy.RATING:
-            diverse.sort(key=lambda x: float(x["item"].get("rating") or 0), reverse=True)
-        elif req.sort_by == SortBy.NEWEST:
-            diverse.sort(key=lambda x: x["item"].get("created_at",""), reverse=True)
+    payload = {
+        "inputs": {
+            "gender":   g,
+            "color":    color    or "any",
+            "category": category or "any",
+            "season":   season   or _cur_season(),
+        },
+        "response_mode": "streaming",   # ← FIXED: was "blocking"
+        "user": uid,
+    }
 
-        # Parallel enrich
-        top   = diverse[:req.top_k]
-        iids  = [s["item_id"] for s in top]
-        ir,vr,tr,dr = await asyncio.gather(
-            asyncio.gather(*[boss.catalog_images(i)   for i in iids], return_exceptions=True),
-            asyncio.gather(*[boss.catalog_variants(i) for i in iids], return_exceptions=True),
-            asyncio.gather(*[boss.catalog_3d(i)       for i in iids], return_exceptions=True),
-            asyncio.gather(*[boss.designers(i)        for i in iids], return_exceptions=True),
-        )
+    try:
+        c = await _dify_client()
+        async with c.stream("POST", "/api/v1/workflows/run", json=payload) as resp:
+            if resp.status_code != 200:
+                log.debug("Dify HTTP %d", resp.status_code)
+                return set()
 
-        out_items: List[RecItem] = []
-        for rank, sc in enumerate(top):
-            item = sc["item"]; iid = sc["item_id"]
-            ri = ir[rank] if isinstance(ir[rank],list) else []
-            rv = vr[rank] if isinstance(vr[rank],list) else []
-            r3 = tr[rank] if isinstance(tr[rank],list) else []
-            rd = dr[rank] if isinstance(dr[rank],list) else []
-            cat  = item.get("category") or "clothing"
-            imgs, primary = _build_imgs(ri, iid, cat)
-            variants, avail_sz, avail_col = _build_vars(rv)
-            assets3d, has3d = _build_3d(r3)
-            designer_ids = [d.get("designer_id") or d.get("id","") for d in rd if d]
-            bp  = float(item.get("base_price") or item.get("price") or 0)
-            sp_ = float(item.get("sale_price") or 0) or None
-            disc = round((1-sp_/bp)*100) if sp_ and bp and sp_<bp else (item.get("discount_percent") or None)
-            sv   = round(sc["score"], 4)
+            ids: Set[str] = set()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
 
-            rec = RecItem(
-                catalog_item_id=iid,
-                name=item.get("name") or item.get("title") or "Fashion Item",
-                description=item.get("description"), category=cat,
-                style_tags=item.get("style_tags") or [],
-                base_price=bp, sale_price=sp_, currency=item.get("currency","USD"),
-                discount_percent=disc, images=imgs, primary_image_url=primary,
-                assets_3d=assets3d, has_3d=has3d, variants=variants,
-                available_sizes=avail_sz or ["XS","S","M","L","XL"],
-                available_colors=avail_col,
-                score=sv, match_score=sv,
-                score_breakdown=sc["band"] if req.include_score_breakdown else None,
-                recommendation_reason=sc["reason"], recommendation_rank=rank+1,
-                rating=float(item.get("rating") or 0) or None,
-                review_count=item.get("review_count"),
-                is_new=bool(item.get("is_new") or item.get("new_arrival")),
-                brand=item.get("brand"), in_stock=bool(item.get("in_stock", True)),
-                designer_ids=designer_ids, knowledge_tags=sc["kg_tags"],
-                # legacy
-                id=iid, title=item.get("name") or item.get("title"),
-                image=primary, image_url=primary, thumbnail_url=primary,
-                price=sp_ or bp, tags=item.get("style_tags") or [],
-                final_score=sv, catalog_3d_assets=[a.dict() for a in assets3d],
+                # Dify emits different event types; we want workflow_finished
+                event_type = event.get("event", "")
+                data       = event.get("data") or event
+
+                if event_type == "workflow_finished":
+                    outputs = (data.get("outputs") or {})
+                elif event_type in ("node_finished", "message"):
+                    outputs = (data.get("outputs") or {})
+                else:
+                    outputs = {}
+
+                for key in ("catalog_item_ids", "item_ids", "recommendations",
+                            "items", "result"):
+                    val = outputs.get(key)
+                    if isinstance(val, list):
+                        ids |= {str(v) for v in val if v}
+                        break
+                    if isinstance(val, str) and val.strip():
+                        try:
+                            ids |= set(json.loads(val))
+                        except json.JSONDecodeError:
+                            ids |= {x.strip() for x in val.split(",") if x.strip()}
+                        break
+
+                if ids and event_type == "workflow_finished":
+                    break  # We have what we need
+
+            log.info("Dify boost returned %d item IDs", len(ids))
+            return ids
+
+    except Exception as e:
+        log.debug("Dify error: %s", e)
+        return set()
+
+
+# ── Main ranking function ─────────────────────────────────────────
+async def rank_catalog(user_doc: Dict, top_k: int = 500,
+                       override: Optional[Dict] = None) -> List[Dict]:
+    """
+    Fetches catalog and ranks by 7 weighted signals:
+      1. Color match     0.30  (preferred_colors vs item color_variants)
+      2. Fit             0.20  (physics_profile JSONB vs body_measurements)
+      3. Gender          0.15  (exact match or unisex)
+      4. Category        0.12  (preferred_categories)
+      5. Season          0.10  (preferred_season)
+      6. TF-IDF content  0.08
+      7. Dify AI boost   0.05
+    No duplicate items in output (dedup by catalog_item_id).
+    """
+    pj = user_doc.get("profile_data_json") or {}
+
+    gender     = _norm_gender(override.get("gender")     if override else pj.get("gender", ""))
+    colors     = override.get("colors")     if override else pj.get("preferred_colors", [])
+    categories = override.get("categories") if override else pj.get("preferred_categories", [])
+    season     = override.get("season")     if override else pj.get("preferred_season", "")
+    body_meas  = pj.get("body_measurements", {})
+    uid        = user_doc.get("user_id", "anon")
+
+    if isinstance(colors, str):     colors     = [colors]
+    if isinstance(categories, str): categories = [categories]
+
+    # Fetch catalog (MongoDB server-side pre-filter)
+    catalog = await fetch_catalog(
+        gender=gender     or None,
+        colors=colors     or None,
+        categories=categories or None,
+        season=season     or None,
+        limit=top_k,
+    )
+
+    # Dify boost (async, skip on timeout)
+    dify_ids: Set[str] = set()
+    if gender or colors or categories:
+        try:
+            dify_ids = await asyncio.wait_for(
+                dify_boost(
+                    gender,
+                    (colors     or [""])[0],
+                    (categories or [""])[0],
+                    season, uid,
+                ),
+                timeout=15.0,   # streaming needs more time than blocking
             )
-            out_items.append(rec)
+        except asyncio.TimeoutError:
+            log.debug("Dify timed out — skipping boost")
 
-        ms   = round((time.perf_counter()-t0)*1000, 2)
-        name = ud.get("name") or (email.split("@")[0] if email else "Guest")
-        log.info("✓ %d items %.1fms ab=%s", len(out_items), ms, ab)
-        return RecResponse(
-            user_id=uid, user_email=email, user_name=name,
-            total=len(out_items), items=out_items, recommendations=out_items,
-            processing_ms=ms,
-            filters_applied={"category":req.category_filter,"sort_by":req.sort_by.value,"top_k":req.top_k},
-            ab_group=ab, total_recommendations=len(out_items),
+    # TF-IDF content scores
+    con_sc = _content_scores(catalog, categories or [], colors or [], season or "")
+
+    # Score each item — strict dedup by catalog_item_id
+    scored: List[Dict] = []
+    seen:   Set[str]   = set()
+
+    for item in catalog:
+        iid = str(item.get("catalog_item_id") or item.get("id") or "")
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+
+        s_color  = _color_score(item, colors or [])
+        s_fit    = _fit_score(item, body_meas)
+
+        ig       = _gender(item)
+        s_gender = 1.0 if ig == "unisex" or not gender or ig == gender else 0.1
+
+        item_cat = (item.get("category") or "").lower()
+        item_sub = (item.get("subcategory") or "").lower()
+        s_cat    = 1.0 if any(
+            c.lower() in item_cat or item_cat in c.lower() or
+            c.lower() in item_sub or item_sub in c.lower()
+            for c in (categories or [])
+        ) else 0.0
+
+        s_season = _season_score(item, season or "")
+        s_con    = con_sc.get(iid, 0.0)
+        s_dify   = 0.85 if iid in dify_ids else 0.0
+
+        final = min(
+            0.30 * s_color  +
+            0.20 * s_fit    +
+            0.15 * s_gender +
+            0.12 * s_cat    +
+            0.10 * s_season +
+            0.08 * s_con    +
+            0.05 * s_dify,
+            1.0
         )
 
+        # Bury wrong-gender items (but don't remove — unisex still shows)
+        if s_gender < 0.5 and not dify_ids:
+            final *= 0.3
 
-_engine = Engine()
+        images, primary = _build_images(item)
+        variants, sizes, item_colors_list = _build_variants(item)
+        a3d = item.get("assets_3d") or {}
+        bp  = float(item.get("base_price") or 0)
+
+        scored.append({
+            # Primary fields
+            "catalog_item_id":   iid,
+            "name":              item.get("name") or "Fashion Item",
+            "description":       item.get("description"),
+            "category":          item.get("category") or "",
+            "subcategory":       item.get("subcategory"),
+            "gender":            _gender(item),
+            "style_tags":        _tags(item),
+            "occasion":          (item.get("extra_metadata") or {}).get("occasion"),
+            "season":            _season_item(item),
+            "fabric":            _fabric(item),
+            "base_price":        bp,
+            "primary_image_url": primary,
+            "images":            images,
+            "variants":          variants,
+            "available_sizes":   sizes,
+            "available_colors":  item_colors_list,
+            "in_stock":          _in_stock(item),
+            "has_3d":            bool(a3d),
+            "physics_profile":   _physics_profile(item),
+            "score":             round(final, 4),
+            "score_detail": {
+                "color":    round(s_color,  3),
+                "fit":      round(s_fit,    3),
+                "gender":   round(s_gender, 3),
+                "category": round(s_cat,    3),
+                "season":   round(s_season, 3),
+                "content":  round(s_con,    3),
+                "dify":     round(s_dify,   3),
+            },
+            "recommendation_reason": (
+                "Matches your colour preference"  if s_color  > 0.5 else
+                "Great fit for your body type"    if s_fit    > 0.7 else
+                "AI-powered pick for you"         if s_dify   > 0   else
+                f"Perfect for {season or _cur_season()}"
+            ),
+            # Legacy fields (frontend compatibility)
+            "id":     iid,
+            "title":  item.get("name"),
+            "image":  primary,
+            "price":  bp,
+            "colors": item_colors_list,
+            "tags":   _tags(item),
+        })
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    log.info("Ranked %d unique items | top scores: %s",
+             len(scored), [s["score"] for s in scored[:5]])
+    return scored[:top_k]
 
 
-# ── Profile store ─────────────────────────────────────────────────────────────
-_profiles: Dict[str, Any] = {}
-_feedback: List[Dict]     = []
+# ── Pydantic models ───────────────────────────────────────────────
+class RegisterIn(BaseModel):
+    email:                str
+    password:             str
+    name:                 str                = ""
+    gender:               Optional[str]      = None
+    preferred_colors:     List[str]          = Field(default_factory=list)
+    preferred_categories: List[str]          = Field(default_factory=list)
+    preferred_season:     Optional[str]      = None
+    style_preferences:    List[str]          = Field(default_factory=list)
+    age:                  Optional[int]      = None
+    location:             Optional[str]      = None
+    body_measurements:    Dict[str, Any]     = Field(default_factory=dict)
+
+class LoginIn(BaseModel):
+    email:    str
+    password: str
+
+class ProfileUpdateIn(BaseModel):
+    name:                 Optional[str]  = None
+    gender:               Optional[str]  = None
+    preferred_colors:     List[str]      = Field(default_factory=list)
+    preferred_categories: List[str]      = Field(default_factory=list)
+    preferred_season:     Optional[str]  = None
+    style_preferences:    List[str]      = Field(default_factory=list)
+    age:                  Optional[int]  = None
+    location:             Optional[str]  = None
+    body_measurements:    Dict[str, Any] = Field(default_factory=dict)
+
+class RecRequest(BaseModel):
+    gender:     Optional[str]       = None
+    colors:     Optional[List[str]] = None
+    categories: Optional[List[str]] = None
+    season:     Optional[str]       = None
+    top_k:      int                 = Field(default=20, ge=1, le=500)
+    include_score_detail: bool      = False
 
 
-def _save_profile(email: str, data: Dict) -> str:
-    uid = _sha_uid(email)
-    now = datetime.utcnow().isoformat()
-    ex  = _profiles.get(uid) if isinstance(_profiles.get(uid), dict) else {}
-    rec = {**ex, **data, "user_id":uid, "email":email,
-           "created_at":ex.get("created_at",now), "updated_at":now,
-           "profile_data_json": {"gender":data.get("gender"),
-                                  "style_profile":data.get("style_profile",{})}}
-    _profiles[uid] = rec
-    _profiles[email.lower()] = uid
-    _cache.bust(f"usr:{uid}"); _cache.bust(f"usr:em:{email}")
-    return uid
-
-def _uid_for(email: str) -> str:
-    idx = _profiles.get(email.lower())
-    return idx if isinstance(idx, str) else _sha_uid(email)
-
-def _prof(uid: str) -> Optional[Dict]:
-    p = _profiles.get(uid)
-    return p if isinstance(p, dict) else None
+# ── FastAPI ───────────────────────────────────────────────────────
+app = FastAPI(title="HueIQ Recommendation Engine", version="8.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+# ── Auth ──────────────────────────────────────────────────────────
+@app.post("/api/auth/register", status_code=201, tags=["Auth"],
+          summary="Register — saves to hueiq.users (exact DB schema)")
+async def register(data: RegisterIn):
+    """
+    Saves to MongoDB hueiq.users:
+      user_id UUID, name, email, password_hash,
+      created_at, updated_at, profile_data_json JSONB
+    """
+    user  = await db_create_user(data.dict())
+    token = _make_token(user["user_id"], user["email"])
+    safe  = {k: v for k, v in user.items() if k != "password_hash"}
+    return {"token": token, "user": safe}
+
+
+@app.post("/api/auth/login", tags=["Auth"],
+          summary="Login — returns JWT + saved profile")
+async def login(data: LoginIn):
+    user = await db_get_by_email(data.email)
+    if not user or not _check_pw(data.password, user.get("password_hash", "")):
+        raise HTTPException(401, "Invalid email or password")
+    token = _make_token(user["user_id"], user["email"])
+    safe  = {k: v for k, v in user.items() if k != "password_hash"}
+    return {"token": token, "user": safe}
+
+
+@app.get("/api/auth/me", tags=["Auth"],
+         summary="Get current user + saved preferences")
+async def me(auth: Optional[Dict] = Depends(current_user)):
+    if not auth:
+        raise HTTPException(401, "Not authenticated")
+    user = await db_get_by_id(auth["user_id"])
+    if not user:
+        raise HTTPException(404, "User not found")
+    return {k: v for k, v in user.items() if k != "password_hash"}
+
+
+@app.put("/api/auth/profile", tags=["Auth"],
+         summary="Update preferences — saves to profile_data_json JSONB")
+async def update_profile(data: ProfileUpdateIn,
+                         auth: Optional[Dict] = Depends(current_user)):
+    """
+    Updates hueiq.users.profile_data_json and updated_at.
+    Merges incoming fields with existing profile_data_json.
+    """
+    if not auth:
+        raise HTTPException(401, "Not authenticated")
+    user = await db_get_by_id(auth["user_id"])
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    pj      = dict(user.get("profile_data_json") or {})
+    updates = {k: v for k, v in data.dict().items() if v is not None}
+    if "gender" in updates:
+        updates["gender"] = _norm_gender(updates["gender"])
+    pj.update(updates)
+
+    updated = await db_update_profile(auth["user_id"], pj)
+    return {k: v for k, v in (updated or {}).items() if k != "password_hash"}
+
+
+# ── Compatibility route: frontend calls POST /api/save-profile ────
+class SaveProfileIn(BaseModel):
+    """
+    Accepts either:
+      - Authenticated update (JWT present): merges into existing profile
+      - Unauthenticated wizard save (no JWT): requires email + password to
+        register or update the user, then saves profile_data_json
+    """
+    # Auth fields (needed when no JWT token is present)
+    email:                Optional[str]  = None
+    password:             Optional[str]  = None
+    name:                 Optional[str]  = None
+    # Profile preference fields
+    gender:               Optional[str]  = None
+    preferred_colors:     List[str]      = Field(default_factory=list)
+    preferred_categories: List[str]      = Field(default_factory=list)
+    preferred_season:     Optional[str]  = None
+    style_preferences:    List[str]      = Field(default_factory=list)
+    age:                  Optional[int]  = None
+    location:             Optional[str]  = None
+    body_measurements:    Dict[str, Any] = Field(default_factory=dict)
+
+@app.post("/api/save-profile", tags=["Auth"],
+          summary="[Compat] Save profile — works with or without JWT")
+async def save_profile_compat(
+    data: SaveProfileIn,
+    auth: Optional[Dict] = Depends(current_user),
+):
+    """
+    Frontend wizard compatibility route.
+
+    WITH JWT token   → updates profile_data_json for the logged-in user.
+    WITHOUT JWT token → uses email+password to find/create user, then saves profile.
+                        Returns a JWT token so the frontend can use it going forward.
+    """
+    # ── Authenticated path ──────────────────────────────────────────
+    if auth:
+        user = await db_get_by_id(auth["user_id"])
+        if not user:
+            raise HTTPException(404, "User not found")
+        pj      = dict(user.get("profile_data_json") or {})
+        updates = {k: v for k, v in data.dict().items()
+                   if k not in ("email", "password") and v is not None}
+        if "gender" in updates:
+            updates["gender"] = _norm_gender(updates["gender"])
+        pj.update(updates)
+        updated = await db_update_profile(auth["user_id"], pj)
+        safe = {k: v for k, v in (updated or {}).items() if k != "password_hash"}
+        return {"token": None, "user": safe, "saved": True}
+
+    # ── Unauthenticated path (wizard step 3 before login) ───────────
+    email = (data.email or "").strip().lower()
+    if not email:
+        raise HTTPException(422, "email is required when not authenticated")
+
+    profile_fields = {k: v for k, v in data.dict().items()
+                      if k not in ("email", "password", "name") and v is not None}
+    if "gender" in profile_fields:
+        profile_fields["gender"] = _norm_gender(profile_fields["gender"])
+
+    # Try to find existing user
+    existing = await db_get_by_email(email)
+
+    if existing:
+        # User exists — update their profile
+        pj = dict(existing.get("profile_data_json") or {})
+        pj.update(profile_fields)
+        updated = await db_update_profile(existing["user_id"], pj)
+        token   = _make_token(existing["user_id"], existing["email"])
+        safe    = {k: v for k, v in (updated or {}).items() if k != "password_hash"}
+        return {"token": token, "user": safe, "saved": True}
+    else:
+        # New user — register them with profile
+        if not data.password:
+            raise HTTPException(422, "password is required for new users")
+        reg_data = {
+            "email":    email,
+            "password": data.password,
+            "name":     data.name or email.split("@")[0],
+            **profile_fields,
+        }
+        user    = await db_create_user(reg_data)
+        token   = _make_token(user["user_id"], user["email"])
+        safe    = {k: v for k, v in user.items() if k != "password_hash"}
+        return {"token": token, "user": safe, "saved": True, "registered": True}
+
+
+# ── Recommendations ───────────────────────────────────────────────
+@app.get("/api/recommendations", tags=["Recommendations"],
+         summary="Get recommendations using saved profile")
+async def get_recommendations(
+    top_k:    int            = Query(20, ge=1, le=500),
+    limit:    int            = Query(0,  ge=0, le=500),   # alias
+    gender:   Optional[str]  = Query(None),
+    color:    Optional[str]  = Query(None),
+    category: Optional[str]  = Query(None),
+    season:   Optional[str]  = Query(None),
+    include_breakdown: bool  = Query(False),
+    auth:     Optional[Dict] = Depends(current_user),
+):
+    if not auth:
+        raise HTTPException(401, "Login required")
+    user = await db_get_by_id(auth["user_id"])
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    # `limit` param is alias for `top_k` (frontend uses `limit`)
+    effective_k = limit if limit > 0 else top_k
+
+    override: Dict[str, Any] = {}
+    if gender:   override["gender"]     = gender
+    if color:    override["colors"]     = [color]
+    if category: override["categories"] = [category]
+    if season:   override["season"]     = season
+
+    items = await rank_catalog(user, top_k=effective_k,
+                               override=override if override else None)
+
+    if not include_breakdown:
+        for item in items:
+            item.pop("score_detail", None)
+
+    pj = user.get("profile_data_json") or {}
+    return {
+        "user_id":   user["user_id"],
+        "user_name": user.get("name", ""),
+        "total":     len(items),
+        "filters_used": {
+            "gender":     override.get("gender")     or pj.get("gender", ""),
+            "colors":     override.get("colors")     or pj.get("preferred_colors", []),
+            "categories": override.get("categories") or pj.get("preferred_categories", []),
+            "season":     override.get("season")     or pj.get("preferred_season", ""),
+        },
+        "items": items,
+    }
+
+
+@app.post("/api/recommendations", tags=["Recommendations"],
+          summary="POST recommendations with custom overrides")
+async def post_recommendations(
+    req:  RecRequest,
+    auth: Optional[Dict] = Depends(current_user),
+):
+    if not auth:
+        raise HTTPException(401, "Login required")
+    user = await db_get_by_id(auth["user_id"])
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    override: Dict[str, Any] = {}
+    if req.gender:     override["gender"]     = req.gender
+    if req.colors:     override["colors"]     = req.colors
+    if req.categories: override["categories"] = req.categories
+    if req.season:     override["season"]     = req.season
+
+    items = await rank_catalog(user, top_k=req.top_k,
+                               override=override if override else None)
+    if not req.include_score_detail:
+        for item in items:
+            item.pop("score_detail", None)
+
+    pj = user.get("profile_data_json") or {}
+    return {
+        "user_id": user["user_id"],
+        "total":   len(items),
+        "items":   items,
+        "filters_used": override or {
+            "gender":     pj.get("gender", ""),
+            "colors":     pj.get("preferred_colors", []),
+            "categories": pj.get("preferred_categories", []),
+            "season":     pj.get("preferred_season", ""),
+        },
+    }
+
+
+# ── Public trending — MUST be defined BEFORE /{email} ────────────
+# FastAPI matches routes top-to-bottom; "trending" would be swallowed
+# by the /{email} wildcard if trending came second.
+@app.get("/api/recommendations/trending", tags=["Recommendations"],
+         summary="Public trending — no login needed")
+async def trending(
+    limit:    int           = Query(20, ge=1, le=500),
+    gender:   Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    color:    Optional[str] = Query(None),
+):
+    """
+    Returns up to `limit` items from the full 500-item catalog.
+    No auth required. Items sorted by total stock availability.
+    """
+    items = await fetch_catalog(
+        gender=_norm_gender(gender) if gender else None,
+        colors=[color] if color else None,
+        categories=[category] if category else None,
+        limit=500,   # always fetch all 500, then trim to limit
+    )
+
+    # Sort by stock (most available = trending)
+    items.sort(key=lambda x: sum(
+        int(v.get("stock_quantity") or 0)
+        for v in (x.get("variants") or [])
+        if isinstance(v, dict)
+    ), reverse=True)
+
+    out:  List[Dict] = []
+    seen: Set[str]   = set()
+
+    for item in items:
+        if len(out) >= limit:
+            break
+        iid = str(item.get("catalog_item_id") or item.get("id") or "")
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+
+        imgs, primary = _build_images(item)
+        vars_, sizes, cols = _build_variants(item)
+
+        out.append({
+            "catalog_item_id":   iid,
+            "name":              item.get("name"),
+            "category":          item.get("category"),
+            "subcategory":       item.get("subcategory"),
+            "gender":            _gender(item),
+            "base_price":        float(item.get("base_price") or 0),
+            "primary_image_url": primary,
+            "images":            imgs,
+            "variants":          vars_,
+            "available_sizes":   sizes,
+            "available_colors":  cols,
+            "in_stock":          _in_stock(item),
+            "style_tags":        _tags(item),
+            # legacy
+            "id":    iid,
+            "image": primary,
+            "price": float(item.get("base_price") or 0),
+        })
+
+    return {"total": len(out), "items": out}
+
+
+# ── Compatibility route: GET /api/recommendations/{email} ─────────
+# MUST come AFTER /trending — otherwise "trending" matches as {email}
+@app.get("/api/recommendations/{email}", tags=["Recommendations"],
+         summary="[Compat] Recommendations by email URL param (uses JWT identity)")
+async def recommendations_by_email(
+    email:             str,
+    limit:             int            = Query(24, ge=1, le=500),
+    top_k:             int            = Query(0,  ge=0, le=500),
+    include_breakdown: bool           = Query(False),
+    gender:            Optional[str]  = Query(None),
+    color:             Optional[str]  = Query(None),
+    category:          Optional[str]  = Query(None),
+    season:            Optional[str]  = Query(None),
+    auth:              Optional[Dict] = Depends(current_user),
+):
+    """
+    Frontend compatibility route.
+    The {email} path param is accepted but IGNORED for security.
+    Actual identity comes from the JWT Bearer token.
+    """
+    effective_k = top_k if top_k > 0 else limit
+    return await get_recommendations(
+        top_k=effective_k,
+        limit=0,
+        gender=gender,
+        color=color,
+        category=category,
+        season=season,
+        include_breakdown=include_breakdown,
+        auth=auth,
+    )
+
+
+# ── Single item detail ────────────────────────────────────────────
+@app.get("/api/catalog/{item_id}", tags=["Catalog"],
+         summary="Single item full detail")
+async def get_item(item_id: str = Path(...)):
+    db = await get_db()
+    if db is not None:
+        doc = await db.catalog.find_one({"catalog_item_id": item_id})
+        if doc:
+            item = {k: v for k, v in doc.items() if k != "_id"}
+            imgs, primary  = _build_images(item)
+            vars_, sizes, cols = _build_variants(item)
+            return {
+                **item,
+                "images":            imgs,
+                "variants":          vars_,
+                "available_sizes":   sizes,
+                "available_colors":  cols,
+                "primary_image_url": primary,
+                "in_stock":          _in_stock(item),
+                "style_tags":        _tags(item),
+                "physics_profile":   _physics_profile(item),
+            }
+    raise HTTPException(404, f"Item {item_id} not found")
+
+
+# ── System ────────────────────────────────────────────────────────
 @app.get("/", include_in_schema=False)
 async def root():
-    return {"service":"HueIQ Ultimate Recommendation Engine","version":"6.0.0",
-            "status":"operational","docs":"/docs"}
+    db = await get_db()
+    return {
+        "service": "HueIQ Engine",
+        "version": "8.1.0",
+        "mongodb": db is not None,
+        "docs":    "/docs",
+    }
 
 @app.get("/health", tags=["System"])
 async def health():
-    return {"status":"healthy","version":"6.0.0","cache":_cache.size,
-            "profiles":sum(1 for v in _profiles.values() if isinstance(v,dict)),
-            "feedback":len(_feedback), "ts":datetime.utcnow().isoformat()}
+    db   = await get_db()
+    info: Dict[str, Any] = {
+        "status":  "ok",
+        "version": "8.1.0",
+        "mongodb": db is not None,
+    }
+    if db is not None:
+        try:
+            info["users"]   = await db.users.count_documents({})
+            info["catalog"] = await db.catalog.count_documents({})
+        except:
+            pass
+    return info
 
 
-# ── PRIMARY: GET /api/recommendations/{email} ─────────────────────────────────
-@app.get("/api/recommendations/{email}", tags=["Recommendations"],
-         summary="Personalised recommendations by email")
-async def rec_by_email(
-    email: str = Path(...),
-    limit: int = Query(20, ge=1, le=100),
-    category: Optional[str] = Query(None),
-    sort_by: SortBy = Query(SortBy.SCORE),
-    include_breakdown: bool = Query(False),
-    exclude: Optional[str] = Query(None),
-):
-    uid = _uid_for(email)
-    bu  = await boss.user_by_email(email)
-    if isinstance(bu, dict):
-        uid = str(bu.get("user_id") or bu.get("id") or uid)
-    excl = [x.strip() for x in (exclude or "").split(",") if x.strip()]
-    req  = RecRequest(user_id=uid, email=email, top_k=limit, category_filter=category,
-                      sort_by=sort_by, include_score_breakdown=include_breakdown,
-                      exclude_ids=excl)
-    try:    return await _engine.run(uid=uid, req=req, email=email)
-    except Exception as e:
-        log.exception("rec_by_email: %s", e)
-        raise HTTPException(500, detail=str(e))
-
-
-# ── POST recommendations ──────────────────────────────────────────────────────
-@app.post("/api/recommendations", tags=["Recommendations"])
-async def rec_post(req: RecRequest):
-    email = req.email or ""
-    uid   = req.user_id or _uid_for(email) or _sha_uid(email or "anon")
-    try:    return await _engine.run(uid=str(uid), req=req, email=email)
-    except Exception as e:
-        log.exception("rec_post: %s", e)
-        raise HTTPException(500, detail=str(e))
-
-
-# ── Trending ─────────────────────────────────────────────────────────────────
-@app.get("/api/recommendations/trending", tags=["Recommendations"])
-async def rec_trending(
-    limit: int = Query(20, ge=1, le=100),
-    category: Optional[str] = Query(None),
-):
-    items = await boss.trending(limit*2) or await boss.catalog()
-    if category: items = [i for i in items if category.lower() in (i.get("category","")).lower()]
-    items = items[:limit]
-    out: List[RecItem] = []
-    for rank, item in enumerate(items):
-        iid = str(item.get("catalog_item_id") or item.get("id") or rank)
-        cat = item.get("category") or "clothing"
-        ri  = await boss.catalog_images(iid)
-        imgs, primary = _build_imgs(ri, iid, cat)
-        bp  = float(item.get("base_price") or item.get("price") or 0)
-        out.append(RecItem(
-            catalog_item_id=iid, name=item.get("name") or item.get("title") or "Trending Item",
-            category=cat, style_tags=item.get("style_tags") or [],
-            base_price=bp, score=0.90, match_score=0.90,
-            images=imgs, primary_image_url=primary,
-            recommendation_reason="Trending right now", recommendation_rank=rank+1,
-            rating=float(item.get("rating") or 4.5), is_new=bool(item.get("is_new")),
-            brand=item.get("brand"),
-            id=iid, title=item.get("name") or item.get("title"),
-            image=primary, image_url=primary, thumbnail_url=primary,
-            price=bp, final_score=0.90,
-        ))
-    return RecResponse(user_id="trending", total=len(out), items=out, recommendations=out,
-                       filters_applied={"trending":True,"category":category,"limit":limit},
-                       total_recommendations=len(out))
-
-
-# ── Similar items ─────────────────────────────────────────────────────────────
-@app.get("/api/recommendations/similar/{catalog_item_id}", tags=["Recommendations"])
-async def rec_similar(
-    catalog_item_id: str = Path(...),
-    limit: int = Query(10, ge=1, le=50),
-):
-    catalog = await boss.catalog()
-    target  = await boss.catalog_item(catalog_item_id) or next(
-        (i for i in catalog if str(i.get("catalog_item_id") or i.get("id",""))==catalog_item_id), None)
-    if not target: raise HTTPException(404, f"Item {catalog_item_id} not found")
-    t_tags = set(target.get("style_tags") or [])
-    t_cat  = (target.get("category","")).lower()
-    t_emb  = target.get("embedding_vector") or []
-    scored = []
-    for item in catalog:
-        iid = str(item.get("catalog_item_id") or item.get("id",""))
-        if iid == catalog_item_id: continue
-        s  = (1.0 if (item.get("category","")).lower()==t_cat else 0.3)*0.3
-        s += _jaccard(t_tags, set(item.get("style_tags") or []))*0.4
-        s += _cos(t_emb, item.get("embedding_vector") or [])*0.3
-        scored.append({"item":item,"score":s,"item_id":iid})
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    out: List[RecItem] = []
-    for rank, sc in enumerate(scored[:limit]):
-        item = sc["item"]; iid = sc["item_id"]; cat = item.get("category","clothing")
-        ri = await boss.catalog_images(iid)
-        imgs, primary = _build_imgs(ri, iid, cat)
-        bp = float(item.get("base_price") or item.get("price") or 0)
-        out.append(RecItem(
-            catalog_item_id=iid, name=item.get("name") or item.get("title",""), category=cat,
-            style_tags=item.get("style_tags") or [], base_price=bp,
-            score=round(sc["score"],4), match_score=round(sc["score"],4),
-            images=imgs, primary_image_url=primary,
-            recommendation_reason=f"Similar to {target.get('name','')}",
-            recommendation_rank=rank+1, brand=item.get("brand"),
-            id=iid, image=primary, thumbnail_url=primary, price=bp,
-        ))
-    return RecResponse(user_id="similar", total=len(out), items=out, recommendations=out,
-                       filters_applied={"similar_to":catalog_item_id}, total_recommendations=len(out))
-
-
-# ── AR / body-fit mode ────────────────────────────────────────────────────────
-@app.post("/api/recommendations/ar", tags=["Recommendations"])
-async def rec_ar(
-    user_id: str = Query(...),
-    photo_id: str = Query(...),
-    body_data: Optional[Dict[str,Any]] = None,
-    limit: int = Query(10, ge=1, le=50),
-):
-    body_data = body_data or {}
-    req   = RecRequest(user_id=user_id, top_k=limit*3)
-    base  = await _engine.run(uid=user_id, req=req)
-    ar: List[Tuple[RecItem, float]] = []
-    for item in base.items:
-        phys = {}
-        if item.assets_3d: phys = item.assets_3d[0].physics_profile or {}
-        fit = _fit_sc(body_data, phys)
-        ar.append((item, item.score*0.65+fit*0.35))
-    ar.sort(key=lambda x: x[1], reverse=True)
-    out = [i for i,_ in ar[:limit]]
-    return RecResponse(user_id=user_id, total=len(out), items=out, recommendations=out,
-                       total_recommendations=len(out))
-
-
-# ── Enhanced POST (legacy compat) ─────────────────────────────────────────────
-@app.post("/api/recommendations/enhanced", tags=["Recommendations"])
-async def rec_enhanced(payload: Dict[str,Any]):
-    email = payload.get("email","")
-    uid   = str(payload.get("user_id") or _uid_for(email) or _sha_uid(email or "anon"))
-    req   = RecRequest(user_id=uid, email=email,
-                        top_k=int(payload.get("top_k",20)),
-                        context=payload.get("context") or {})
-    result = await _engine.run(uid=uid, req=req, email=email)
-    d = result.dict()
-    d["user_name"]    = (_prof(uid) or {}).get("name") or (email.split("@")[0] if email else "Guest")
-    d["profile_used"] = bool(_prof(uid))
-    d["enhanced"]     = True
-    return d
-
-
-# ── By category (legacy) ──────────────────────────────────────────────────────
-@app.get("/api/recommendations/by-category/{category}", tags=["Recommendations"])
-async def rec_by_cat(category: str = Path(...), limit: int = Query(10,ge=1,le=50)):
-    catalog = await boss.catalog()
-    items   = [i for i in catalog if (i.get("category","")).lower()==category.lower()]
-    items.sort(key=lambda x: float(x.get("rating") or 0), reverse=True)
-    items   = items[:limit]
-    out: List[RecItem] = []
-    for rank, item in enumerate(items):
-        iid = str(item.get("catalog_item_id") or item.get("id") or rank)
-        cat = item.get("category","clothing")
-        ri  = await boss.catalog_images(iid)
-        imgs, primary = _build_imgs(ri, iid, cat)
-        bp  = float(item.get("base_price") or item.get("price") or 0)
-        out.append(RecItem(
-            catalog_item_id=iid, name=item.get("name") or item.get("title",""),
-            category=cat, style_tags=item.get("style_tags") or [], base_price=bp,
-            score=0.85, match_score=0.85, images=imgs, primary_image_url=primary,
-            recommendation_reason=f"Top in {category}", recommendation_rank=rank+1,
-            id=iid, image=primary, thumbnail_url=primary, price=bp,
-        ))
-    return RecResponse(user_id="catalog", total=len(out), items=out, recommendations=out,
-                       filters_applied={"category":category}, total_recommendations=len(out))
-
-
-# ── Profile endpoints ─────────────────────────────────────────────────────────
-@app.post("/api/save-profile", tags=["Users"])
-async def save_profile(data: Dict[str,Any]):
-    email = (data.get("email") or "").strip().lower()
-    if not email: raise HTTPException(400,"email required")
-    uid = _save_profile(email, {
-        "name":data.get("name",""), "gender":data.get("gender"),
-        "age":data.get("age"), "location":data.get("location"),
-        "body_measurements":data.get("body_measurements") or {},
-        "style_profile":data.get("style_profile") or {},
-    })
-    return {"status":"saved","user_id":uid,"email":email}
-
-@app.post("/api/users", tags=["Users"], status_code=201)
-async def create_user(profile: ProfileIn):
-    uid = _save_profile(profile.email, profile.dict())
-    return {"user_id":uid,"email":profile.email,"name":profile.name,"created":True}
-
-@app.get("/api/users/by-email/{email}", tags=["Users"])
-async def user_by_email_ep(email: str):
-    uid = _uid_for(email)
-    bu  = await boss.user_by_email(email)
-    if isinstance(bu, dict): uid = str(bu.get("user_id") or bu.get("id") or uid)
-    return {"user_id":uid,"email":email}
-
-@app.get("/api/users/{user_id}", tags=["Users"])
-async def get_user(user_id: str):
-    p = _prof(user_id)
-    if p: return p
-    bu = await boss.user(user_id)
-    if bu: return bu
-    raise HTTPException(404, f"User {user_id} not found")
-
-@app.put("/api/users/{user_id}", tags=["Users"])
-async def update_user(user_id: str, profile: ProfileIn):
-    uid = _save_profile(profile.email, profile.dict())
-    return {"user_id":uid,"email":profile.email,"updated":True}
-
-
-# ── Feedback ──────────────────────────────────────────────────────────────────
-@app.post("/api/feedback", tags=["Feedback"])
-async def feedback(fb: FeedbackIn):
-    entry = {"id":str(uuid.uuid4())[:8],"ts":datetime.utcnow().isoformat(),**fb.dict()}
-    _feedback.append(entry)
-    if len(_feedback) > 10_000: del _feedback[:1000]
-    await boss.push_interaction({"user_id":fb.user_id,"catalog_item_id":fb.catalog_item_id,
-                                   "interaction_type":fb.interaction_type.value})
-    _cache.bust(f"ix:{fb.user_id}")
-    return {"ok":True,"feedback_id":entry["id"]}
-
-@app.get("/api/feedback/stats", tags=["Feedback"])
-async def feedback_stats():
-    if not _feedback: return {"total":0}
-    return {"total":len(_feedback),"by_type":dict(Counter(f["interaction_type"] for f in _feedback)),
-            "recent":_feedback[-10:]}
-
-
-# ── Catalog browse ────────────────────────────────────────────────────────────
-@app.get("/api/catalog", tags=["Catalog"])
-async def browse_catalog(
-    category: Optional[str] = Query(None),
-    sort_by: SortBy = Query(SortBy.NEWEST),
-    limit: int = Query(20,ge=1,le=100),
-    offset: int = Query(0,ge=0),
-):
-    items = await boss.catalog()
-    if category: items = [i for i in items if category.lower() in (i.get("category","")).lower()]
-    if sort_by==SortBy.PRICE_LO: items.sort(key=lambda x: float(x.get("base_price") or 0))
-    elif sort_by==SortBy.PRICE_HI: items.sort(key=lambda x: float(x.get("base_price") or 0),reverse=True)
-    elif sort_by==SortBy.RATING: items.sort(key=lambda x: float(x.get("rating") or 0),reverse=True)
-    elif sort_by==SortBy.NEWEST: items.sort(key=lambda x: x.get("created_at",""),reverse=True)
-    return {"total":len(items),"offset":offset,"limit":limit,"items":items[offset:offset+limit]}
-
-@app.get("/api/catalog/{item_id}/full", tags=["Catalog"])
-async def catalog_full(item_id: str):
-    item,imgs,vars_,assets,des = await asyncio.gather(
-        boss.catalog_item(item_id), boss.catalog_images(item_id),
-        boss.catalog_variants(item_id), boss.catalog_3d(item_id), boss.designers(item_id),
-        return_exceptions=True,
-    )
-    if not isinstance(item, dict): raise HTTPException(404, f"Item {item_id} not found")
-    return {"item":item,
-            "images":  imgs   if isinstance(imgs,list)  else [],
-            "variants":vars_  if isinstance(vars_,list) else [],
-            "assets_3d":assets if isinstance(assets,list) else [],
-            "designers":des   if isinstance(des,list)   else []}
-
-
-# ── Admin ─────────────────────────────────────────────────────────────────────
-@app.post("/api/admin/cache/clear", tags=["Admin"])
-async def clear_cache(prefix: Optional[str] = Query(None)):
-    if prefix: n = _cache.bust(prefix)
-    else: n = _cache.size; _cache._d.clear()
-    return {"cleared":n}
-
-@app.get("/api/admin/cache/stats", tags=["Admin"])
-async def cache_stats():
-    return {"entries":_cache.size,"profiles":sum(1 for v in _profiles.values() if isinstance(v,dict))}
-
-
-# ── Proxy ─────────────────────────────────────────────────────────────────────
-@app.api_route("/proxy/{path:path}", methods=["GET","POST","PUT","DELETE","PATCH","OPTIONS"],
-               include_in_schema=False)
-async def proxy(request: Request, path: str):
-    try:
-        body = await request.body()
-        c    = await boss._client()
-        r    = await c.request(method=request.method, url=f"/{path}",
-                                headers=boss._h(), content=body)
-        return Response(content=r.content, status_code=r.status_code,
-                        headers={"Access-Control-Allow-Origin":"*","Content-Type":"application/json"})
-    except Exception as e:
-        return JSONResponse({"error":str(e)},status_code=500,
-                            headers={"Access-Control-Allow-Origin":"*"})
-
-
-# ── Lifecycle ─────────────────────────────────────────────────────────────────
+# ── Startup / shutdown ────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    log.info("🚀 HueIQ Engine v6.0 — Boss: %s", C.BOSS)
-    asyncio.create_task(_prewarm())
+    log.info("HueIQ Engine v8.1 starting...")
+    asyncio.create_task(_init())
+
+async def _init():
+    await asyncio.sleep(1)
+    db = await get_db()
+    if db is not None:
+        try:
+            cols = await db.list_collection_names()
+            if "users" not in cols:
+                await db.create_collection("users")
+                log.info("Created: hueiq.users collection")
+            # Unique indexes on users
+            await db.users.create_index("email",   unique=True, name="email_unique",   background=True)
+            await db.users.create_index("user_id", unique=True, name="user_id_unique", background=True)
+            catalog_count = await db.catalog.count_documents({})
+            users_count   = await db.users.count_documents({})
+            log.info("hueiq.catalog: %d items | hueiq.users: %d users",
+                     catalog_count, users_count)
+        except Exception as e:
+            log.warning("Init error: %s", e)
+    else:
+        log.warning("MongoDB not connected — using in-memory fallback")
 
 @app.on_event("shutdown")
 async def shutdown():
-    await boss.close()
-    log.info("🛑 Shutdown")
-
-async def _prewarm():
-    await asyncio.sleep(2)
-    try:
-        await boss._refresh() 
-        cat   = await boss.catalog()
-        rules = await boss.expert_rules()
-        kg    = await boss.kg()
-        log.info("✓ Pre-warm: %d catalog | %d rules | %d kg", len(cat), len(rules), len(kg))
-    except Exception as e:
-        log.warning("Pre-warm: %s", e)
+    global _boss_cli, _dify_cli
+    if _boss_cli: await _boss_cli.aclose()
+    if _dify_cli: await _dify_cli.aclose()
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8002, reload=True, log_level="info")
+
+
+

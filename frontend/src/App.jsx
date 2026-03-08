@@ -1,7 +1,7 @@
-import ProfileWizard from "./ProfileWizard";
+import Fashionai from "./Fashionai";
 
 function App() {
-  return <ProfileWizard />;
+  return <Fashionai />;
 }
 
 export default App;
