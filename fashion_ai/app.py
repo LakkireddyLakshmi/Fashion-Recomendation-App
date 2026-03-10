@@ -939,9 +939,13 @@ def _build_images(item: Dict, viewer_gender: str = "") -> Tuple[List[Dict], Opti
         is_p     = bool(img.get("is_primary", False))
         # Use image's own color_variant; fall back to item-level color; then "default"
         effective_color = color_v or item_color or "default"
-        # Always use fallback — stored URLs in catalog may point to unrelated content
-        url = _fallback_url(iid, cat, effective_color, img_type or "front", gender,
-                            viewer_gender)
+        # Use real Boss API image URL if available; fall back to Unsplash
+        real_url = (img.get("image_url") or "").strip()
+        if real_url:
+            url = real_url
+        else:
+            url = _fallback_url(iid, cat, effective_color, img_type or "front", gender,
+                                viewer_gender)
         if is_p:
             log.debug("IMG primary item=%s cat=%s color=%s gender=%s → %s", iid, cat, effective_color, gender, url)
         out.append({
@@ -1548,7 +1552,7 @@ async def me(auth: Optional[Dict] = Depends(current_user)):
     user = await db_get_by_id(auth["user_id"])
     if not user:
         raise HTTPException(404, "User not found")
-    return {k: v for k, v in user.items() if k != "password_hash"}
+    return {k: v for k, v in user.items() if k not in ("password_hash", "_boss_token")}
 
 
 @app.put("/api/auth/profile", tags=["Auth"],
@@ -1569,7 +1573,7 @@ async def update_profile(data: ProfileUpdateIn,
     # exclude_unset=True: only fields explicitly sent in request body are included.
     # Without this, Pydantic fills defaults (preferred_colors=[], etc.) and
     # a simple name-update would wipe all saved preferences.
-    updates = {k: v for k, v in data.dict(exclude_unset=True).items() if v is not None}
+    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
     if "gender" in updates:
         updates["gender"] = _norm_gender(updates["gender"])
     # Deep-merge body_measurements so partial updates don't erase existing fields
@@ -1624,7 +1628,7 @@ async def save_profile_compat(
         if not user:
             raise HTTPException(404, "User not found")
         pj      = dict(user.get("profile_data_json") or {})
-        updates = {k: v for k, v in data.dict(exclude_unset=True).items()
+        updates = {k: v for k, v in data.model_dump(exclude_unset=True).items()
                    if k not in ("email", "password") and v is not None}
         if "gender" in updates:
             updates["gender"] = _norm_gender(updates["gender"])
@@ -1814,7 +1818,7 @@ async def trending(
         gender=_norm_gender(gender) if gender else None,
         colors=[color] if color else None,
         categories=[category] if category else None,
-        limit=500,   # always fetch all 500, then trim to limit
+        limit=50,    # fetch fewer items for faster response
     )
 
     # Sort by stock (most available = trending)
@@ -1987,7 +1991,7 @@ async def shutdown():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8002, reload=True, log_level="info")
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
 
 
 
