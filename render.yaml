@@ -18,10 +18,6 @@ services:
         sync: false
       - key: BOSS_ADMIN_PASSWORD
         sync: false
-      - key: MONGO_URI
-        sync: false
-      - key: DATABASE_NAME
-        sync: false
       - key: API_HOST
         value: "0.0.0.0"
       - key: DEBUG
@@ -36,6 +32,16 @@ services:
         value: "128"
       - key: VISUAL_DIM
         value: "512"
+      - key: DIFY_API_URL
+        sync: false
+      - key: DIFY_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRE_HOURS
+        value: "72"
+      - key: ALLOWED_ORIGINS
+        sync: false
 
   # ── Frontend: React Static Site ──
   - type: web
