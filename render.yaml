@@ -7,6 +7,7 @@ services:
     plan: standard
     buildCommand: pip install -r requirements.txt
     startCommand: cd fashion_ai && uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
