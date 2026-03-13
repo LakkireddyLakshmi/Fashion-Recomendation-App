@@ -75,7 +75,7 @@ const cleanName = (item) => {
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=League+Spartan:wght@300;400;500;600;700;800&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-  html,body,#root{width:100%;min-height:100%;}
+  html,body,#root{width:100%;min-height:100%;overflow-x:hidden;}
   body{font-family:'League Spartan',sans-serif;background:#06020e;}
   select option{background:#1a0a2e;color:#fff;}
   input::placeholder,textarea::placeholder{color:#D9D9D9;font-family:'League Spartan',sans-serif;font-weight:300;}
@@ -87,6 +87,33 @@ const CSS = `
   @keyframes chipIn{from{opacity:0;transform:translateY(-6px) scale(0.92);}to{opacity:1;transform:translateY(0) scale(1);}}
   @keyframes shimmer{0%{background-position:-200% center}100%{background-position:200% center}}
   @keyframes arrowPulse{0%,100%{transform:translateX(0)}50%{transform:translateX(5px)}}
+
+  /* ── Responsive ── */
+  @media(max-width:768px){
+    .glass-card{padding:24px 18px 28px !important;border-radius:28px !important;}
+    .step-bar-pill{padding:8px 14px !important;font-size:14px !important;gap:5px !important;}
+    .step-bar-pill svg{width:14px !important;height:14px !important;}
+    .rec-grid{grid-template-columns:repeat(2,1fr) !important;gap:10px !important;}
+    .form-grid-2{grid-template-columns:1fr !important;}
+    .form-grid-3{grid-template-columns:1fr 1fr !important;}
+    .fit-grid{grid-template-columns:repeat(2,1fr) !important;}
+    .top-picks-row{flex-wrap:wrap;}
+    .top-picks-row .picks-label{font-size:18px !important;}
+    .detail-grid{grid-template-columns:1fr !important;gap:20px !important;}
+    .detail-img-col{width:100% !important;display:flex;flex-direction:column;align-items:center;}
+    .detail-main-img{max-width:100% !important;height:auto !important;aspect-ratio:320/370;}
+  }
+  @media(max-width:480px){
+    .glass-card{padding:18px 14px 22px !important;border-radius:22px !important;}
+    .step-bar-pill{padding:6px 10px !important;font-size:12px !important;}
+    .step-bar-label{display:none;}
+    .rec-grid{grid-template-columns:1fr 1fr !important;gap:8px !important;}
+    .form-grid-3{grid-template-columns:1fr !important;}
+    .fit-grid{grid-template-columns:repeat(2,1fr) !important;}
+    .gender-row{flex-direction:column !important;gap:10px !important;}
+    .gender-row button{width:100% !important;}
+    .detail-main-img{height:280px !important;}
+  }
 `;
 
 const ALL_CITIES = [
@@ -714,6 +741,7 @@ function StepBar({ step }) {
           return (
             <div
               key={i}
+              className="step-bar-pill"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -734,7 +762,7 @@ function StepBar({ step }) {
               }}
             >
               {s.icon(active ? "#000" : "#fff")}
-              {s.label}
+              <span className="step-bar-label">{s.label}</span>
             </div>
           );
         })}
@@ -746,6 +774,7 @@ function StepBar({ step }) {
 function GlassCard({ children, style: ext = {} }) {
   return (
     <div
+      className="glass-card"
       style={{
         background:
           "linear-gradient(105.88deg, rgba(250,183,251,0.25) 9.1%, rgba(26,0,63,0.25) 82.69%)",
@@ -1361,6 +1390,7 @@ function StepBasicInfo({ data, setData, onNext }) {
           <NameInput value={data.name} onChange={set("name")} />
         </div>
         <div
+          className="form-grid-2"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
@@ -1368,7 +1398,7 @@ function StepBasicInfo({ data, setData, onNext }) {
             marginBottom: 14,
           }}
         >
-          <div style={{ display: "flex", gap: 12 }}>
+          <div className="gender-row" style={{ display: "flex", gap: 12 }}>
             {[
               {
                 id: "Male",
@@ -1744,7 +1774,7 @@ function StepStyle({ data, setData, onNext, onBack }) {
             <div style={{ flex:1, height:"1px", background:"linear-gradient(90deg, rgba(255,255,255,0.12) 0%, transparent 100%)" }}/>
           </div>
 
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
+          <div className="fit-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14 }}>
             {FIT_META.map((f, i) => {
               const active = i === fi;
               const dimBg   = f.glow.replace(/[\d.]+\)$/, "0.12)");
@@ -1915,7 +1945,7 @@ function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
         </div>
 
         {/* Row 1: Height, Weight, BMI */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:20 }}>
+        <div className="form-grid-3" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:20 }}>
           <MeasureSelect label="Height (CM)" value={data.height} onChange={e => set("height")(e.target.value)}>
             <option value="" style={{color:"#333"}}>Height</option>
             {Array.from({length:61},(_,i)=>i+140).map(h=><option key={h} value={h} style={{color:"#333"}}>{h} cm</option>)}
@@ -1941,7 +1971,7 @@ function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
         </div>
 
         {/* Row 2: Shoulder, Top, Bottom */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:20 }}>
+        <div className="form-grid-3" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:20 }}>
           <MeasureSelect label="Shoulder (CM)" value={data.shoulder} onChange={e => set("shoulder")(e.target.value)}>
             <option value="" style={{color:"#333"}}>Shoulder</option>
             {Array.from({length:31},(_,i)=>i+30).map(s=><option key={s} value={s} style={{color:"#333"}}>{s} cm</option>)}
@@ -1965,7 +1995,7 @@ function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
         </div>
 
         {/* Row 3: Body Type + Style Notes */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, marginBottom:20 }}>
+        <div className="form-grid-2" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, marginBottom:20 }}>
           <div>
             <div style={{ fontSize:10, fontWeight:700, letterSpacing:2.5, color:"rgba(255,255,255,0.55)", fontFamily:"'League Spartan'", textTransform:"uppercase", marginBottom:10, paddingLeft:2 }}>Body Type</div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
@@ -2296,6 +2326,7 @@ function StepFinish({ profile, recommendations, onSelectItem }) {
           </div>
         </div>
         <div
+          className="top-picks-row"
           style={{
             display: "flex",
             alignItems: "center",
@@ -2304,6 +2335,7 @@ function StepFinish({ profile, recommendations, onSelectItem }) {
           }}
         >
           <span
+            className="picks-label"
             style={{
               fontFamily: "'League Spartan'",
               fontWeight: 300,
@@ -2390,6 +2422,7 @@ function StepFinish({ profile, recommendations, onSelectItem }) {
           </div>
         ) : (
           <div
+            className="rec-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(3,1fr)",
@@ -2507,6 +2540,7 @@ function ProductDetail({ item, onBack }) {
           </button>
         </div>
         <div
+          className="detail-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "auto 1fr",
@@ -2514,14 +2548,16 @@ function ProductDetail({ item, onBack }) {
             alignItems: "start",
           }}
         >
-          <div style={{ width: 340 }}>
+          <div className="detail-img-col" style={{ width: 340, maxWidth: "100%" }}>
             <div
+              className="detail-main-img"
               style={{
                 borderRadius: 25,
                 overflow: "hidden",
                 border: "5px solid rgba(225,175,187,0.55)",
                 marginBottom: 14,
-                width: 320,
+                width: "100%",
+                maxWidth: 320,
                 height: 370,
               }}
             >
@@ -2547,6 +2583,7 @@ function ProductDetail({ item, onBack }) {
                     alt=""
                     style={{
                       width: 92,
+                      maxWidth: "30%",
                       height: 92,
                       borderRadius: 12,
                       objectFit: "cover",
