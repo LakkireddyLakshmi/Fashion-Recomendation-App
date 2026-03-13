@@ -59,7 +59,7 @@ _boss_cli: Optional[httpx.AsyncClient] = None
 async def _boss_client() -> httpx.AsyncClient:
     global _boss_cli
     if _boss_cli is None or _boss_cli.is_closed:
-        _boss_cli = httpx.AsyncClient(base_url=BOSS_URL, timeout=60.0)
+        _boss_cli = httpx.AsyncClient(base_url=BOSS_URL, timeout=20.0)
     return _boss_cli
 
 def _boss_headers(token: str = "") -> Dict[str, str]:
@@ -210,11 +210,7 @@ async def db_create_user(data: Dict) -> Dict:
             log.info("User %s already exists on Boss API — trying login", email)
             login_r = await c.post("/api/auth/login", json={
                 "email": email, "password": password,
-            }, headers={"Content-Type": "application/json"})
-            if login_r.status_code != 200:
-                login_r = await c.post("/api/auth/login", data={
-                    "username": email, "password": password,
-                })
+            }, headers={"Content-Type": "application/json"}, timeout=5.0)
             if login_r.status_code == 200:
                 login_data = login_r.json()
                 boss_token = login_data.get("access_token", "")
@@ -510,7 +506,7 @@ async def fetch_catalog(
                 seen2.add(iid)
                 filtered.append(item)
 
-    _cset(ck, filtered, 600)
+    _cset(ck, filtered, 1800)
     return filtered
 
 
@@ -1179,7 +1175,7 @@ async def _dify_client() -> httpx.AsyncClient:
     global _dify_cli
     if _dify_cli is None or _dify_cli.is_closed:
         _dify_cli = httpx.AsyncClient(
-            base_url=DIFY_URL, timeout=60.0,
+            base_url=DIFY_URL, timeout=10.0,
             headers={
                 "Authorization": f"Bearer {DIFY_KEY}",
                 "Content-Type":  "application/json",
@@ -1291,30 +1287,33 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     if isinstance(colors, str):     colors     = [colors]
     if isinstance(categories, str): categories = [categories]
 
-    # Fetch a large candidate pool using ONLY gender filter via Boss API.
-    # Color, category, and season are handled by the Python ranker (scoring),
-    # not by the DB query. This avoids the "13 items" problem where over-filtering
-    # returns too few candidates for meaningful ranking.
-    catalog = await fetch_catalog(
-        gender=gender or None,
-        limit=500,
-    )
+    # Fetch catalog and Dify boost concurrently.
+    # Don't pass gender to fetch_catalog — gender scoring is done by the ranker
+    # below (s_gender). This ensures the startup pre-loaded cache is always hit.
+    catalog_task = fetch_catalog(limit=50)
 
-    # Dify boost (async, skip on timeout)
-    dify_ids: Set[str] = set()
+    dify_task = None
     if gender or colors or categories:
-        try:
-            dify_ids = await asyncio.wait_for(
-                dify_boost(
-                    gender,
-                    (colors     or [""])[0],
-                    (categories or [""])[0],
-                    season, uid,
-                ),
-                timeout=15.0,
-            )
-        except asyncio.TimeoutError:
-            log.debug("Dify timed out — skipping boost")
+        dify_task = asyncio.wait_for(
+            dify_boost(
+                gender,
+                (colors     or [""])[0],
+                (categories or [""])[0],
+                season, uid,
+            ),
+            timeout=5.0,
+        )
+
+    if dify_task:
+        catalog, dify_result = await asyncio.gather(
+            catalog_task, dify_task, return_exceptions=True
+        )
+        dify_ids = dify_result if isinstance(dify_result, set) else set()
+        if isinstance(dify_result, Exception):
+            log.debug("Dify failed/timed out — skipping boost: %s", dify_result)
+    else:
+        catalog = await catalog_task
+        dify_ids: Set[str] = set()
 
     # TF-IDF content scores
     con_sc = _content_scores(catalog, categories or [], colors or [], season or "")
@@ -1351,20 +1350,21 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         s_con    = con_sc.get(iid, 0.0)
         s_dify   = 0.85 if iid in dify_ids else 0.0
 
+        # Weighted score — pure signal, no artificial base
         final = min(
-            0.30 * s_color  +
-            0.20 * s_fit    +
-            0.15 * s_gender +
-            0.12 * s_cat    +
+            0.25 * s_color  +
+            0.15 * s_fit    +
+            0.18 * s_gender +
+            0.14 * s_cat    +
             0.10 * s_season +
             0.08 * s_con    +
-            0.05 * s_dify,
+            0.10 * s_dify,
             1.0
         )
 
         # Bury wrong-gender items (but don't remove — unisex still shows)
         if s_gender < 0.5 and not dify_ids:
-            final *= 0.3
+            final *= 0.5
 
         images, primary = _build_images(item, viewer_gender=gender)
         variants, sizes, item_colors_list = _build_variants(item)
@@ -1654,18 +1654,13 @@ async def save_profile_compat(
     # Try to find existing user — check local cache first
     existing = await db_get_by_email(email)
 
-    # If not in cache, try Boss API login to check if user exists
+    # If not in cache, try Boss API login (single attempt) to check if user exists
     if not existing and data.password:
         try:
             c = await _boss_client()
             lr = await c.post("/api/auth/login", json={
                 "email": email, "password": data.password,
-            }, headers={"Content-Type": "application/json"})
-            if lr.status_code != 200:
-                # Try form-data format
-                lr = await c.post("/api/auth/login", data={
-                    "username": email, "password": data.password,
-                })
+            }, headers={"Content-Type": "application/json"}, timeout=5.0)
             if lr.status_code == 200:
                 login_data = lr.json()
                 boss_token = login_data.get("access_token", "")
@@ -1705,9 +1700,21 @@ async def save_profile_compat(
             return {"token": token, "user": safe, "saved": True, "registered": True}
         except HTTPException as e:
             if e.status_code == 409:
-                # User exists on Boss but login probe failed (wrong password?)
-                # Return a clear message so frontend can redirect to login
-                raise HTTPException(409, "Account already exists — please login with your original password")
+                # User exists on Boss but derived password didn't match.
+                # Save in-memory so recommendations still work this session.
+                uid = str(uuid.uuid4())
+                doc = {
+                    "user_id": uid, "name": data.name or email.split("@")[0],
+                    "email": email, "password_hash": _hash_pw(data.password),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "profile_data_json": profile_fields,
+                }
+                _mem_users[uid] = doc
+                _mem_email[email] = uid
+                token = _make_token(uid, email)
+                log.info("User %s exists on Boss but login failed — saved in-memory (uid=%s)", email, uid)
+                return {"token": token, "user": {k: v for k, v in doc.items() if k != "password_hash"}, "saved": True}
             raise
 
 
@@ -1967,20 +1974,21 @@ async def startup():
     asyncio.create_task(_init())
 
 async def _init():
-    await asyncio.sleep(1)
-    # Verify Boss API connectivity
-    try:
-        c = await _boss_client()
-        r = await c.get("/health", headers=_boss_headers(), timeout=5.0)
-        if r.status_code == 200:
-            log.info("Boss API connected → %s", BOSS_URL)
-            # Pre-fetch catalog to warm cache
-            items = await fetch_catalog(limit=500)
-            log.info("Catalog pre-loaded: %d items", len(items))
-        else:
+    # Try up to 2 times to connect and warm the catalog cache
+    for attempt in range(2):
+        try:
+            c = await _boss_client()
+            r = await c.get("/health", headers=_boss_headers(), timeout=15.0)
+            if r.status_code == 200:
+                log.info("Boss API connected → %s", BOSS_URL)
+                items = await fetch_catalog(limit=50)
+                log.info("Catalog pre-loaded: %d items", len(items))
+                return
             log.warning("Boss API health check failed (%d)", r.status_code)
-    except Exception as e:
-        log.warning("Boss API unreachable: %s — will retry on first request", e)
+        except Exception as e:
+            log.warning("Boss API unreachable (attempt %d): %s", attempt + 1, e)
+        if attempt == 0:
+            await asyncio.sleep(2)
 
 @app.on_event("shutdown")
 async def shutdown():

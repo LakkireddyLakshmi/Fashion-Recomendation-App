@@ -68,6 +68,9 @@ const resolvePrice = (item) =>
   item?.sale_price || item?.base_price || item?.price || 0;
 const resolveScore = (item) =>
   Math.round((item?.match_score || item?.score || 0.85) * 100);
+const cleanName = (item) => {
+  return item?.name || item?.title || "Fashion Item";
+};
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=League+Spartan:wght@300;400;500;600;700;800&display=swap');
@@ -997,9 +1000,10 @@ function ContinueBtn({ children, onClick, disabled, loading }) {
       style={{
         position: "relative",
         overflow: "hidden",
-        background: disabled
-          ? "rgba(255,255,255,0.1)"
+        backgroundImage: disabled
+          ? "none"
           : "linear-gradient(90deg,#f472b6,#a855f7,#6366f1,#a855f7,#f472b6)",
+        backgroundColor: disabled ? "rgba(255,255,255,0.1)" : "transparent",
         backgroundSize: "300% 100%",
         animation: disabled ? "none" : "shimmer 4s linear infinite",
         border: "none",
@@ -1120,11 +1124,12 @@ function EmailInput({ value, onChange }) {
   const floatUp = focused || hasValue;
 
   // gradient border colours
-  const gradBorder = isValid
+  const gradBorderImage = isValid
     ? "linear-gradient(135deg,#48d296,#00c9a7,#48d296)"
     : focused
     ? "linear-gradient(135deg,#fab7fb,#a855f7,#3b82f6,#fab7fb)"
-    : "rgba(255,255,255,0.14)";
+    : "none";
+  const gradBorderColor = (!isValid && !focused) ? "rgba(255,255,255,0.14)" : "transparent";
 
   const outerShadow = isValid
     ? "0 0 18px rgba(72,210,150,0.25)"
@@ -1138,7 +1143,8 @@ function EmailInput({ value, onChange }) {
       <div style={{
         padding: 2,
         borderRadius: 22,
-        background: gradBorder,
+        backgroundImage: gradBorderImage,
+        backgroundColor: gradBorderColor,
         backgroundSize: "200% 200%",
         animation: focused && !isValid ? "gradientShift 3s ease infinite" : "none",
         boxShadow: outerShadow,
@@ -1316,7 +1322,7 @@ function EmailInput({ value, onChange }) {
 }
 
 function StepBasicInfo({ data, setData, onNext }) {
-  const ok = data.email && data.name;
+  const ok = data.email && data.name && data.gender && data.age && data.city;
   const set = (k) => (v) => setData((d) => ({ ...d, [k]: v }));
   return (
     <Screen bg={BG1}>
@@ -1820,7 +1826,7 @@ function StepStyle({ data, setData, onNext, onBack }) {
         {/* ══ FOOTER ══ */}
         <div style={{ display:"flex", gap:12, padding:"0 28px 28px" }}>
           <BackBtn onClick={onBack} />
-          <ContinueBtn onClick={onNext}>Continue</ContinueBtn>
+          <ContinueBtn onClick={onNext} disabled={!(data.color && data.fit && data.size)}>Continue</ContinueBtn>
         </div>
       </GlassCard>
     </Screen>
@@ -1878,6 +1884,7 @@ function MeasureSelect({ label, value, onChange, children }) {
 
 function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
   const set = (k) => (v) => setData((d) => ({ ...d, [k]: v }));
+  const allFilled = data.height && data.weight && data.shoulder && data.shirtSize && data.pantsSize && data.bodyType;
 
   const bmi = useMemo(() => {
     const h = Number(data.height), w = Number(data.weight);
@@ -2010,7 +2017,7 @@ function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
 
         <div style={{ display:"flex", gap:14 }}>
           <BackBtn onClick={onBack} />
-          <ContinueBtn onClick={onSubmit} loading={loading}>
+          <ContinueBtn onClick={onSubmit} loading={loading} disabled={!allFilled}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="white" style={{marginRight:4}}>
               <path d="M8 0L9.8 5.6H15.6L10.8 8.8L12.6 14.4L8 11.2L3.4 14.4L5.2 8.8L0.4 5.6H6.2L8 0Z"/>
             </svg>
@@ -2031,11 +2038,19 @@ function ProductCard({ item, onClick, compact = false }) {
   const [wishlisted, setWishlisted] = useState(false);
   const img = resolveImg(item);
   const fb = `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&fit=crop&sig=${item?.catalog_item_id || "x"}`;
-  const name = item?.name || item?.title || "Fashion Item";
+  const name = cleanName(item);
   const price = resolvePrice(item);
-  const tags = resolveTags(item);
-  const disc = item?.discount_percent ? Math.round(item.discount_percent) : 40;
-  const rating = item?.rating?.toFixed(1) || "4.5";
+  const rawTags = resolveTags(item);
+  const tags = rawTags.filter((t, i, arr) => {
+    const tl = t.toLowerCase();
+    return !arr.slice(0, i).some(prev => {
+      const pl = prev.toLowerCase();
+      return pl === tl || pl.startsWith(tl) || tl.startsWith(pl);
+    });
+  });
+  const disc = item?.discount_percent ? Math.round(item.discount_percent) : 0;
+  const score = resolveScore(item);
+  const reason = item?.recommendation_reason || "";
   return (
     <div
       onClick={onClick}
@@ -2049,12 +2064,16 @@ function ProductCard({ item, onClick, compact = false }) {
         overflow: "hidden",
         cursor: "pointer",
         fontFamily: "'League Spartan',sans-serif",
-        transition: "transform 0.2s",
+        transition: "transform 0.2s, box-shadow 0.2s",
       }}
-      onMouseEnter={(e) =>
-        (e.currentTarget.style.transform = "translateY(-3px)")
-      }
-      onMouseLeave={(e) => (e.currentTarget.style.transform = "none")}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = "translateY(-4px)";
+        e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.35)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = "none";
+        e.currentTarget.style.boxShadow = "0px 4px 4px rgba(0,0,0,0.25)";
+      }}
     >
       <div style={{ position: "relative" }}>
         <img
@@ -2069,80 +2088,32 @@ function ProductCard({ item, onClick, compact = false }) {
             borderRadius: "10px 10px 0 0",
           }}
         />
+        {/* Match score badge */}
+        <div style={{
+          position: "absolute", top: 8, left: 8,
+          background: score >= 70 ? "rgba(72,210,150,0.85)" : score >= 40 ? "rgba(168,85,247,0.85)" : "rgba(99,102,241,0.85)",
+          backdropFilter: "blur(5px)", borderRadius: 8, padding: "5px 10px",
+          fontSize: 12, fontWeight: 700, color: "#fff", letterSpacing: 0.3,
+        }}>
+          {score}% Match
+        </div>
         {item?.has_3d && (
-          <div
-            style={{
-              position: "absolute",
-              top: 8,
-              right: 8,
-              background: "rgba(255,255,255,0.55)",
-              backdropFilter: "blur(5px)",
-              borderRadius: 10,
-              padding: "6px 10px",
-              fontSize: 16.12,
-              fontWeight: 600,
-              color: "#fff",
-              lineHeight: "15px",
-            }}
-          >
+          <div style={{
+            position: "absolute", top: 8, right: 8,
+            background: "rgba(255,255,255,0.55)", backdropFilter: "blur(5px)",
+            borderRadius: 10, padding: "6px 10px",
+            fontSize: 16.12, fontWeight: 600, color: "#fff", lineHeight: "15px",
+          }}>
             3D
           </div>
         )}
-        <div
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            padding: "6px 8px 8px",
-            background: "linear-gradient(transparent,rgba(0,0,0,0.28))",
-          }}
-        >
-          <div
-            style={{
-              background: "rgba(255,255,255,0.55)",
-              backdropFilter: "blur(5px)",
-              borderRadius: 10,
-              padding: "6px 10px",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 16.12,
-              fontWeight: 300,
-              color: "#fff",
-              lineHeight: "15px",
-            }}
-          >
-            Slide
-            <span
-              style={{
-                width: 4,
-                height: 4,
-                borderRadius: "50%",
-                background: "#fff",
-                display: "inline-block",
-              }}
-            />
-            1/{Math.max(item?.images?.length || 1, 3)}
-          </div>
-          {/* Play button */}
-          <button
-            onClick={(e) => { e.stopPropagation(); onClick?.(); }}
-            style={{
-              width: 30, height: 30, borderRadius: 25, flexShrink: 0,
-              background: "rgba(255,255,255,0.55)", backdropFilter: "blur(5px)",
-              border: "none", cursor: "pointer", display: "flex",
-              alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <svg width="12" height="14" viewBox="0 0 12 14" fill="black">
-              <path d="M0 0L12 7L0 14V0Z" />
-            </svg>
-          </button>
-          {/* Like button */}
+        {/* Bottom overlay: like + wishlist */}
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          display: "flex", alignItems: "center", justifyContent: "flex-end",
+          gap: 6, padding: "20px 8px 8px",
+          background: "linear-gradient(transparent,rgba(0,0,0,0.35))",
+        }}>
           <button
             onClick={(e) => { e.stopPropagation(); setLiked(!liked); }}
             style={{
@@ -2157,7 +2128,6 @@ function ProductCard({ item, onClick, compact = false }) {
               <path d="M7 12L1.2 6.2C0.4 5.4 0 4.4 0 3.3 0 1.5 1.5 0 3.3 0c1 0 2 .5 2.7 1.3L7 2.6l1-1.3C8.7.5 9.7 0 10.7 0 12.5 0 14 1.5 14 3.3c0 1.1-.4 2.1-1.2 2.9L7 12z" />
             </svg>
           </button>
-          {/* Wishlist button */}
           <button
             onClick={(e) => { e.stopPropagation(); setWishlisted(!wishlisted); }}
             style={{
@@ -2173,144 +2143,60 @@ function ProductCard({ item, onClick, compact = false }) {
               <circle cx="7" cy="7" r="2" fill={wishlisted ? "rgba(138,43,226,0.8)" : "white"} />
             </svg>
           </button>
-          <div
-            style={{
-              marginLeft: "auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-            }}
-          >
-            <svg
-              width="11"
-              height="10"
-              viewBox="0 0 11 10"
-              fill="rgba(255,255,255,0.75)"
-            >
-              <path d="M5.5 0L6.9 3.8H11L7.8 6.1L9 9.9L5.5 7.7L2 9.9L3.2 6.1L0 3.8H4.1L5.5 0Z" />
-            </svg>
-            <span
-              style={{
-                fontSize: 14.33,
-                fontWeight: 300,
-                color: "#fff",
-                lineHeight: "13px",
-              }}
-            >
-              {rating}
-            </span>
-          </div>
         </div>
       </div>
-      <div style={{ padding: "10px 14px 14px" }}>
-        <div
-          style={{
-            fontSize: 16.12,
-            fontWeight: 300,
-            color: "#fff",
-            lineHeight: "15px",
-            marginBottom: 6,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
+      <div style={{ padding: "10px 14px 14px", background: "#fff", borderRadius: "0 0 16px 16px" }}>
+        <div style={{
+          fontSize: 16, fontWeight: 600, color: "#1E1E1E", lineHeight: "18px",
+          marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
           {name}
         </div>
-        <div
-          style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap" }}
-        >
-          {tags.slice(0, 2).map((t, i) => (
-            <span
-              key={i}
-              style={{
-                background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(5px)",
-                borderRadius: 5,
-                padding: "3px 6px",
-                fontSize: 8.36,
-                fontWeight: 300,
-                color: "#1E1E1E",
-                lineHeight: "8px",
-                textTransform: "uppercase",
-                display: "flex",
-                alignItems: "flex-end",
-              }}
-            >
+        {reason && (
+          <div style={{
+            fontSize: 10, fontWeight: 300, color: "#888",
+            marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {reason}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
+          {tags.slice(0, 3).map((t, i) => (
+            <span key={i} style={{
+              background: i === 0 ? "rgba(138,43,226,0.12)" : "rgba(0,0,0,0.06)",
+              borderRadius: 5, padding: "3px 6px",
+              fontSize: 8.36, fontWeight: i === 0 ? 500 : 300,
+              color: i === 0 ? "#7c3aed" : "#555",
+              lineHeight: "8px", textTransform: "uppercase",
+              display: "flex", alignItems: "flex-end",
+            }}>
               {t}
             </span>
           ))}
-          {tags.length > 2 && (
-            <span
-              style={{
-                background: "#fff",
-                backdropFilter: "blur(5px)",
-                borderRadius: 5,
-                padding: "3px 6px",
-                fontSize: 8.36,
-                fontWeight: 300,
-                color: "#1E1E1E",
-                lineHeight: "8px",
-                textTransform: "uppercase",
-                display: "flex",
-                alignItems: "flex-end",
-              }}
-            >
-              {tags[2] || "NEW"}
-            </span>
-          )}
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <span
-              style={{
-                fontSize: 16.12,
-                fontWeight: 700,
-                color: "#fff",
-                lineHeight: "15px",
-              }}
-            >
-              ${price > 0 ? price.toFixed(1) : "99.9"}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 18, fontWeight: 700, color: "#1E1E1E", lineHeight: "17px" }}>
+              ${price > 0 ? price.toFixed(2) : "99.90"}
             </span>
-            <span
-              style={{
-                background: "#fff",
-                backdropFilter: "blur(5px)",
-                borderRadius: 5,
-                padding: "3px 6px",
-                fontSize: 8.36,
-                fontWeight: 300,
-                color: "#1E1E1E",
-                lineHeight: "8px",
-                display: "flex",
-                alignItems: "flex-end",
-              }}
-            >
+            {disc > 0 && <span style={{
+              background: "rgba(72,210,150,0.15)", borderRadius: 4, padding: "2px 5px",
+              fontSize: 9, fontWeight: 600, color: "#16a34a",
+            }}>
               -{disc}%
-            </span>
+            </span>}
           </div>
           <button
             onClick={(e) => e.stopPropagation()}
             style={{
-              background:
-                "linear-gradient(125.09deg, rgba(226,225,225,0.25) 29.37%, rgba(167,167,167,0.25) 83.28%)",
-              border: "1px solid rgba(255,255,255,0.55)",
-              backdropFilter: "blur(5px)",
-              borderRadius: 5,
-              padding: "6px 10px",
-              fontSize: 10.45,
-              fontWeight: 500,
-              color: "#1E1E1E",
-              lineHeight: "10px",
-              cursor: "pointer",
-              fontFamily: "'League Spartan'",
+              background: "#7c3aed",
+              border: "none", borderRadius: 6, padding: "7px 12px",
+              fontSize: 11, fontWeight: 600, color: "#fff",
+              cursor: "pointer", fontFamily: "'League Spartan'",
+              transition: "opacity 0.2s",
             }}
+            onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
+            onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
           >
             Add to Bag
           </button>
@@ -2560,14 +2446,21 @@ function ProductDetail({ item, onBack }) {
     ? item.images.map((i) => i.image_url || fallbackImg).filter(Boolean)
     : [resolveImg(item) || fallbackImg].filter(Boolean);
   const [idx, setIdx] = useState(0);
-  const tags = resolveTags(item);
+  const rawTags = resolveTags(item);
+  // Deduplicate tags (case-insensitive) — e.g. "DRESSES" + "DRESS" → just "DRESSES"
+  const tags = rawTags.filter((t, i, arr) => {
+    const tl = t.toLowerCase();
+    return !arr.slice(0, i).some(prev => {
+      const pl = prev.toLowerCase();
+      return pl === tl || pl.startsWith(tl) || tl.startsWith(pl);
+    });
+  });
   const price = resolvePrice(item);
   const score = resolveScore(item);
-  const disc = item?.discount_percent ? Math.round(item.discount_percent) : 40;
-  const catLabel = tags[0] || item?.category || "Category";
-  const nameParts = (item?.name || "Fashion Item").split(" ");
-  const firstWord = nameParts[0];
-  const restWords = nameParts.slice(1).join(" ");
+  const disc = item?.discount_percent ? Math.round(item.discount_percent) : 0;
+  const catLabel = item?.category || tags[0] || "Category";
+  const colors = item?.available_colors || [];
+  const desc = item?.description || item?.recommendation_reason || "";
   return (
     <Screen bg={BG1} style={{ justifyContent: "flex-start" }}>
       <style>{CSS}</style>
@@ -2593,11 +2486,15 @@ function ProductDetail({ item, onBack }) {
               display: "flex",
               alignItems: "center",
               gap: 8,
-              fontSize: 20,
+              fontSize: 16,
+              fontWeight: 500,
               fontFamily: "'League Spartan'",
+              transition: "background 0.2s",
             }}
+            onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.25)"}
+            onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.15)"}
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
               <path
                 d="M10 3L5 8L10 13"
                 stroke="white"
@@ -2606,6 +2503,7 @@ function ProductDetail({ item, onBack }) {
                 strokeLinejoin="round"
               />
             </svg>
+            Back
           </button>
         </div>
         <div
@@ -2692,18 +2590,32 @@ function ProductDetail({ item, onBack }) {
                 letterSpacing: -0.5,
               }}
             >
-              {item?.name || "Fashion Item"}
+              {cleanName(item)}
             </div>
-            <div
-              style={{
-                fontFamily: "'League Spartan'",
-                fontWeight: 300,
-                fontSize: 20,
-                color: "rgba(255,255,255,0.5)",
-              }}
-            >
-              {score}% Match
+            {/* Match score bar */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{
+                flex: 1, height: 6, borderRadius: 3,
+                background: "rgba(255,255,255,0.1)",
+                overflow: "hidden",
+              }}>
+                <div style={{
+                  width: `${score}%`, height: "100%", borderRadius: 3,
+                  background: score >= 70
+                    ? "linear-gradient(90deg,#48d296,#00c9a7)"
+                    : score >= 40
+                    ? "linear-gradient(90deg,#f59e0b,#eab308)"
+                    : "linear-gradient(90deg,#a855f7,#6366f1)",
+                }} />
+              </div>
+              <span style={{
+                fontFamily: "'League Spartan'", fontWeight: 600, fontSize: 18,
+                color: score >= 70 ? "#48d296" : score >= 40 ? "#eab308" : "#c084fc",
+              }}>
+                {score}% Match
+              </span>
             </div>
+            {/* Tags */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {tags.slice(0, 4).map((t, i) => (
                 <span
@@ -2724,6 +2636,16 @@ function ProductDetail({ item, onBack }) {
                 </span>
               ))}
             </div>
+            {/* Description */}
+            {desc && (
+              <div style={{
+                fontFamily: "'League Spartan'", fontWeight: 300, fontSize: 16,
+                color: "rgba(255,255,255,0.6)", lineHeight: 1.5,
+              }}>
+                {desc}
+              </div>
+            )}
+            {/* Price */}
             <div
               style={{
                 display: "flex",
@@ -2740,23 +2662,48 @@ function ProductDetail({ item, onBack }) {
                   color: "#fff",
                 }}
               >
-                ${price > 0 ? price.toFixed(1) : "99.9"}
+                ${price > 0 ? price.toFixed(2) : "99.90"}
               </span>
-              <span
+              {disc > 0 && <span
                 style={{
-                  background: "rgba(255,255,255,0.2)",
-                  backdropFilter: "blur(5px)",
+                  background: "rgba(72,210,150,0.2)",
+                  border: "1px solid rgba(72,210,150,0.3)",
                   borderRadius: 8,
                   padding: "4px 12px",
                   fontSize: 16,
-                  fontWeight: 300,
-                  color: "#fff",
+                  fontWeight: 600,
+                  color: "#48d296",
                   fontFamily: "'League Spartan'",
                 }}
               >
-                -{disc}%
-              </span>
+                -{disc}% OFF
+              </span>}
             </div>
+            {/* Color options */}
+            {colors.length > 0 && (
+              <div>
+                <div style={{
+                  color: "rgba(255,255,255,0.4)", fontSize: 11, marginBottom: 8,
+                  textTransform: "uppercase", letterSpacing: 1, fontFamily: "'League Spartan'",
+                }}>
+                  Available Colors
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {colors.map((c) => (
+                    <span key={c} style={{
+                      background: "rgba(255,255,255,0.1)",
+                      border: "1px solid rgba(255,255,255,0.2)",
+                      borderRadius: 8, padding: "6px 14px",
+                      color: "#fff", fontSize: 13, fontFamily: "'League Spartan'",
+                      textTransform: "capitalize",
+                    }}>
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Sizes */}
             {item?.available_sizes?.length > 0 && (
               <div>
                 <div
@@ -2771,7 +2718,7 @@ function ProductDetail({ item, onBack }) {
                 >
                   Available Sizes
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {item.available_sizes.map((s) => (
                     <span
                       key={s}
@@ -2783,6 +2730,7 @@ function ProductDetail({ item, onBack }) {
                         color: "#fff",
                         fontSize: 14,
                         fontFamily: "'League Spartan'",
+                        textTransform: "capitalize",
                       }}
                     >
                       {s}
@@ -2793,20 +2741,32 @@ function ProductDetail({ item, onBack }) {
             )}
             <button
               style={{
-                background: "rgba(209,168,183,0.55)",
-                backdropFilter: "blur(50px)",
+                background: "linear-gradient(135deg,#a855f7,#6366f1,#a855f7)",
+                backgroundSize: "200% 200%",
+                animation: "gradientShift 3s ease infinite",
                 border: "none",
-                borderRadius: 14,
-                padding: "18px",
+                borderRadius: 16,
+                padding: "20px 36px",
                 color: "#fff",
-                fontSize: 24,
-                fontWeight: 600,
+                fontSize: 22,
+                fontWeight: 700,
                 fontFamily: "'League Spartan'",
                 cursor: "pointer",
-                marginTop: 8,
+                marginTop: 14,
                 textAlign: "center",
+                width: "100%",
+                letterSpacing: 0.5,
+                boxShadow: "0 6px 24px rgba(168,85,247,0.35)",
+                transition: "transform 0.2s, box-shadow 0.2s",
               }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 32px rgba(168,85,247,0.5)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 6px 24px rgba(168,85,247,0.35)"; }}
             >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{marginRight:10,verticalAlign:"middle"}}>
+                <path d="M6 2L3 6V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V6L18 2H6Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M3 6H21" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                <path d="M16 10C16 12.2 14.2 14 12 14C9.8 14 8 12.2 8 10" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
               Add to Bag
             </button>
           </div>
@@ -2857,7 +2817,7 @@ function AIChat({ profile, baseRecs }) {
       if (cat) {
         const r = await fetch(
           `${API}/api/recommendations/${email}?category=${cat}&limit=8`,
-          { headers: authHeaders, signal: AbortSignal.timeout(60000) },
+          { headers: authHeaders, signal: AbortSignal.timeout(15000) },
         );
         if (r.ok) {
           const d = await r.json();
@@ -2874,7 +2834,7 @@ function AIChat({ profile, baseRecs }) {
         ).slice(0, 8);
       if (!items.length) {
         const r = await fetch(`${API}/api/recommendations/trending?limit=8`, {
-          signal: AbortSignal.timeout(60000),
+          signal: AbortSignal.timeout(15000),
         });
         if (r.ok) {
           const d = await r.json();
@@ -3190,7 +3150,7 @@ export default function App() {
     const r = await fetch(`${API}/api/save-profile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         email,
         password: derivePassword(email),
@@ -3255,7 +3215,7 @@ export default function App() {
     try {
       const r = await fetch(
         `${API}/api/recommendations/${email}?limit=24&include_breakdown=true`,
-        { headers: authHeaders, signal: AbortSignal.timeout(60000) },
+        { headers: authHeaders, signal: AbortSignal.timeout(15000) },
       );
       if (r.ok) {
         const d = await r.json();
@@ -3267,7 +3227,7 @@ export default function App() {
     }
     try {
       const r = await fetch(`${API}/api/recommendations/trending?limit=20`, {
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(15000),
       });
       if (r.ok) {
         const d = await r.json();
@@ -3286,7 +3246,7 @@ export default function App() {
       score: 0.8 - i * 0.03,
       match_score: 0.8 - i * 0.03,
       recommendation_reason: "Popular right now",
-      discount_percent: 40,
+      discount_percent: 0,
       images: [
         {
           image_url: `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&fit=crop&sig=${i}`,
@@ -3304,13 +3264,16 @@ export default function App() {
     setErr("");
     try {
       await saveProfile();
+    } catch (e) {
+      console.warn("saveProfile failed:", e.message);
+    }
+    try {
       const items = await fetchRecs();
       setRecs(items);
     } catch (e) {
       console.error(e);
       setErr(e.message);
-      const items = await fetchRecs().catch(() => []);
-      setRecs(items);
+      setRecs([]);
     } finally {
       setLoading(false);
       setStep(3);
