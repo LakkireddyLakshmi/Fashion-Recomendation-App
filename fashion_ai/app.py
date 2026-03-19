@@ -702,8 +702,36 @@ async def _load_all_pages_bg():
         PAGE_SIZE = 50        # small pages — Boss API times out on large queries
 
         # Phase 1: probe how many pages exist by fetching first PARALLEL pages
+        # Retry first batch up to 5 times with 30s delay to handle Azure cold starts (60-90s)
         skip = 0
-        while True:
+        first_batch_ok = False
+        for cold_attempt in range(5):
+            skips = [skip + i * PAGE_SIZE for i in range(PARALLEL)]
+            pages = await asyncio.gather(*[_fetch_page(s) for s in skips])
+            if any(pg for pg in pages):
+                first_batch_ok = True
+                break
+            log.warning("Boss API cold start — retry %d/5 in 30s...", cold_attempt + 1)
+            await asyncio.sleep(30)
+        if not first_batch_ok:
+            log.warning("Boss API unreachable after 5 attempts — keeping existing cached items")
+            return  # _full_catalog_cache keeps whatever was loaded at startup
+
+        for pg in pages:
+            if pg:
+                all_items.extend(pg)
+        skip += PARALLEL * PAGE_SIZE
+
+        # Update cache with first batch immediately
+        filtered = _filter_real_items(all_items)
+        if filtered:
+            _full_catalog_cache = filtered
+            _cset("cat:full", filtered, 3600)
+        log.info("Background: first batch %d items fetched, %d real (%.0fs)",
+                 len(all_items), len(filtered), time.time() - t0)
+        first_pages_done = any(len(pg) < PAGE_SIZE for pg in pages)
+
+        while not first_pages_done:
             skips = [skip + i * PAGE_SIZE for i in range(PARALLEL)]
             pages = await asyncio.gather(*[_fetch_page(s) for s in skips])
             got_any = False
@@ -716,7 +744,8 @@ async def _load_all_pages_bg():
 
             # Update live cache after each parallel batch
             filtered = _filter_real_items(all_items)
-            _full_catalog_cache = filtered
+            if filtered:
+                _full_catalog_cache = filtered
             _cset("cat:full", filtered, 3600)
             skip += PARALLEL * PAGE_SIZE
             log.info("Background: %d items fetched, %d real (%.0fs)",
