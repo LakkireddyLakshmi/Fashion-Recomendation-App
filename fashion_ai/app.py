@@ -86,6 +86,20 @@ def _is_token_expired(token: str) -> bool:
     except Exception:
         return True
 
+def _token_expires_in(token: str) -> float:
+    """Returns seconds until token expires. Returns 0 if expired or invalid."""
+    if not token:
+        return 0
+    try:
+        import base64
+        payload = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        exp = data.get("exp", 0)
+        return max(0.0, exp - time.time())
+    except Exception:
+        return 0
+
 async def _refresh_boss_token() -> bool:
     """
     Login with admin credentials to obtain a fresh BOSS_TOKEN.
@@ -356,6 +370,17 @@ async def db_get_by_id(uid: str) -> Optional[Dict]:
             if doc["email"]:
                 _mem_email[doc["email"]] = doc["user_id"]
             return doc
+        elif r.status_code == 401:
+            log.warning("Boss API get_by_id 401 — refreshing token and retrying")
+            refreshed = await _refresh_boss_token()
+            if refreshed:
+                r2 = await c.get(f"/api/users/{uid}", headers=_boss_headers())
+                if r2.status_code == 200:
+                    doc = _boss_user_to_doc(r2.json())
+                    _mem_users[doc["user_id"]] = doc
+                    if doc["email"]:
+                        _mem_email[doc["email"]] = doc["user_id"]
+                    return doc
     except Exception as e:
         log.warning("Boss API get_by_id failed: %s", e)
     return None
@@ -2555,10 +2580,14 @@ async def startup():
     asyncio.create_task(_init())
 
 async def _keep_boss_warm():
-    """Ping Boss API every 4 minutes to prevent Azure scale-to-zero cold starts."""
+    """Ping Boss API every 4 minutes. Also refresh token proactively if < 5 min remaining."""
     await asyncio.sleep(60)   # wait for initial startup to settle
     while True:
         try:
+            # Refresh token proactively if it expires in < 5 minutes
+            if _is_token_expired(BOSS_TOKEN) or _token_expires_in(BOSS_TOKEN) < 300:
+                log.info("BOSS_TOKEN expiring soon — refreshing proactively")
+                await _refresh_boss_token()
             c = await _boss_client()
             await c.get("/health", headers=_boss_headers(), timeout=10.0)
         except Exception:
