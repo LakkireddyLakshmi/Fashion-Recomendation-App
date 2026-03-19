@@ -668,12 +668,17 @@ def _filter_real_items(items: List[Dict]) -> List[Dict]:
             continue
 
         # Discard auto-generated placeholder items:
-        # They have UUID-style names AND zero price AND no description
+        # They have UUID-style names (e.g. "T-Shirt 00003aeb") AND no price AND no description
+        # Note: [A-Za-z0-9\s\-] needed to match names with hyphens like "T-Shirt"
         import re as _re
-        is_uuid_name = bool(name and _re.match(r'^[A-Za-z\s]+ [0-9a-f]{8}$', name))
+        is_uuid_name = bool(name and _re.match(r'^[A-Za-z0-9\s\-]+ [0-9a-f]{8}$', name))
         has_price = float(item.get("base_price") or 0) > 0
-        has_desc  = bool(item.get("description"))
+        has_desc  = bool(item.get("description") and item.get("description") != "string")
         if is_uuid_name and not has_price and not has_desc:
+            continue
+
+        # Discard obvious test/template seed rows (name="string", desc="string")
+        if name == "string":
             continue
 
         seen.add(iid)
@@ -726,11 +731,16 @@ async def _load_all_pages_bg():
         if _full_catalog_cache:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _save_disk_cache, _full_catalog_cache)
-        else:
-            # Boss API returned nothing — fall back to demo catalog so UI is functional
-            log.warning("Boss API unreachable — using %d demo items as fallback", len(_DEMO_CATALOG))
-            _full_catalog_cache = _DEMO_CATALOG[:]
-            _cset("cat:full", _full_catalog_cache, 300)   # short TTL so real data replaces it quickly
+        elif not all_items:
+            # Boss API returned NOTHING at all (cold start / unreachable).
+            # Don't overwrite whatever is already in _full_catalog_cache (disk data or previous load).
+            # Only fall back to demo if we truly have nothing at all.
+            if not _full_catalog_cache:
+                log.warning("Boss API unreachable — using %d demo items as fallback", len(_DEMO_CATALOG))
+                _full_catalog_cache = _DEMO_CATALOG[:]
+                _cset("cat:full", _full_catalog_cache, 300)   # short TTL so real data replaces it quickly
+            else:
+                log.warning("Boss API unreachable — keeping %d existing cached items", len(_full_catalog_cache))
         log.info("Background fetch complete: %d total, %d real in %.1fs",
                  len(all_items), len(_full_catalog_cache), time.time() - t0)
     except Exception as e:
@@ -739,6 +749,8 @@ async def _load_all_pages_bg():
             log.warning("Falling back to demo catalog (%d items)", len(_DEMO_CATALOG))
             _full_catalog_cache = _DEMO_CATALOG[:]
             _cset("cat:full", _full_catalog_cache, 300)
+        else:
+            log.warning("Catalog fetch error — keeping %d existing cached items", len(_full_catalog_cache))
     finally:
         _catalog_loading = False
 
@@ -2466,9 +2478,13 @@ async def startup():
     # Load disk cache immediately so first request is instant
     disk = _load_disk_cache()
     if disk:
-        _full_catalog_cache = disk
-        _cset("cat:full", disk, 3600)
-        log.info("Startup: %d items ready from disk cache", len(disk))
+        filtered_disk = _filter_real_items(disk)
+        if filtered_disk:
+            _full_catalog_cache = filtered_disk
+            _cset("cat:full", filtered_disk, 3600)
+            log.info("Startup: %d real items ready from disk cache (%d total)", len(filtered_disk), len(disk))
+        else:
+            log.info("Startup: disk cache has %d items but 0 real — will fetch from API", len(disk))
     # Connect to Boss API and refresh catalog in background
     asyncio.create_task(_init())
 
