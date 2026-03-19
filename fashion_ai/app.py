@@ -44,9 +44,11 @@ log = logging.getLogger("hueiq")
 
 
 # ── Config ────────────────────────────────────────────────────────
-BOSS_URL   = os.getenv("BOSS_API_URL",
+BOSS_URL            = os.getenv("BOSS_API_URL",
     "https://hueiq-core-api.purplesand-63becfba.westus2.azurecontainerapps.io")
-BOSS_TOKEN = os.getenv("BOSS_TOKEN", "")
+BOSS_TOKEN          = os.getenv("BOSS_TOKEN", "")
+BOSS_ADMIN_EMAIL    = os.getenv("BOSS_ADMIN_EMAIL", "")
+BOSS_ADMIN_PASSWORD = os.getenv("BOSS_ADMIN_PASSWORD", "")
 DIFY_URL   = os.getenv("DIFY_API_URL",  "https://cloud.xpectrum.co")
 DIFY_KEY   = os.getenv("DIFY_API_KEY",  "app-6XxyzGBrc3Sjj56vcWD2uNrn")
 JWT_SECRET = os.getenv("JWT_SECRET",    "hueiq-secret-change-in-prod")
@@ -59,7 +61,7 @@ _boss_cli: Optional[httpx.AsyncClient] = None
 async def _boss_client() -> httpx.AsyncClient:
     global _boss_cli
     if _boss_cli is None or _boss_cli.is_closed:
-        _boss_cli = httpx.AsyncClient(base_url=BOSS_URL, timeout=20.0)
+        _boss_cli = httpx.AsyncClient(base_url=BOSS_URL, timeout=120.0)
     return _boss_cli
 
 def _boss_headers(token: str = "") -> Dict[str, str]:
@@ -69,6 +71,52 @@ def _boss_headers(token: str = "") -> Dict[str, str]:
     if t:
         h["Authorization"] = f"Bearer {t}"
     return h
+
+def _is_token_expired(token: str) -> bool:
+    """Decode JWT without verification and check if exp has passed."""
+    if not token:
+        return True
+    try:
+        import base64
+        payload = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        exp = data.get("exp", 0)
+        return time.time() >= exp
+    except Exception:
+        return True
+
+async def _refresh_boss_token() -> bool:
+    """
+    Login with admin credentials to obtain a fresh BOSS_TOKEN.
+    Updates the module-level BOSS_TOKEN in place.
+    Retries up to 3 times with increasing delays (Azure cold-start can take 60-90s).
+    Returns True if refresh succeeded.
+    """
+    global BOSS_TOKEN
+    if not BOSS_ADMIN_EMAIL or not BOSS_ADMIN_PASSWORD:
+        log.warning("BOSS_TOKEN expired and no admin credentials in .env — catalog may fail")
+        return False
+    try:
+        c = await _boss_client()
+        r = await c.post("/api/auth/login", json={
+            "email": BOSS_ADMIN_EMAIL,
+            "password": BOSS_ADMIN_PASSWORD,
+        }, headers={"Content-Type": "application/json"}, timeout=15.0)
+        if r.status_code == 200:
+            new_token = r.json().get("access_token", "")
+            if new_token:
+                BOSS_TOKEN = new_token
+                log.info("BOSS_TOKEN refreshed via admin login ✓")
+                return True
+            log.warning("Admin login succeeded but no access_token in response")
+        else:
+            log.warning("Admin login failed (%d): %s", r.status_code, r.text[:200])
+    except (httpx.ReadError, httpx.ConnectError, httpx.TimeoutException) as e:
+        log.warning("_refresh_boss_token failed (%s) — Boss API unreachable", type(e).__name__)
+    except Exception as e:
+        log.warning("_refresh_boss_token error: %s — %s", type(e).__name__, repr(e))
+    return False
 
 
 # ── Password + JWT ────────────────────────────────────────────────
@@ -365,11 +413,38 @@ def _tags(item: Dict) -> List[str]:
 
 def _gender(item: Dict) -> str:
     em = item.get("extra_metadata") or {}
-    return (
+    explicit = (
         item.get("gender") or
         (em.get("gender") if isinstance(em, dict) else None) or
-        "unisex"
+        ""
     ).lower()
+    if explicit and explicit != "unisex":
+        return explicit
+    # Infer gender from name + category when not explicitly set
+    name = (item.get("name") or "").lower()
+    cat  = (item.get("category") or "").lower()
+    # Normalize curly quotes/apostrophes to straight
+    text = f"{name} {cat}".replace("\u2019", "'").replace("\u2018", "'")
+
+    # Check women FIRST — "women's" contains "men's" so order matters
+    women_kw = (
+        "women", "woman", "womens", "women's", "ladies", "girls", "female",
+        "miss chase", "vero moda", "sassafras", "tokyo talkies",
+        "blouse", "kurta", "anarkali", "lehenga", "saree",
+    )
+    is_women = any(k in text for k in women_kw)
+    if is_women:
+        return "women"
+
+    men_kw = (
+        " men ", " men's", "mens ", "for men", "boys ", " male",
+        "highlander", "peter england", "ben martin", "majestic man",
+        "levi's men", "symbol men", "bewakoof x streetwear men",
+    )
+    is_men = any(k in text for k in men_kw)
+    if is_men:
+        return "men"
+    return "unisex"
 
 def _season_item(item: Dict) -> str:
     em = item.get("extra_metadata") or {}
@@ -399,6 +474,32 @@ def _in_stock(item: Dict) -> bool:
         except (TypeError, ValueError): return 0
     return any(_qty(v) > 0 for v in vs if isinstance(v, dict))
 
+def _stock_score(item: Dict) -> float:
+    """Returns 0.0–1.0 based on total stock. Out-of-stock = 0.0, well-stocked = 1.0."""
+    vs = item.get("variants") or []
+    if not vs:
+        return 1.0 if item.get("in_stock", True) else 0.0
+    total = 0
+    for v in vs:
+        if isinstance(v, dict):
+            try: total += int(v.get("stock_quantity") or 0)
+            except (TypeError, ValueError): pass
+    if total == 0:   return 0.0
+    if total < 5:    return 0.4
+    if total < 20:   return 0.7
+    return 1.0
+
+def _discount_percent(item: Dict) -> float:
+    """Returns discount percentage if sale_price < base_price, else 0."""
+    try:
+        bp = float(item.get("base_price") or 0)
+        sp = float(item.get("sale_price") or 0)
+        if bp > 0 and sp > 0 and sp < bp:
+            return round((bp - sp) / bp * 100, 1)
+    except (TypeError, ValueError):
+        pass
+    return float(item.get("discount_percent") or 0)
+
 def _physics_profile(item: Dict) -> Optional[str]:
     """
     assets_3d.physics_profile is JSONB (dict) in DB schema.
@@ -418,96 +519,275 @@ def _physics_profile(item: Dict) -> Optional[str]:
 
 
 # ── Catalog fetch from Boss PostgreSQL API ────────────────────────
-async def fetch_catalog(
-    gender:     Optional[str]       = None,
-    colors:     Optional[List[str]] = None,
-    categories: Optional[List[str]] = None,
-    season:     Optional[str]       = None,
-    limit:      int                 = 500,
-) -> List[Dict]:
-    """
-    Fetches catalog from Boss API GET /api/catalog.
-    Filtering by gender/category is done server-side via query params.
-    Color and season filtering is done client-side by the Python ranker.
-    """
-    ck = f"cat:{gender}:{','.join(colors or [])}:{','.join(categories or [])}:{season}:{limit}"
-    cached = _cget(ck)
-    if cached is not None:
-        return cached
+# Loading strategy:
+#   1. On startup: load from disk cache (instant) if fresh enough
+#   2. Fetch pages in PARALLEL (4 at a time) instead of sequentially
+#   3. Write full catalog to disk after fetch so next restart is instant
+_full_catalog_cache: List[Dict] = []
+_catalog_loading: bool = False
 
+# ── Demo catalog (shown when Boss API is unreachable) ─────────────
+_DEMO_CATALOG: List[Dict] = [
+    {"catalog_item_id": "demo-1", "name": "Classic Cotton T-Shirt", "category": "t-shirt",
+     "base_price": 499, "brand": "HueIQ Demo", "description": "Comfortable everyday cotton tee",
+     "images": [{"url": "https://via.placeholder.com/300x400/4A90D9/white?text=T-Shirt", "color_variant": "blue"}],
+     "extra_metadata": {"gender": "men", "season": "summer", "fabric": "cotton"},
+     "style_tags": {"tags": ["casual", "basic", "cotton"]}, "variants": []},
+    {"catalog_item_id": "demo-2", "name": "Slim Fit Jeans", "category": "jeans",
+     "base_price": 1299, "brand": "HueIQ Demo", "description": "Modern slim fit denim",
+     "images": [{"url": "https://via.placeholder.com/300x400/1A1A2E/white?text=Jeans", "color_variant": "blue"}],
+     "extra_metadata": {"gender": "men", "season": "all", "fabric": "denim"},
+     "style_tags": {"tags": ["casual", "denim", "slim"]}, "variants": []},
+    {"catalog_item_id": "demo-3", "name": "Floral Summer Dress", "category": "dress",
+     "base_price": 1899, "brand": "HueIQ Demo", "description": "Light floral print summer dress",
+     "images": [{"url": "https://via.placeholder.com/300x400/E91E8C/white?text=Dress", "color_variant": "pink"}],
+     "extra_metadata": {"gender": "women", "season": "summer", "fabric": "chiffon"},
+     "style_tags": {"tags": ["floral", "casual", "summer"]}, "variants": []},
+    {"catalog_item_id": "demo-4", "name": "Women's Kurta", "category": "kurta",
+     "base_price": 899, "brand": "HueIQ Demo", "description": "Elegant ethnic kurta",
+     "images": [{"url": "https://via.placeholder.com/300x400/9C27B0/white?text=Kurta", "color_variant": "purple"}],
+     "extra_metadata": {"gender": "women", "season": "all", "fabric": "cotton"},
+     "style_tags": {"tags": ["ethnic", "traditional", "kurta"]}, "variants": []},
+    {"catalog_item_id": "demo-5", "name": "Men's Formal Shirt", "category": "shirt",
+     "base_price": 1199, "brand": "HueIQ Demo", "description": "Crisp formal office shirt",
+     "images": [{"url": "https://via.placeholder.com/300x400/1565C0/white?text=Shirt", "color_variant": "white"}],
+     "extra_metadata": {"gender": "men", "season": "all", "fabric": "cotton"},
+     "style_tags": {"tags": ["formal", "office", "classic"]}, "variants": []},
+    {"catalog_item_id": "demo-6", "name": "Women's Blazer", "category": "blazer",
+     "base_price": 2499, "brand": "HueIQ Demo", "description": "Professional women's blazer",
+     "images": [{"url": "https://via.placeholder.com/300x400/37474F/white?text=Blazer", "color_variant": "grey"}],
+     "extra_metadata": {"gender": "women", "season": "all", "fabric": "polyester"},
+     "style_tags": {"tags": ["formal", "office", "blazer"]}, "variants": []},
+    {"catalog_item_id": "demo-7", "name": "Athletic Track Pants", "category": "activewear",
+     "base_price": 799, "brand": "HueIQ Demo", "description": "Comfortable track pants for workouts",
+     "images": [{"url": "https://via.placeholder.com/300x400/2E7D32/white?text=Track+Pants", "color_variant": "black"}],
+     "extra_metadata": {"gender": "men", "season": "all", "fabric": "polyester"},
+     "style_tags": {"tags": ["sports", "activewear", "comfort"]}, "variants": []},
+    {"catalog_item_id": "demo-8", "name": "Women's Tops Collection", "category": "top",
+     "base_price": 699, "brand": "HueIQ Demo", "description": "Trendy casual tops",
+     "images": [{"url": "https://via.placeholder.com/300x400/FF7043/white?text=Top", "color_variant": "orange"}],
+     "extra_metadata": {"gender": "women", "season": "summer", "fabric": "cotton"},
+     "style_tags": {"tags": ["casual", "trendy", "top"]}, "variants": []},
+]
+_DISK_CACHE_PATH = os.path.join(os.path.dirname(__file__), "_catalog_cache.json")
+_DISK_CACHE_MAX_AGE = 6 * 3600   # 6 hours — refresh if older than this
+
+def _load_disk_cache() -> List[Dict]:
+    """Load catalog from disk cache. Returns [] if missing or too old."""
     try:
-        c = await _boss_client()
-        h = _boss_headers()
+        if not os.path.exists(_DISK_CACHE_PATH):
+            return []
+        age = time.time() - os.path.getmtime(_DISK_CACHE_PATH)
+        if age > _DISK_CACHE_MAX_AGE:
+            log.info("Disk cache is %.0fh old — will re-fetch", age / 3600)
+            return []
+        with open(_DISK_CACHE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        log.info("Loaded %d items from disk cache (%.0f min old)", len(data), age / 60)
+        return data
+    except Exception as e:
+        log.warning("Disk cache load failed: %s", e)
+        return []
 
-        # Boss API supports: skip, limit, category query params
-        params: Dict[str, Any] = {"limit": limit, "skip": 0}
-        if categories and len(categories) == 1:
-            params["category"] = categories[0]
+def _save_disk_cache(items: List[Dict]) -> None:
+    """Write catalog to disk cache in the background."""
+    try:
+        with open(_DISK_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(items, f)
+        log.info("Disk cache saved: %d items → %s", len(items), _DISK_CACHE_PATH)
+    except Exception as e:
+        log.warning("Disk cache save failed: %s", e)
 
-        r = await c.get("/api/catalog", params=params, headers=h)
+async def _fetch_page(skip: int, cat: Optional[str] = None) -> List[Dict]:
+    """Fetch a single catalog page from Boss API."""
+    c = await _boss_client()
+    h = _boss_headers()
+    params: Dict[str, Any] = {"limit": 500, "skip": skip}
+    if cat:
+        params["category"] = cat
+    try:
+        r = await c.get("/api/catalog", params=params, headers=h, timeout=15.0)
         if r.status_code == 200:
             raw = r.json()
-            items = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
-            # If response is a dict with catalog items nested
-            if isinstance(raw, dict) and not items:
-                items = [v for v in raw.values() if isinstance(v, list)]
-                items = items[0] if items else []
+            page = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+            if isinstance(raw, dict) and not page:
+                page = [v for v in raw.values() if isinstance(v, list)]
+                page = page[0] if page else []
+            return page
+        elif r.status_code == 401:
+            log.warning("Catalog 401 (skip=%d) — refreshing BOSS_TOKEN", skip)
+            refreshed = await _refresh_boss_token()
+            if refreshed:
+                # Retry once with fresh token
+                r2 = await c.get("/api/catalog", params=params, headers=_boss_headers(), timeout=15.0)
+                if r2.status_code == 200:
+                    raw = r2.json()
+                    page = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+                    return page
+            return []
         else:
-            log.warning("Boss catalog fetch (%d): %s", r.status_code, r.text[:200])
-            items = []
-
+            log.warning("Boss catalog skip=%d (%d): %s", skip, r.status_code, r.text[:200])
+            return []
+    except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError,
+            httpx.TimeoutException) as e:
+        log.warning("Catalog page skip=%d %s", skip, type(e).__name__)
     except Exception as e:
-        log.warning("Boss API catalog fetch failed: %r — trying trending fallback", e)
-        items = []
+        log.warning("Catalog page skip=%d: %s — %s", skip, type(e).__name__, repr(e))
+    return []
 
-    # Fallback: try trending endpoint if /api/catalog failed
-    if not items:
-        try:
-            c = await _boss_client()
-            r = await c.get("/api/recommendations/trending", params={"limit": limit},
-                            headers=_boss_headers())
-            if r.status_code == 200:
-                raw = r.json()
-                items = raw if isinstance(raw, list) else raw.get("items", [])
-        except Exception as e:
-            log.warning("Boss trending fallback failed: %s", e)
-
-    # Client-side filtering (gender, colors, season)
-    # Boss API only supports category filter server-side
+def _filter_real_items(items: List[Dict]) -> List[Dict]:
+    """
+    Keep items that look like real products. Discard:
+      - duplicate IDs
+      - items with no ID
+      - pure placeholder rows (no name AND no category AND no images)
+    Price is NOT required — many catalog items have base_price=0 in the DB
+    but are real products. We use ₹999 as a display fallback in the frontend.
+    """
     filtered: List[Dict] = []
     seen: Set[str] = set()
-
     for item in items:
         iid = str(item.get("catalog_item_id") or item.get("id") or "")
         if not iid or iid in seen:
             continue
 
-        # Gender filter
-        if gender:
-            g = _norm_gender(gender)
-            ig = _gender(item)
-            if ig != "unisex" and ig != g:
-                continue
+        name     = (item.get("name") or "").strip()
+        category = (item.get("category") or "").strip()
+        has_img  = bool(
+            item.get("primary_image_url") or
+            (item.get("images") or []) or
+            (item.get("variants") or [])
+        )
+
+        # Discard obvious placeholder/seed rows that have nothing useful
+        if not name and not category and not has_img:
+            continue
 
         seen.add(iid)
         filtered.append(item)
-
-    log.info("catalog from Boss API: %d items (gender=%s cats=%s, pre-filter=%d)",
-             len(filtered), gender, categories, len(items))
-
-    # If too few results after filtering, return unfiltered
-    if len(filtered) < 5 and len(items) > len(filtered):
-        log.info("Too few filtered results (%d) — returning all %d items", len(filtered), len(items))
-        seen2: Set[str] = set()
-        filtered = []
-        for item in items:
-            iid = str(item.get("catalog_item_id") or item.get("id") or "")
-            if iid and iid not in seen2:
-                seen2.add(iid)
-                filtered.append(item)
-
-    _cset(ck, filtered, 1800)
     return filtered
+
+async def _load_all_pages_bg():
+    """
+    Background task: fetch all catalog pages in PARALLEL batches of 4.
+    Instead of: page0 (50s) → page1 (50s) → page2 (50s)  = 150s total
+    Now:        [page0, page1, page2, page3] all at once   = ~50s total
+    """
+    global _full_catalog_cache, _catalog_loading
+    if _catalog_loading:
+        return
+    _catalog_loading = True
+    t0 = time.time()
+    try:
+        all_items: List[Dict] = []
+        PARALLEL = 4          # fetch 4 pages simultaneously
+        PAGE_SIZE = 500
+
+        # Phase 1: probe how many pages exist by fetching first PARALLEL pages
+        skip = 0
+        while True:
+            skips = [skip + i * PAGE_SIZE for i in range(PARALLEL)]
+            pages = await asyncio.gather(*[_fetch_page(s) for s in skips])
+            got_any = False
+            for pg in pages:
+                if pg:
+                    all_items.extend(pg)
+                    got_any = True
+            if not got_any:
+                break
+
+            # Update live cache after each parallel batch
+            filtered = _filter_real_items(all_items)
+            _full_catalog_cache = filtered
+            _cset("cat:full", filtered, 3600)
+            skip += PARALLEL * PAGE_SIZE
+            log.info("Background: %d items fetched, %d real (%.0fs)",
+                     len(all_items), len(filtered), time.time() - t0)
+
+            # If any page returned fewer than PAGE_SIZE items, we've reached the end
+            if any(len(pg) < PAGE_SIZE for pg in pages):
+                break
+
+        # Save to disk so next server restart is instant
+        # Only save if we actually fetched something (don't overwrite good cache with [])
+        if _full_catalog_cache:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _save_disk_cache, _full_catalog_cache)
+        else:
+            # Boss API returned nothing — fall back to demo catalog so UI is functional
+            log.warning("Boss API unreachable — using %d demo items as fallback", len(_DEMO_CATALOG))
+            _full_catalog_cache = _DEMO_CATALOG[:]
+            _cset("cat:full", _full_catalog_cache, 300)   # short TTL so real data replaces it quickly
+        log.info("Background fetch complete: %d total, %d real in %.1fs",
+                 len(all_items), len(_full_catalog_cache), time.time() - t0)
+    except Exception as e:
+        log.warning("Background catalog fetch error: %s", e)
+        if not _full_catalog_cache:
+            log.warning("Falling back to demo catalog (%d items)", len(_DEMO_CATALOG))
+            _full_catalog_cache = _DEMO_CATALOG[:]
+            _cset("cat:full", _full_catalog_cache, 300)
+    finally:
+        _catalog_loading = False
+
+async def fetch_catalog(
+    gender:     Optional[str]       = None,
+    colors:     Optional[List[str]] = None,
+    categories: Optional[List[str]] = None,
+    season:     Optional[str]       = None,
+    limit:      int                 = 5000,
+) -> List[Dict]:
+    """
+    Progressive catalog fetch:
+    1. If full cache exists → return immediately
+    2. If partial cache exists → return what we have + trigger background load
+    3. If nothing cached → quick-fetch first page, serve it, load rest in background
+    """
+    global _full_catalog_cache
+
+    # 1. In-memory full cache (fastest — zero latency)
+    full = _cget("cat:full")
+    if full is not None and len(full) > 0:
+        return full
+
+    # 2. Progressive in-memory cache (partial, already loaded)
+    if _full_catalog_cache:
+        if not _catalog_loading:
+            asyncio.create_task(_load_all_pages_bg())
+        return _full_catalog_cache
+
+    # 3. Disk cache (fast — avoids re-downloading on restart)
+    disk = _load_disk_cache()
+    if disk:
+        _full_catalog_cache = disk
+        _cset("cat:full", disk, 3600)
+        # Refresh in background if needed
+        if not _catalog_loading:
+            asyncio.create_task(_load_all_pages_bg())
+        return disk
+
+    # 4. Nothing cached — quick-fetch first page for instant results
+    try:
+        t0 = time.time()
+        first_page = await _fetch_page(0,
+            categories[0] if categories and len(categories) == 1 else None)
+        filtered = _filter_real_items(first_page)
+        log.info("Quick fetch: %d items → %d real in %.1fs", len(first_page), len(filtered), time.time() - t0)
+
+        if filtered:
+            _full_catalog_cache = filtered
+
+        # Start loading all remaining pages in background (parallel)
+        if not _catalog_loading:
+            asyncio.create_task(_load_all_pages_bg())
+
+        return filtered if filtered else first_page[:50]  # fallback
+
+    except Exception as e:
+        log.warning("Catalog quick-fetch failed: %s", e)
+        # Start background load anyway
+        if not _catalog_loading:
+            asyncio.create_task(_load_all_pages_bg())
+        return []
 
 
 # ── Image builder ─────────────────────────────────────────────────
@@ -923,47 +1203,45 @@ def _item_primary_color(item: Dict) -> str:
 def _build_images(item: Dict, viewer_gender: str = "") -> Tuple[List[Dict], Optional[str]]:
     iid    = str(item.get("catalog_item_id") or "")
     cat    = item.get("category") or "def"
-    gender = _gender(item)   # reuse existing extractor — returns "men"/"women"/""
-    item_color = _item_primary_color(item)   # item-level color for fallbacks
-    out: List[Dict] = []
+    gender = _gender(item)
+    item_color = _item_primary_color(item)
+    raw_imgs = [img for img in (item.get("images") or []) if isinstance(img, dict)]
     primary: Optional[str] = None
 
-    for img in (item.get("images") or []):
-        if not isinstance(img, dict): continue
+    # Sort images by created_at to restore upload order (front/back/side per color)
+    raw_imgs.sort(key=lambda x: x.get("created_at") or "")
+
+    # Group images in sets of 3 — label each set with a number (not color name,
+    # since the API doesn't reliably store color_variant)
+    out: List[Dict] = []
+    for i, img in enumerate(raw_imgs):
         img_type = (img.get("image_type") or "").lower()
-        color_v  = (img.get("color_variant") or "").lower()
+        color_v  = (img.get("color_variant") or "").strip()
         is_p     = bool(img.get("is_primary", False))
-        # Use image's own color_variant; fall back to item-level color; then "default"
-        effective_color = color_v or item_color or "default"
-        # Use real Boss API image URL if available; fall back to Unsplash
+        group_num = (i // 3) + 1  # 1-based group number
+
         real_url = (img.get("image_url") or "").strip()
         if real_url:
             url = real_url
         else:
-            url = _fallback_url(iid, cat, effective_color, img_type or "front", gender,
-                                viewer_gender)
-        if is_p:
-            log.debug("IMG primary item=%s cat=%s color=%s gender=%s → %s", iid, cat, effective_color, gender, url)
+            url = _fallback_url(iid, cat, color_v or item_color or "default",
+                                img_type or "front", gender, viewer_gender)
         out.append({
             "image_id":      img.get("image_id"),
             "image_url":     url,
             "image_type":    img_type,
-            "color_variant": color_v,
+            "color_variant": color_v or f"variant-{group_num}",
             "is_primary":    is_p,
         })
         if is_p and not primary:
             primary = url
 
-    # If item has no images array at all, generate one fallback entry
     if not out:
-        primary_color = item_color   # already computed above
+        primary_color = item_color
         fb = _fallback_url(iid, cat, primary_color or "default", "front", gender, viewer_gender)
         out.append({
-            "image_id":      None,
-            "image_url":     fb,
-            "image_type":    "front",
-            "color_variant": primary_color,
-            "is_primary":    True,
+            "image_id": None, "image_url": fb, "image_type": "front",
+            "color_variant": primary_color, "is_primary": True,
         })
         primary = fb
 
@@ -1011,9 +1289,9 @@ def _safe_float(val, default: float = 0.0) -> float:
 
 # ── Color match score ─────────────────────────────────────────────
 def _color_score(item: Dict, pref_colors: List[str]) -> float:
-    if not pref_colors: return 0.5   # neutral if user has no color preference
+    if not pref_colors: return 1.0   # no preference = all colors equally good
     item_cols = _item_colors(item)
-    if not item_cols: return 0.3
+    if not item_cols: return 0.5    # neutral if item has no color data
     pref_set = {c.lower() for c in pref_colors}
 
     # Family-level match (primary): "green" matches "emerald", "olive", "sage" etc.
@@ -1059,8 +1337,10 @@ def _infer_build(body_meas: Dict) -> str:
     try:
         h = float(body_meas.get("height") or 0)
         w = float(body_meas.get("weight") or 0)
-        if h > 0 and w > 0:
-            bmi = w / (h / 100) ** 2
+        # Validate ranges: height 50–250 cm, weight 20–300 kg
+        if h > 0 and w > 0 and 50 <= h <= 250 and 20 <= w <= 300:
+            # h is in cm, convert to metres before squaring
+            bmi = w / (h / 100.0) ** 2
             if bmi < 18.5: return "slim"
             if bmi < 25.0: return "athletic"   # healthy range → athletic fit
             if bmi < 30.0: return "average"
@@ -1094,12 +1374,33 @@ def _fit_score(item: Dict, body_meas: Dict) -> float:
     return drape
 
 
+def _fit_score_prebuilt(item: Dict, build: str) -> float:
+    """
+    Faster variant of _fit_score — accepts pre-computed build string
+    so _infer_build() is not repeated for every item in the ranking loop.
+    """
+    phys = _physics_profile(item)
+    if phys is None:
+        return 0.5
+    drape = _PHYSICS_DRAPE.get(phys, 0.5)
+    if build:
+        if build == "slim"     and phys in ("light_fabric", "knit"):      return 0.95
+        if build == "slim"     and phys == "rigid":                       return 0.55
+        if build == "plus"     and phys == "stretch_fabric":              return 1.0
+        if build == "plus"     and phys == "rigid":                       return 0.2
+        if build == "plus"     and phys in ("light_fabric", "knit"):      return 0.75
+        if build == "athletic" and phys in ("stretch_fabric", "knit"):    return 0.9
+        if build == "athletic" and phys == "rigid":                       return 0.65
+        if build == "average":                                             return min(drape + 0.1, 1.0)
+    return drape
+
+
 # ── Seasonal score ────────────────────────────────────────────────
 _SEASON_KW = {
-    "spring": {"floral","pastel","linen","light","cotton","wrap"},
-    "summer": {"cotton","linen","short","bright","casual","t-shirt","tshirt","tee"},
-    "fall":   {"wool","knit","corduroy","layered","warm","sweater","blazer","overshirt"},
-    "winter": {"coat","thermal","heavy","cashmere","down","boots"},
+    "spring": {"floral","pastel","linen","light","cotton","wrap","breathable","breezy","sundress","midi","flowy"},
+    "summer": {"cotton","linen","short","bright","casual","t-shirt","tshirt","tee","sleeveless","tank","shorts","breezy","breathable","crop"},
+    "fall":   {"wool","knit","corduroy","layered","warm","sweater","blazer","overshirt","cardigan","hoodie","flannel","plaid","trench"},
+    "winter": {"coat","thermal","heavy","cashmere","down","boots","puffer","parka","fleece","fur","lined","woolen","turtleneck"},
 }
 _SEASON_COL = {
     "spring": {"pink","mint","lavender","cream","yellow"},
@@ -1116,7 +1417,9 @@ def _cur_season() -> str:
     return "winter"
 
 def _season_score(item: Dict, pref_season: str) -> float:
-    s    = pref_season.lower() if pref_season else _cur_season()
+    if not pref_season:
+        return 0.5   # neutral when user has no season preference
+    s    = pref_season.lower()
     kw   = _SEASON_KW.get(s, set())
     cols = _SEASON_COL.get(s, set())
     text = (
@@ -1149,23 +1452,50 @@ def _item_doc(item: Dict) -> str:
     ]
     return " ".join(p for p in parts if p).lower()
 
-def _content_scores(catalog: List[Dict], pref_cats: List[str],
-                    pref_colors: List[str], pref_season: str) -> Dict[str, float]:
+# Cache: keyed by (catalog_fingerprint, taste_key) → score dict
+_tfidf_cache: Dict[str, Dict[str, float]] = {}
+
+def _content_scores_sync(catalog: List[Dict], pref_cats: List[str],
+                         pref_colors: List[str], pref_season: str) -> Dict[str, float]:
+    """CPU-bound TF-IDF computation — call via run_in_executor to avoid blocking."""
     if not catalog: return {}
     ids  = [str(it.get("catalog_item_id") or it.get("id","")) for it in catalog]
-    docs = [_item_doc(it) for it in catalog]
-    taste_doc = " ".join(pref_cats + pref_colors + ([pref_season] if pref_season else []))
+    # Repeat categories 3× so they dominate over colors in the taste vector
+    taste_parts = (pref_cats * 3) + pref_colors + ([pref_season] if pref_season else [])
+    taste_doc = " ".join(taste_parts)
     if not taste_doc.strip(): return {}
+
+    # Cache by taste key + catalog size to avoid rebuilding on identical requests
+    cache_key = f"{len(catalog)}:{taste_doc}"
+    if cache_key in _tfidf_cache:
+        return _tfidf_cache[cache_key]
+
+    docs = [_item_doc(it) for it in catalog]
     try:
-        vec      = TfidfVectorizer(ngram_range=(1,2), max_features=2048, min_df=1)
+        vec      = TfidfVectorizer(ngram_range=(1,2), max_features=2048, min_df=2)
         mat      = vec.fit_transform(docs + [taste_doc])
         taste_v  = mat[-1]
         item_mat = mat[:-1]
         sims     = sk_cosine(taste_v, item_mat).flatten()
-        return {ids[i]: float(sims[i]) for i in range(len(ids))}
+        result   = {ids[i]: float(sims[i]) for i in range(len(ids))}
+        _tfidf_cache[cache_key] = result
+        # Limit cache size to 50 entries
+        if len(_tfidf_cache) > 50:
+            oldest = next(iter(_tfidf_cache))
+            del _tfidf_cache[oldest]
+        return result
     except Exception as e:
         log.warning("TF-IDF scoring failed: %s", e)
         return {}
+
+
+async def _content_scores(catalog: List[Dict], pref_cats: List[str],
+                           pref_colors: List[str], pref_season: str) -> Dict[str, float]:
+    """Async wrapper — offloads CPU work to thread pool so event loop stays free."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, _content_scores_sync, catalog, pref_cats, pref_colors, pref_season
+    )
 
 
 # ── Dify workflow (STREAMING) ─────────────────────────────────────
@@ -1266,13 +1596,13 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                        override: Optional[Dict] = None) -> List[Dict]:
     """
     Fetches catalog and ranks by 7 weighted signals:
-      1. Color match     0.30  (preferred_colors vs item color_variants)
-      2. Fit             0.20  (physics_profile JSONB vs body_measurements)
-      3. Gender          0.15  (exact match or unisex)
-      4. Category        0.12  (preferred_categories)
-      5. Season          0.10  (preferred_season)
-      6. TF-IDF content  0.08
-      7. Dify AI boost   0.05
+      1. Color match     0.30  (preferred_colors vs item color_variants — family + exact)
+      2. Fit             0.20  (physics_profile JSONB vs body_measurements / BMI)
+      3. Gender          0.15  (exact match or unisex; wrong-gender gets 0.5× penalty)
+      4. Category        0.12  (graduated: exact > partial > tag match)
+      5. Season          0.10  (keyword + color season match)
+      6. TF-IDF content  0.08  (style tags + description similarity)
+      7. Dify AI boost   0.05  (external AI recommendation boost)
     No duplicate items in output (dedup by catalog_item_id).
     """
     pj = user_doc.get("profile_data_json") or {}
@@ -1290,7 +1620,7 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     # Fetch catalog and Dify boost concurrently.
     # Don't pass gender to fetch_catalog — gender scoring is done by the ranker
     # below (s_gender). This ensures the startup pre-loaded cache is always hit.
-    catalog_task = fetch_catalog(limit=50)
+    catalog_task = fetch_catalog()
 
     dify_task = None
     if gender or colors or categories:
@@ -1301,7 +1631,7 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                 (categories or [""])[0],
                 season, uid,
             ),
-            timeout=5.0,
+            timeout=5.0,   # 3% signal — not worth waiting longer
         )
 
     if dify_task:
@@ -1315,8 +1645,46 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         catalog = await catalog_task
         dify_ids: Set[str] = set()
 
-    # TF-IDF content scores
-    con_sc = _content_scores(catalog, categories or [], colors or [], season or "")
+    # TF-IDF content scores (runs in thread pool — non-blocking)
+    con_sc = await _content_scores(catalog, categories or [], colors or [], season or "")
+
+    # ── Pre-compute constants that don't change per item ──────────────
+    # body build: prefer explicit 'build' field (set by frontend from user's fit choice),
+    # fall back to BMI inference if not provided
+    explicit_build = (body_meas.get("build") or "").lower().strip()
+    user_build     = explicit_build if explicit_build in ("slim","athletic","plus","average") \
+                     else _infer_build(body_meas)
+
+    colors_list  = colors or []
+    cats_list    = categories or []
+
+    # If user explicitly selected specific categories (≤4), treat as HARD preference:
+    # items that don't match any selected category get a floor score of 0.1 instead of 0.5.
+    # This ensures selected-category items always rank above random items.
+    strict_cats = len(cats_list) > 0 and len(cats_list) <= 6
+
+    # Pre-expand category variant sets once (avoids rebuilding inside the loop)
+    _CAT_EXPAND: Dict[str, Set[str]] = {
+        "dress":    {"dresses", "women dresses", "gown", "maxi", "mini dress", "midi dress"},
+        "shirt":    {"shirts", "blouse", "top", "tops", "women tops", "button-down"},
+        "skirt":    {"skirts", "mini skirt", "midi skirt", "maxi skirt"},
+        "blouse":   {"blouses", "top", "tops", "women tops"},
+        "top":      {"tops", "women tops", "blouse", "shirt", "crop top"},
+        "t-shirt":  {"t-shirts", "tshirt", "tee", "women t-shirts", "polo"},
+        "pant":     {"pants", "trousers", "jeans", "bottomwear", "chinos", "slacks"},
+        "jumpsuit": {"jumpsuits", "women jumpsuits", "playsuit", "romper"},
+        "jacket":   {"jackets", "coat", "outerwear", "windbreaker", "bomber"},
+        "blazer":   {"blazers", "suit jacket", "sports coat"},
+        "kurta":    {"kurtas", "kurti", "ethnic", "salwar", "churidar"},
+        "active":   {"activewear", "sportswear", "gym", "yoga", "athletic", "sports"},
+        "skirt":    {"skirts", "mini skirt"},
+        "trousers": {"trousers", "pants", "slacks", "chinos"},
+    }
+    cat_variant_sets: List[Set[str]] = []
+    for c in cats_list:
+        cl = c.lower()
+        base_set = {cl} | _CAT_EXPAND.get(cl, set())
+        cat_variant_sets.append(base_set)
 
     # Score each item — strict dedup by catalog_item_id
     scored: List[Dict] = []
@@ -1328,48 +1696,81 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
             continue
         seen.add(iid)
 
-        s_color  = _color_score(item, colors or [])
-        s_fit    = _fit_score(item, body_meas)
+        # ── Early gender filter (skip before any heavy computation) ──
+        ig = _gender(item)
+        if gender and ig != "unisex" and ig != gender:
+            continue
 
-        ig       = _gender(item)
-        s_gender = 1.0 if ig == "unisex" or not gender or ig == gender else 0.1
+        s_gender = 1.0  # wrong-gender already skipped above
 
+        # ── Per-item text fields (computed once, reused below) ────────
         item_cat  = (item.get("category") or "").lower()
+        item_name = (item.get("name") or "").lower()
         item_sub  = (item.get("subcategory") or "").lower()
-        item_tags = {t.lower() for t in _tags(item)}
-        em_sub    = ((item.get("extra_metadata") or {}).get("subcategory") or "").lower()
-        s_cat     = 1.0 if any(
-            (item_cat and (c.lower() in item_cat or item_cat in c.lower())) or
-            (item_sub and (c.lower() in item_sub or item_sub in c.lower())) or
-            (em_sub   and (c.lower() in em_sub   or em_sub   in c.lower())) or
-            any(t and (c.lower() in t or t in c.lower()) for t in item_tags)
-            for c in (categories or [])
-        ) else 0.0
+        item_tags_list = _tags(item)                           # list — reused in output
+        item_tags = {t.lower() for t in item_tags_list}
+        item_text = f"{item_cat} {item_name} {item_sub} {' '.join(item_tags)}"
 
+        # ── Category score (graduated: exact > partial > tag) ─────────
+        _cat_hits = 0.0
+        for cl_variants in cat_variant_sets:
+            best = 0.0
+            for cv in cl_variants:
+                if item_cat and item_cat == cv:
+                    best = max(best, 3.0); break          # can't do better
+                elif item_cat and (cv in item_cat or item_cat in cv):
+                    best = max(best, 2.5)
+                elif cv in item_text:
+                    best = max(best, 1.5)
+            _cat_hits += best
+        # Normalize by (num_categories × 3) so matching all = 1.0
+        s_cat = min(_cat_hits / (len(cats_list) * 3.0), 1.0) if cats_list else 0.5
+
+        # ── Other scores ───────────────────────────────────────────────
+        s_color  = _color_score(item, colors_list)
+        s_fit    = _fit_score_prebuilt(item, user_build)
         s_season = _season_score(item, season or "")
         s_con    = con_sc.get(iid, 0.0)
         s_dify   = 0.85 if iid in dify_ids else 0.0
+        s_stock  = _stock_score(item)
 
-        # Weighted score — pure signal, no artificial base
-        final = min(
-            0.25 * s_color  +
-            0.15 * s_fit    +
-            0.18 * s_gender +
-            0.14 * s_cat    +
-            0.10 * s_season +
-            0.08 * s_con    +
-            0.10 * s_dify,
-            1.0
-        )
-
-        # Bury wrong-gender items (but don't remove — unisex still shows)
-        if s_gender < 0.5 and not dify_ids:
-            final *= 0.5
+        # ── Weighted score ─────────────────────────────────────────────
+        # When user explicitly picked categories (strict_cats=True), raise category
+        # weight to 45% so their choice dominates. Items that matched at least one
+        # category get s_cat > 0; items with zero matches get s_cat=0.
+        if strict_cats:
+            base = (
+                0.45 * s_cat    +   # user explicitly chose this type → highest priority
+                0.22 * s_color  +   # color preference
+                0.12 * s_fit    +   # body fit
+                0.08 * s_season +   # seasonal relevance
+                0.08 * s_con    +   # content similarity (TF-IDF)
+                0.03 * s_gender +   # gender signal
+                0.02 * s_dify       # AI boost
+            )
+            # Hard penalty: items that match zero selected categories score max 0.25
+            # so they always rank below any category-matching item
+            if s_cat == 0.0:
+                base = min(base, 0.25)
+        else:
+            base = (
+                0.30 * s_cat    +   # category match
+                0.25 * s_color  +   # color preference
+                0.15 * s_fit    +   # body fit
+                0.12 * s_season +   # seasonal relevance
+                0.10 * s_con    +   # content similarity (TF-IDF)
+                0.05 * s_gender +   # gender signal
+                0.03 * s_dify       # AI boost
+            )
+        # Stock multiplier: out-of-stock items score at most 60% of base
+        stock_mult = 0.6 + 0.4 * s_stock
+        final = min(base * stock_mult, 1.0)
 
         images, primary = _build_images(item, viewer_gender=gender)
         variants, sizes, item_colors_list = _build_variants(item)
-        a3d = item.get("assets_3d") or {}
-        bp = _safe_float(item.get("base_price"))
+        a3d  = item.get("assets_3d") or {}
+        bp   = _safe_float(item.get("base_price"))
+        disc = _discount_percent(item)
 
         scored.append({
             # Primary fields
@@ -1378,8 +1779,8 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
             "description":       item.get("description"),
             "category":          item.get("category") or "",
             "subcategory":       item.get("subcategory"),
-            "gender":            _gender(item),
-            "style_tags":        _tags(item),
+            "gender":            ig,                            # reuse — avoid second call
+            "style_tags":        item_tags_list,                # reuse — avoid second call
             "occasion":          (item.get("extra_metadata") or {}).get("occasion"),
             "season":            _season_item(item),
             "fabric":            _fabric(item),
@@ -1403,26 +1804,70 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                 "dify":     round(s_dify,   3),
             },
             "recommendation_reason": (
-                "AI-powered pick for you"              if s_dify  > 0                          else
-                "Matches your colour preference"       if s_color > 0.6 and colors             else
-                "Great fit for your body type"         if s_fit   > 0.7 and body_meas          else
-                f"Top pick for {season or _cur_season()} style" if s_season > 0.4             else
-                "Matches your style preference"        if s_cat   > 0   and categories         else
+                "Perfect match for your style"                          if s_cat > 0.8 and s_color > 0.8           else
+                f"Matches your {colors_list[0]} colour preference"      if s_color > 0.6 and colors_list           else
+                "Great fit for your body type"                          if s_fit > 0.7 and body_meas               else
+                "AI-powered pick for you"                               if s_dify > 0                              else
+                f"Top pick for {season}"                                if s_season > 0.4 and season               else
+                f"Recommended in {item_cat or 'your style'}"            if s_cat > 0.5                             else
                 "Trending in your style"
             ),
+            # Pricing helpers
+            "sale_price":       _safe_float(item.get("sale_price")),
+            "discount_percent": round(disc, 1),
+            "match_score":      round(final, 4),   # 0–1 (frontend multiplies ×100)
             # Legacy fields (frontend compatibility)
             "id":     iid,
             "title":  item.get("name"),
             "image":  primary,
             "price":  bp,
             "colors": item_colors_list,
-            "tags":   _tags(item),
+            "tags":   item_tags_list,              # reuse — avoid third call
         })
 
     scored.sort(key=lambda x: x["score"], reverse=True)
-    log.info("Ranked %d unique items | top scores: %s",
-             len(scored), [s["score"] for s in scored[:5]])
-    return scored[:top_k]
+
+    # Category diversity: interleave top items from different categories
+    # so users see a mix (dresses + jumpsuits + tops) not 20 dresses in a row
+    if top_k >= 6 and len(scored) > top_k:
+        by_cat: Dict[str, List[Dict]] = {}
+        for s in scored:
+            cat_key = (s.get("category") or "other").lower().split()[0]  # first word
+            by_cat.setdefault(cat_key, []).append(s)
+
+        diverse: List[Dict] = []
+        seen_ids: Set[str] = set()
+        # Round-robin through categories, picking top items from each
+        cat_lists = list(by_cat.values())
+        # Sort category groups by best score (best category first)
+        cat_lists.sort(key=lambda lst: lst[0]["score"] if lst else 0, reverse=True)
+        cat_idx = [0] * len(cat_lists)
+
+        while len(diverse) < top_k:
+            added = False
+            for ci, cl in enumerate(cat_lists):
+                if cat_idx[ci] < len(cl):
+                    item = cl[cat_idx[ci]]
+                    iid = item["catalog_item_id"]
+                    cat_idx[ci] += 1
+                    if iid not in seen_ids:
+                        seen_ids.add(iid)
+                        diverse.append(item)
+                        added = True
+                        if len(diverse) >= top_k:
+                            break
+            if not added:
+                break
+
+        # Re-sort by score so best items still appear first within the diverse set
+        diverse.sort(key=lambda x: x["score"], reverse=True)
+        log.info("Ranked %d unique items (diverse from %d cats) | top scores: %s",
+                 len(diverse), len(cat_lists), [s["score"] for s in diverse[:5]])
+        return diverse
+    else:
+        log.info("Ranked %d unique items | top scores: %s",
+                 len(scored), [s["score"] for s in scored[:5]])
+        return scored[:top_k]
 
 
 # ── Pydantic models ───────────────────────────────────────────────
@@ -1465,16 +1910,18 @@ class RecRequest(BaseModel):
 
 # ── FastAPI ───────────────────────────────────────────────────────
 app = FastAPI(title="HueIQ Recommendation Engine", version="9.0.0")
-_ALLOWED_ORIGINS = [
-    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()
-] or ["*"]
-
+# CORS — allow all origins so browser preflight (OPTIONS) always passes.
+# JWT is sent in Authorization header (not cookies) so allow_credentials=False
+# is correct and allows allow_origins=["*"].
+# For production: set ALLOWED_ORIGINS env var to your exact frontend domain.
+_env_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=("*" not in _ALLOWED_ORIGINS),
+    allow_origins=_env_origins if _env_origins else ["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=600,
 )
 
 
@@ -1821,12 +2268,35 @@ async def trending(
     Returns up to `limit` items from the full 500-item catalog.
     No auth required. Items sorted by total stock availability.
     """
-    items = await fetch_catalog(
-        gender=_norm_gender(gender) if gender else None,
-        colors=[color] if color else None,
-        categories=[category] if category else None,
-        limit=50,    # fetch fewer items for faster response
-    )
+    items = await fetch_catalog()
+
+    # Apply gender / category / color filters post-fetch
+    # (fetch_catalog returns the full catalog cache; filtering is done here)
+    norm_gender   = _norm_gender(gender) if gender else None
+    norm_category = (category or "").lower().strip()
+    norm_color    = (color or "").lower().strip()
+
+    if norm_gender or norm_category or norm_color:
+        filtered_items: List[Dict] = []
+        for it in items:
+            ig = _gender(it)
+            # Gender filter
+            if norm_gender and ig != "unisex" and ig != norm_gender:
+                continue
+            # Category filter — substring match on category/subcategory
+            if norm_category:
+                cat_str = ((it.get("category") or "") + " " + (it.get("subcategory") or "")).lower()
+                if norm_category not in cat_str:
+                    continue
+            # Color filter — substring match across all color fields
+            if norm_color:
+                _, _, item_cols = _build_variants(it)
+                col_str = " ".join(c.lower() for c in item_cols)
+                extra   = ((it.get("extra_metadata") or {}).get("color") or "").lower()
+                if norm_color not in col_str and norm_color not in extra:
+                    continue
+            filtered_items.append(it)
+        items = filtered_items
 
     # Sort by stock (most available = trending)
     def _stock_sum(x):
@@ -1852,13 +2322,17 @@ async def trending(
         imgs, primary = _build_images(item)
         vars_, sizes, cols = _build_variants(item)
 
+        bp_t   = _safe_float(item.get("base_price"))
+        disc_t = _discount_percent(item)
         out.append({
             "catalog_item_id":   iid,
             "name":              item.get("name"),
             "category":          item.get("category"),
             "subcategory":       item.get("subcategory"),
             "gender":            _gender(item),
-            "base_price":        _safe_float(item.get("base_price")),
+            "base_price":        bp_t,
+            "sale_price":        _safe_float(item.get("sale_price")),
+            "discount_percent":  round(disc_t, 1),
             "primary_image_url": primary,
             "images":            imgs,
             "variants":          vars_,
@@ -1869,7 +2343,7 @@ async def trending(
             # legacy
             "id":    iid,
             "image": primary,
-            "price": _safe_float(item.get("base_price")),
+            "price": bp_t,
         })
 
     return {"total": len(out), "items": out}
@@ -1963,32 +2437,63 @@ async def health():
             info["boss_health"] = r.json()
     except Exception:
         info["boss_api"] = False
-    info["cached_users"] = len(_mem_users)
+    info["cached_users"]   = len(_mem_users)
+    full_cat = _cget("cat:full")
+    info["catalog_cached"] = len(full_cat) if full_cat else len(_full_catalog_cache)
+    info["catalog_loading"] = _catalog_loading
+    info["tfidf_cache_entries"] = len(_tfidf_cache)
     return info
 
 
 # ── Startup / shutdown ────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
+    global _full_catalog_cache
     log.info("HueIQ Engine v9.0 starting (backend: Boss PostgreSQL API)...")
+    # Load disk cache immediately so first request is instant
+    disk = _load_disk_cache()
+    if disk:
+        _full_catalog_cache = disk
+        _cset("cat:full", disk, 3600)
+        log.info("Startup: %d items ready from disk cache", len(disk))
+    # Connect to Boss API and refresh catalog in background
     asyncio.create_task(_init())
 
 async def _init():
-    # Try up to 2 times to connect and warm the catalog cache
-    for attempt in range(2):
+    """
+    Connect to Boss API and start catalog loading.
+    Azure Container Apps can take 30-60s to cold-start — we retry patiently.
+    Catalog loading starts as soon as ANY page returns data, regardless of
+    whether the /health endpoint responds.
+    """
+    # Check token expiry — but don't block catalog loading on refresh.
+    # Start both in parallel: catalog handles 401s via its own retry logic.
+    if _is_token_expired(BOSS_TOKEN):
+        log.warning("BOSS_TOKEN is expired — refreshing in background alongside catalog load")
+        asyncio.create_task(_refresh_boss_token())
+    else:
+        log.info("BOSS_TOKEN is valid")
+
+    # Always start catalog loading immediately — don't wait for token refresh
+    asyncio.create_task(_load_all_pages_bg())
+
+    # Health check — informational only, give up quickly if unreachable
+    for attempt in range(3):
         try:
             c = await _boss_client()
             r = await c.get("/health", headers=_boss_headers(), timeout=15.0)
-            if r.status_code == 200:
-                log.info("Boss API connected → %s", BOSS_URL)
-                items = await fetch_catalog(limit=50)
-                log.info("Catalog pre-loaded: %d items", len(items))
+            if r.status_code in (200, 204):
+                log.info("Boss API connected ✓ → %s", BOSS_URL)
                 return
-            log.warning("Boss API health check failed (%d)", r.status_code)
+            if r.status_code == 401:
+                log.warning("Boss API → 401, refreshing token")
+                await _refresh_boss_token()
+                continue
+            log.warning("Boss API health → HTTP %d (attempt %d)", r.status_code, attempt + 1)
         except Exception as e:
-            log.warning("Boss API unreachable (attempt %d): %s", attempt + 1, e)
-        if attempt == 0:
-            await asyncio.sleep(2)
+            log.warning("Boss API unreachable (attempt %d): %s", attempt + 1, type(e).__name__)
+        await asyncio.sleep(15)
+    log.warning("Boss API not reachable after 3 attempts — running on demo/cached data")
 
 @app.on_event("shutdown")
 async def shutdown():

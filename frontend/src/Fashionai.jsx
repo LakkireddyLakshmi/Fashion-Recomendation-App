@@ -71,6 +71,15 @@ const resolveScore = (item) =>
 const cleanName = (item) => {
   return item?.name || item?.title || "Fashion Item";
 };
+const hashInt = (s) => {
+  let h = 0;
+  for (let i = 0; i < (s||"").length; i++) h = ((h << 5) - h + (s||"").charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+const mockRating = (item) => {
+  const h = hashInt(String(item?.catalog_item_id || item?.id || "x"));
+  return { stars: (3.8 + (h % 11) / 10).toFixed(1), reviews: 100 + (h % 4901) };
+};
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=League+Spartan:wght@300;400;500;600;700;800&display=swap');
@@ -87,6 +96,17 @@ const CSS = `
   @keyframes chipIn{from{opacity:0;transform:translateY(-6px) scale(0.92);}to{opacity:1;transform:translateY(0) scale(1);}}
   @keyframes shimmer{0%{background-position:-200% center}100%{background-position:200% center}}
   @keyframes arrowPulse{0%,100%{transform:translateX(0)}50%{transform:translateX(5px)}}
+  @keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(0.96);}to{opacity:1;transform:none;}}
+  @keyframes slideInRight{from{transform:translateX(100%);}to{transform:translateX(0);}}
+  .rec-grid > *{animation:cardIn 0.35s ease both;}
+  .rec-grid > *:nth-child(1){animation-delay:0.04s}
+  .rec-grid > *:nth-child(2){animation-delay:0.08s}
+  .rec-grid > *:nth-child(3){animation-delay:0.12s}
+  .rec-grid > *:nth-child(4){animation-delay:0.16s}
+  .rec-grid > *:nth-child(5){animation-delay:0.20s}
+  .rec-grid > *:nth-child(6){animation-delay:0.24s}
+  .rec-grid > *:nth-child(7){animation-delay:0.28s}
+  .rec-grid > *:nth-child(8){animation-delay:0.32s}
 
   /* ── Responsive ── */
   @media(max-width:768px){
@@ -1853,6 +1873,70 @@ function StepStyle({ data, setData, onNext, onBack }) {
           </div>
         </div>
 
+        {/* ══ WHAT ARE YOU LOOKING FOR? ══ */}
+        {(() => {
+          const g = (data.gender || "").toLowerCase();
+          const isMen = g === "men" || g === "male" || g === "man";
+          const CAT_OPTIONS = isMen
+            ? [
+                { label:"T-Shirts",  val:"t-shirt",  emoji:"👕" },
+                { label:"Shirts",    val:"shirt",    emoji:"👔" },
+                { label:"Jeans",     val:"pant",     emoji:"👖" },
+                { label:"Trousers",  val:"trousers", emoji:"🩳" },
+                { label:"Jackets",   val:"jacket",   emoji:"🧥" },
+                { label:"Blazers",   val:"blazer",   emoji:"🤵" },
+                { label:"Kurtas",    val:"kurta",    emoji:"🪭" },
+                { label:"Activewear",val:"active",   emoji:"🏃" },
+              ]
+            : [
+                { label:"Dresses",   val:"dress",    emoji:"👗" },
+                { label:"Tops",      val:"top",      emoji:"👚" },
+                { label:"Blouses",   val:"blouse",   emoji:"🌸" },
+                { label:"Jeans",     val:"pant",     emoji:"👖" },
+                { label:"Skirts",    val:"skirt",    emoji:"🩴" },
+                { label:"Jumpsuits", val:"jumpsuit", emoji:"🧑‍🎤" },
+                { label:"Kurtas",    val:"kurta",    emoji:"🪭" },
+                { label:"Activewear",val:"active",   emoji:"🏃" },
+              ];
+          const sel = data.categories || [];
+          const toggle = (val) => {
+            const next = sel.includes(val) ? sel.filter(v => v !== val) : [...sel, val];
+            setData(d => ({ ...d, categories: next }));
+          };
+          return (
+            <div style={{ padding:"0 28px 24px" }}>
+              <div style={{ fontFamily:"'League Spartan'", fontSize:13, fontWeight:600, color:"rgba(255,255,255,0.55)", letterSpacing:2, textTransform:"uppercase", marginBottom:12 }}>
+                What are you looking for? <span style={{ color:"rgba(255,255,255,0.3)", fontWeight:300, letterSpacing:0 }}>(pick any)</span>
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {CAT_OPTIONS.map(({ label, val, emoji }) => {
+                  const active = sel.includes(val);
+                  return (
+                    <button key={val} onClick={() => toggle(val)} style={{
+                      display:"flex", alignItems:"center", gap:6,
+                      padding:"8px 16px", borderRadius:50,
+                      background: active ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.08)",
+                      border: active ? "none" : "1px solid rgba(255,255,255,0.18)",
+                      color: active ? "#0d0018" : "rgba(255,255,255,0.75)",
+                      fontFamily:"'League Spartan'", fontSize:13, fontWeight: active ? 700 : 400,
+                      cursor:"pointer", transition:"all 0.18s",
+                    }}>
+                      <span style={{ fontSize:15 }}>{emoji}</span>
+                      {label}
+                      {active && <span style={{ fontSize:11, background:"#7c3aed", color:"#fff", borderRadius:"50%", width:16, height:16, display:"flex", alignItems:"center", justifyContent:"center" }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {sel.length > 0 && (
+                <div style={{ marginTop:8, fontSize:12, color:"rgba(255,255,255,0.4)", fontFamily:"'League Spartan'" }}>
+                  ✦ Recommending: <span style={{ color:"rgba(255,255,255,0.7)" }}>{sel.map(v => CAT_OPTIONS.find(c=>c.val===v)?.label || v).join(", ")}</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ══ FOOTER ══ */}
         <div style={{ display:"flex", gap:12, padding:"0 28px 28px" }}>
           <BackBtn onClick={onBack} />
@@ -2062,10 +2146,12 @@ function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
   );
 }
 
-function ProductCard({ item, onClick, compact = false }) {
+function ProductCard({ item, onClick, compact = false, onAddToCart, wishlisted = false, onToggleWishlist }) {
   const [err, setErr] = useState(false);
   const [liked, setLiked] = useState(false);
-  const [wishlisted, setWishlisted] = useState(false);
+  const [addedToBag, setAddedToBag] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [selSize, setSelSize] = useState(null);
   const img = resolveImg(item);
   const fb = `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&fit=crop&sig=${item?.catalog_item_id || "x"}`;
   const name = cleanName(item);
@@ -2080,172 +2166,370 @@ function ProductCard({ item, onClick, compact = false }) {
   });
   const disc = item?.discount_percent ? Math.round(item.discount_percent) : 0;
   const score = resolveScore(item);
-  const reason = item?.recommendation_reason || "";
+  const origPrice = disc > 0 ? ((price > 0 ? price : 999) / (1 - disc / 100)).toFixed(0) : null;
+  const scoreBadgeColor = score >= 70 ? "#16a34a" : score >= 40 ? "#7c3aed" : "#6366f1";
+
   return (
     <div
       onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         width: "100%",
-        background: "rgba(255,255,255,0.5)",
-        boxShadow: "0px 4px 4px rgba(0,0,0,0.25)",
-        backdropFilter: "blur(17.5px)",
-        WebkitBackdropFilter: "blur(17.5px)",
-        borderRadius: 10,
+        background: "#fff",
+        borderRadius: 16,
         overflow: "hidden",
         cursor: "pointer",
         fontFamily: "'League Spartan',sans-serif",
-        transition: "transform 0.2s, box-shadow 0.2s",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = "translateY(-4px)";
-        e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.35)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = "none";
-        e.currentTarget.style.boxShadow = "0px 4px 4px rgba(0,0,0,0.25)";
+        transition: "transform 0.22s ease, box-shadow 0.22s ease",
+        boxShadow: hovered
+          ? "0 12px 40px rgba(0,0,0,0.18)"
+          : "0 2px 10px rgba(0,0,0,0.08)",
+        transform: hovered ? "translateY(-5px)" : "none",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
-      <div style={{ position: "relative" }}>
+      {/* ── Image area ── */}
+      <div style={{
+        position: "relative",
+        width: "100%",
+        paddingBottom: compact ? "100%" : "128%",
+        background: "#f7f7f9",
+        flexShrink: 0,
+        overflow: "hidden",
+      }}>
         <img
           src={err ? fb : img || fb}
           onError={() => setErr(true)}
           alt={name}
           style={{
+            position: "absolute",
+            inset: 0,
             width: "100%",
-            height: compact ? 160 : 259,
-            objectFit: "cover",
-            display: "block",
-            borderRadius: "10px 10px 0 0",
+            height: "100%",
+            objectFit: "contain",
+            objectPosition: "center",
+            padding: "12px",
+            transition: "transform 0.4s ease",
+            transform: hovered ? "scale(1.05)" : "scale(1)",
           }}
         />
-        {/* Match score badge */}
+
+        {/* Match score — top left */}
         <div style={{
-          position: "absolute", top: 8, left: 8,
-          background: score >= 70 ? "rgba(72,210,150,0.85)" : score >= 40 ? "rgba(168,85,247,0.85)" : "rgba(99,102,241,0.85)",
-          backdropFilter: "blur(5px)", borderRadius: 8, padding: "5px 10px",
-          fontSize: 12, fontWeight: 700, color: "#fff", letterSpacing: 0.3,
+          position: "absolute", top: 10, left: 10,
+          background: scoreBadgeColor,
+          borderRadius: 6, padding: "3px 9px",
+          fontSize: 10, fontWeight: 700, color: "#fff", letterSpacing: 0.4,
         }}>
           {score}% Match
         </div>
-        {item?.has_3d && (
-          <div style={{
+
+        {/* Wishlist heart — top right */}
+        <button
+          onClick={(e) => { e.stopPropagation(); setLiked(!liked); onToggleWishlist && onToggleWishlist(item); }}
+          style={{
             position: "absolute", top: 8, right: 8,
-            background: "rgba(255,255,255,0.55)", backdropFilter: "blur(5px)",
-            borderRadius: 10, padding: "6px 10px",
-            fontSize: 16.12, fontWeight: 600, color: "#fff", lineHeight: "15px",
+            width: 34, height: 34, borderRadius: "50%",
+            background: "#fff",
+            border: "none",
+            cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+            transition: "transform 0.18s ease",
+            transform: (wishlisted || liked) ? "scale(1.15)" : "scale(1)",
+          }}
+        >
+          <svg width="16" height="15" viewBox="0 0 16 15" fill={(wishlisted || liked) ? "#ef4444" : "none"} stroke={(wishlisted || liked) ? "#ef4444" : "#bbb"} strokeWidth="1.8">
+            <path d="M8 13.5L1.5 7C0.6 6.1 0 4.9 0 3.6 0 1.6 1.6 0 3.6 0c1.1 0 2.2.5 2.9 1.4L8 3l1.5-1.6C10.2.5 11.3 0 12.4 0 14.4 0 16 1.6 16 3.6c0 1.3-.6 2.5-1.5 3.4L8 13.5z" strokeLinejoin="round"/>
+          </svg>
+        </button>
+
+        {/* Discount ribbon — top left below match (or top right if no match) */}
+        {disc > 0 && (
+          <div style={{
+            position: "absolute", top: 36, left: 10,
+            background: "#ef4444",
+            borderRadius: 6, padding: "2px 8px",
+            fontSize: 10, fontWeight: 700, color: "#fff",
           }}>
-            3D
+            -{disc}% OFF
           </div>
         )}
-        {/* Bottom overlay: like + wishlist */}
+
+        {/* Hover overlay: Quick View */}
         <div style={{
           position: "absolute", bottom: 0, left: 0, right: 0,
-          display: "flex", alignItems: "center", justifyContent: "flex-end",
-          gap: 6, padding: "20px 8px 8px",
-          background: "linear-gradient(transparent,rgba(0,0,0,0.35))",
+          background: "rgba(15,10,30,0.72)",
+          backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "10px 0",
+          opacity: hovered ? 1 : 0,
+          transform: hovered ? "translateY(0)" : "translateY(10px)",
+          transition: "opacity 0.22s ease, transform 0.22s ease",
         }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); setLiked(!liked); }}
-            style={{
-              width: 30, height: 30, borderRadius: 25, flexShrink: 0,
-              background: liked ? "rgba(255,80,80,0.8)" : "rgba(255,255,255,0.55)",
-              backdropFilter: "blur(5px)", border: "none", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "background 0.2s",
-            }}
-          >
-            <svg width="14" height="13" viewBox="0 0 14 13" fill={liked ? "white" : "black"}>
-              <path d="M7 12L1.2 6.2C0.4 5.4 0 4.4 0 3.3 0 1.5 1.5 0 3.3 0c1 0 2 .5 2.7 1.3L7 2.6l1-1.3C8.7.5 9.7 0 10.7 0 12.5 0 14 1.5 14 3.3c0 1.1-.4 2.1-1.2 2.9L7 12z" />
-            </svg>
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setWishlisted(!wishlisted); }}
-            style={{
-              width: 30, height: 30, borderRadius: 25, flexShrink: 0,
-              background: wishlisted ? "rgba(138,43,226,0.8)" : "rgba(255,255,255,0.55)",
-              backdropFilter: "blur(5px)", border: "none", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "background 0.2s",
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill={wishlisted ? "white" : "black"}>
-              <path d="M7 0L14 4V10L7 14L0 10V4L7 0Z" />
-              <circle cx="7" cy="7" r="2" fill={wishlisted ? "rgba(138,43,226,0.8)" : "white"} />
-            </svg>
-          </button>
+          <span style={{
+            fontSize: 12, fontWeight: 700, color: "#fff", letterSpacing: 1.2,
+            textTransform: "uppercase",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            Quick View
+          </span>
         </div>
       </div>
-      <div style={{ padding: "10px 14px 14px", background: "#fff", borderRadius: "0 0 16px 16px" }}>
+
+      {/* ── Info area ── */}
+      <div style={{
+        padding: "12px 13px 14px",
+        display: "flex", flexDirection: "column", gap: 6,
+        flex: 1,
+        background: "#fff",
+      }}>
+
+        {/* Brand / tag */}
+        {tags.length > 0 && (
+          <div style={{
+            fontSize: 10, fontWeight: 600, color: "#9333ea",
+            textTransform: "uppercase", letterSpacing: 0.8,
+          }}>
+            {tags[0]}
+          </div>
+        )}
+
+        {/* Product name */}
         <div style={{
-          fontSize: 16, fontWeight: 600, color: "#1E1E1E", lineHeight: "18px",
-          marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          fontSize: 13, fontWeight: 600, color: "#111",
+          lineHeight: 1.4,
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+          overflow: "hidden",
         }}>
           {name}
         </div>
-        {reason && (
-          <div style={{
-            fontSize: 10, fontWeight: 300, color: "#888",
-            marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
-            {reason}
+
+        {/* Star rating */}
+        {(() => { const r = mockRating(item); return (
+          <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:2 }}>
+            <div style={{ display:"flex", gap:1 }}>
+              {[1,2,3,4,5].map(s => (
+                <svg key={s} width="11" height="11" viewBox="0 0 24 24">
+                  <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" fill={s <= Math.floor(r.stars) ? "#f59e0b" : s - 0.5 <= r.stars ? "#fcd34d" : "#e5e7eb"} />
+                </svg>
+              ))}
+            </div>
+            <span style={{ fontSize:10, color:"#888", fontWeight:500 }}>{r.stars} ({r.reviews.toLocaleString()})</span>
+          </div>
+        )})()}
+
+        {/* Color swatches */}
+        {(() => {
+          const cols = (item?.available_colors || []).slice(0, 5);
+          const COLOR_HEX = { red:"#ef4444",blue:"#3b82f6",green:"#22c55e",black:"#111",white:"#f3f4f6",pink:"#ec4899",yellow:"#eab308",orange:"#f97316",purple:"#a855f7",grey:"#9ca3af",gray:"#9ca3af",brown:"#92400e",navy:"#1e3a5f",beige:"#d4b896",maroon:"#7f1d1d",teal:"#14b8a6",coral:"#fb7185",lavender:"#c4b5fd",olive:"#65a30d",cream:"#fef3c7" };
+          const toHex = (c) => { const cl = (c||"").toLowerCase().split(/[\s-]/)[0]; return COLOR_HEX[cl] || "#ccc"; };
+          if (!cols.length) return null;
+          return (
+            <div style={{ display:"flex", gap:4, marginTop:2 }}>
+              {cols.map((c,i) => (
+                <div key={i} title={c} style={{ width:12, height:12, borderRadius:"50%", background:toHex(c), border:"1.5px solid rgba(0,0,0,0.15)", flexShrink:0 }} />
+              ))}
+              {(item?.available_colors||[]).length > 5 && <span style={{ fontSize:9, color:"#aaa", alignSelf:"center" }}>+{(item.available_colors.length-5)}</span>}
+            </div>
+          );
+        })()}
+
+        {/* Price row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 2 }}>
+          <span style={{ fontSize: 16, fontWeight: 800, color: "#111" }}>
+            ₹{(price > 0 ? price : 999).toLocaleString("en-IN")}
+          </span>
+          {origPrice && (
+            <span style={{ fontSize: 12, color: "#aaa", textDecoration: "line-through", fontWeight: 400 }}>
+              ₹{Number(origPrice).toLocaleString("en-IN")}
+            </span>
+          )}
+          {disc > 0 && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#16a34a" }}>
+              ({disc}% off)
+            </span>
+          )}
+        </div>
+
+        {/* Size picker strip — only shown when sizes available */}
+        {(item?.available_sizes || []).length > 0 && (
+          <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginTop:4 }}>
+            {(item.available_sizes||[]).slice(0,6).map(s => (
+              <button key={s} onClick={(e) => { e.stopPropagation(); setSelSize(selSize===s?null:s); }} style={{
+                fontSize:10, padding:"3px 8px", borderRadius:5,
+                border: selSize===s ? "1.5px solid #7c3aed" : "1px solid #ddd",
+                background: selSize===s ? "#ede9fe" : "#f9f9f9",
+                color: selSize===s ? "#7c3aed" : "#555",
+                cursor:"pointer", fontWeight: selSize===s ? 700 : 400, fontFamily:"'League Spartan'",
+                transition:"all 0.15s",
+              }}>{s}</button>
+            ))}
           </div>
         )}
-        <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
-          {tags.slice(0, 3).map((t, i) => (
-            <span key={i} style={{
-              background: i === 0 ? "rgba(138,43,226,0.12)" : "rgba(0,0,0,0.06)",
-              borderRadius: 5, padding: "3px 6px",
-              fontSize: 8.36, fontWeight: i === 0 ? 500 : 300,
-              color: i === 0 ? "#7c3aed" : "#555",
-              lineHeight: "8px", textTransform: "uppercase",
-              display: "flex", alignItems: "flex-end",
-            }}>
-              {t}
-            </span>
-          ))}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 18, fontWeight: 700, color: "#1E1E1E", lineHeight: "17px" }}>
-              ${price > 0 ? price.toFixed(2) : "99.90"}
-            </span>
-            {disc > 0 && <span style={{
-              background: "rgba(72,210,150,0.15)", borderRadius: 4, padding: "2px 5px",
-              fontSize: 9, fontWeight: 600, color: "#16a34a",
-            }}>
-              -{disc}%
-            </span>}
-          </div>
-          <button
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "#7c3aed",
-              border: "none", borderRadius: 6, padding: "7px 12px",
-              fontSize: 11, fontWeight: 600, color: "#fff",
-              cursor: "pointer", fontFamily: "'League Spartan'",
-              transition: "opacity 0.2s",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
-          >
-            Add to Bag
-          </button>
-        </div>
+
+        {/* Add to Bag button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setAddedToBag(true);
+            onAddToCart && onAddToCart({ ...item, selectedSize: selSize });
+            setTimeout(() => setAddedToBag(false), 1800);
+          }}
+          style={{
+            marginTop: 6,
+            width: "100%",
+            background: addedToBag ? "#16a34a" : hovered ? "#7c3aed" : "#111",
+            border: "none", borderRadius: 8, padding: "10px 0",
+            fontSize: 12, fontWeight: 700, color: "#fff",
+            cursor: "pointer", fontFamily: "'League Spartan'",
+            letterSpacing: 0.6,
+            transition: "background 0.2s ease, transform 0.15s ease",
+            transform: hovered ? "scale(1.01)" : "scale(1)",
+          }}
+        >
+          {addedToBag ? "✓ Added to Bag!" : "ADD TO BAG"}
+        </button>
       </div>
     </div>
   );
 }
 
-function StepFinish({ profile, recommendations, onSelectItem }) {
+function CartDrawer({ cart, onClose, onUpdateQty, onRemove }) {
+  const total = cart.reduce((s, x) => s + (resolvePrice(x) || 999) * (x.qty || 1), 0);
+  const gst = total * 0.18;
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:300, backdropFilter:"blur(4px)" }} />
+      {/* Drawer */}
+      <div style={{
+        position:"fixed", top:0, right:0, bottom:0, width:"min(420px,96vw)",
+        background:"#0f0f1a", borderLeft:"1px solid rgba(255,255,255,0.1)",
+        zIndex:301, display:"flex", flexDirection:"column",
+        fontFamily:"'League Spartan',sans-serif",
+        boxShadow:"-8px 0 40px rgba(0,0,0,0.5)",
+        animation:"slideInRight 0.28s ease both",
+      }}>
+        {/* Header */}
+        <div style={{ padding:"20px 24px 16px", borderBottom:"1px solid rgba(255,255,255,0.08)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontSize:20, fontWeight:700, color:"#fff" }}>Shopping Bag</div>
+            <div style={{ fontSize:13, color:"rgba(255,255,255,0.4)", marginTop:2 }}>{cart.length} {cart.length===1?"item":"items"}</div>
+          </div>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.1)", border:"none", borderRadius:8, width:34, height:34, color:"rgba(255,255,255,0.6)", cursor:"pointer", fontSize:20, display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+        </div>
+        {/* Items */}
+        <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", display:"flex", flexDirection:"column", gap:12 }}>
+          {cart.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"60px 20px", color:"rgba(255,255,255,0.3)" }}>
+              <div style={{ fontSize:48, marginBottom:12 }}>🛍</div>
+              <div style={{ fontSize:16, fontWeight:600, color:"rgba(255,255,255,0.5)" }}>Your bag is empty</div>
+              <div style={{ fontSize:13, marginTop:6 }}>Add items from your recommendations</div>
+            </div>
+          ) : cart.map((item, idx) => {
+            const img = resolveImg(item) || `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=120&fit=crop`;
+            const price = resolvePrice(item) || 999;
+            return (
+              <div key={item.catalog_item_id||idx} style={{ display:"flex", gap:12, background:"rgba(255,255,255,0.05)", borderRadius:14, padding:"12px", border:"1px solid rgba(255,255,255,0.07)" }}>
+                <img src={img} alt="" style={{ width:72, height:88, objectFit:"contain", borderRadius:10, background:"#fff", padding:4, flexShrink:0 }} />
+                <div style={{ flex:1, display:"flex", flexDirection:"column", gap:4, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"#fff", lineHeight:1.3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{cleanName(item)}</div>
+                  {item.selectedSize && <div style={{ fontSize:11, color:"rgba(255,255,255,0.4)" }}>Size: {item.selectedSize}</div>}
+                  <div style={{ fontSize:15, fontWeight:700, color:"#c4b5fd", marginTop:2 }}>₹{(price * (item.qty||1)).toLocaleString("en-IN")}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:4 }}>
+                    <button onClick={()=>onUpdateQty(item, (item.qty||1)-1)} style={{ width:28, height:28, borderRadius:8, background:"rgba(255,255,255,0.1)", border:"none", color:"#fff", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                    <span style={{ fontSize:14, fontWeight:700, color:"#fff", minWidth:20, textAlign:"center" }}>{item.qty||1}</span>
+                    <button onClick={()=>onUpdateQty(item, (item.qty||1)+1)} style={{ width:28, height:28, borderRadius:8, background:"rgba(255,255,255,0.1)", border:"none", color:"#fff", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+                    <button onClick={()=>onRemove(item)} style={{ marginLeft:"auto", background:"none", border:"none", color:"rgba(255,100,100,0.7)", cursor:"pointer", fontSize:12, fontFamily:"'League Spartan'", padding:"4px 8px", borderRadius:6, transition:"all 0.15s" }}>Remove</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {/* Footer */}
+        {cart.length > 0 && (
+          <div style={{ padding:"16px 24px 24px", borderTop:"1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6, fontSize:13, color:"rgba(255,255,255,0.5)" }}>
+              <span>Subtotal</span><span>₹{total.toLocaleString("en-IN", {maximumFractionDigits:0})}</span>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6, fontSize:13, color:"rgba(255,255,255,0.5)" }}>
+              <span>GST (18%)</span><span>₹{gst.toLocaleString("en-IN", {maximumFractionDigits:0})}</span>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:18, fontSize:17, fontWeight:700, color:"#fff", borderTop:"1px solid rgba(255,255,255,0.1)", paddingTop:10 }}>
+              <span>Total</span><span>₹{(total+gst).toLocaleString("en-IN", {maximumFractionDigits:0})}</span>
+            </div>
+            <button style={{ width:"100%", background:"linear-gradient(135deg,#7c3aed,#a855f7)", border:"none", borderRadius:14, padding:"14px 0", color:"#fff", fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:"'League Spartan'", letterSpacing:0.5, boxShadow:"0 4px 20px rgba(124,58,237,0.4)" }}>
+              Proceed to Checkout →
+            </button>
+            <button onClick={onClose} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.15)", borderRadius:14, padding:"11px 0", color:"rgba(255,255,255,0.6)", fontSize:14, cursor:"pointer", fontFamily:"'League Spartan'", marginTop:8 }}>
+              Continue Shopping
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed }) {
   const [page, setPage] = useState(0);
-  const PER = 3;
-  const pages = Math.max(1, Math.ceil(recommendations.length / PER));
-  const visible = recommendations.slice(page * PER, page * PER + PER);
+  const [activeFilter, setActiveFilter] = useState("All");
+  const [sortBy, setSortBy] = useState("match");
+  const [searchQ, setSearchQ] = useState("");
+  const [priceFilter, setPriceFilter] = useState("all");
+  const PER = 12;
+
+  // Derive unique category chips from recommendations
+  const categoryChips = useMemo(() => {
+    const cats = new Set();
+    recommendations.forEach(item => {
+      const c = (item.category || "").toLowerCase().trim();
+      if (c) cats.add(c.charAt(0).toUpperCase() + c.slice(1));
+    });
+    return ["All", ...Array.from(cats).slice(0, 8)];
+  }, [recommendations]);
+
+  // Filter + sort
+  const filtered = useMemo(() => {
+    let list = recommendations;
+    if (activeFilter !== "All") {
+      const af = activeFilter.toLowerCase();
+      list = list.filter(item => (item.category || "").toLowerCase().includes(af));
+    }
+    if (searchQ.trim()) {
+      const q = searchQ.trim().toLowerCase();
+      list = list.filter(item =>
+        (item.name||"").toLowerCase().includes(q) ||
+        (item.category||"").toLowerCase().includes(q) ||
+        (item.style_tags||[]).some(t => t.toLowerCase().includes(q)) ||
+        (item.description||"").toLowerCase().includes(q)
+      );
+    }
+    if (priceFilter === "under500")     list = list.filter(i => (resolvePrice(i)||0) < 500);
+    if (priceFilter === "500to2k")      list = list.filter(i => { const p = resolvePrice(i)||0; return p>=500 && p<2000; });
+    if (priceFilter === "2kto5k")       list = list.filter(i => { const p = resolvePrice(i)||0; return p>=2000 && p<5000; });
+    if (priceFilter === "above5k")      list = list.filter(i => (resolvePrice(i)||0) >= 5000);
+    const sorted = [...list];
+    if (sortBy === "price_asc")  sorted.sort((a, b) => (resolvePrice(a)||0) - (resolvePrice(b)||0));
+    if (sortBy === "price_desc") sorted.sort((a, b) => (resolvePrice(b)||0) - (resolvePrice(a)||0));
+    if (sortBy === "discount")   sorted.sort((a, b) => (b.discount_percent||0) - (a.discount_percent||0));
+    if (sortBy === "match")      sorted.sort((a, b) => resolveScore(b) - resolveScore(a));
+    return sorted;
+  }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
+
+  const pages = Math.max(1, Math.ceil(filtered.length / PER));
+  const safePageNum = Math.min(page, pages - 1);
+  const visible = filtered.slice(safePageNum * PER, safePageNum * PER + PER);
   return (
     <Screen bg={BG1} style={{ justifyContent: "flex-start" }}>
       <style>{CSS}</style>
       <StepBar step={3} />
-      <GlassCard>
+      <GlassCard style={{ maxWidth: 1400, width: "100%", padding: "28px 32px 36px" }}>
         <div style={{ textAlign: "center", marginBottom: 30 }}>
           <div style={{ display: "inline-block", marginBottom: 14 }}>
             <svg width="116" height="77" viewBox="0 0 116 77" fill="none">
@@ -2325,115 +2609,112 @@ function StepFinish({ profile, recommendations, onSelectItem }) {
             </svg>
           </div>
         </div>
-        <div
-          className="top-picks-row"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 6,
-          }}
-        >
-          <span
-            className="picks-label"
-            style={{
-              fontFamily: "'League Spartan'",
-              fontWeight: 300,
-              fontSize: 24,
-              color: "#fff",
-            }}
-          >
+        {/* ── Top bar: title + item count + pagination ── */}
+        <div className="top-picks-row" style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+          <span className="picks-label" style={{ fontFamily: "'League Spartan'", fontWeight: 300, fontSize: 24, color: "#fff" }}>
             Your <strong style={{ fontWeight: 700 }}>Top Picks</strong>
           </span>
-          <span
-            style={{
-              background: "rgba(255,255,255,0.15)",
-              borderRadius: 50,
-              padding: "3px 14px",
-              color: "rgba(255,255,255,0.8)",
-              fontSize: 14,
-              fontFamily: "'League Spartan'",
-            }}
-          >
-            {recommendations.length} Items
+          <span style={{ background: "rgba(255,255,255,0.15)", borderRadius: 50, padding: "3px 14px", color: "rgba(255,255,255,0.8)", fontSize: 14, fontFamily: "'League Spartan'" }}>
+            {filtered.length} Items
           </span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             {[
-              {
-                dir: "left",
-                disabled: page === 0,
-                action: () => setPage((p) => Math.max(0, p - 1)),
-              },
-              {
-                dir: "right",
-                disabled: page >= pages - 1,
-                action: () => setPage((p) => Math.min(pages - 1, p + 1)),
-              },
+              { dir: "left",  disabled: safePageNum === 0,           action: () => setPage((p) => Math.max(0, p - 1)) },
+              { dir: "right", disabled: safePageNum >= pages - 1,    action: () => setPage((p) => Math.min(pages - 1, p + 1)) },
             ].map(({ dir, disabled, action }) => (
-              <button
-                key={dir}
-                onClick={action}
-                disabled={disabled}
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "50%",
-                  background: "rgba(255,255,255,0.12)",
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  cursor: disabled ? "default" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
+              <button key={dir} onClick={action} disabled={disabled} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", cursor: disabled ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d={dir === "left" ? "M10 3L5 8L10 13" : "M6 3L11 8L6 13"}
-                    stroke={disabled ? "rgba(255,255,255,0.2)" : "#fff"}
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d={dir === "left" ? "M10 3L5 8L10 13" : "M6 3L11 8L6 13"} stroke={disabled ? "rgba(255,255,255,0.2)" : "#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
             ))}
           </div>
         </div>
-        <div
-          style={{
-            fontFamily: "'League Spartan'",
-            fontSize: 16,
-            color: "rgba(255,255,255,0.55)",
-            marginBottom: 14,
-          }}
-        >
-          ✦ Recommended for You
+
+        {/* ── Search bar ── */}
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:12, padding:"8px 16px" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input value={searchQ} onChange={e=>{setSearchQ(e.target.value);setPage(0);}} placeholder="Search dresses, tops, brands…" style={{ flex:1, background:"transparent", border:"none", color:"#fff", fontSize:14, outline:"none", fontFamily:"'League Spartan',sans-serif" }} />
+          {searchQ && <button onClick={()=>{setSearchQ("");setPage(0);}} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:18, lineHeight:1, padding:0 }}>×</button>}
         </div>
-        {visible.length === 0 ? (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "40px 0",
-              color: "rgba(255,255,255,0.35)",
-            }}
-          >
+
+        {/* ── Price range filter ── */}
+        <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
+          <span style={{ color:"rgba(255,255,255,0.45)", fontSize:12, alignSelf:"center", fontFamily:"'League Spartan'" }}>Budget:</span>
+          {[
+            {label:"All Prices",val:"all"},
+            {label:"Under ₹500",val:"under500"},
+            {label:"₹500–₹2K",val:"500to2k"},
+            {label:"₹2K–₹5K",val:"2kto5k"},
+            {label:"₹5K+",val:"above5k"},
+          ].map(({label,val}) => (
+            <button key={val} onClick={()=>{setPriceFilter(val);setPage(0);}} style={{
+              background: priceFilter===val ? "rgba(167,139,250,0.35)" : "rgba(255,255,255,0.07)",
+              color: priceFilter===val ? "#c4b5fd" : "rgba(255,255,255,0.7)",
+              border: priceFilter===val ? "1px solid rgba(167,139,250,0.5)" : "1px solid rgba(255,255,255,0.12)",
+              borderRadius:50, padding:"4px 13px", fontSize:12, cursor:"pointer", fontFamily:"'League Spartan'",
+              transition:"all 0.15s",
+            }}>{label}</button>
+          ))}
+        </div>
+
+        {/* ── Category filter chips (Myntra-style) ── */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {categoryChips.map(chip => (
+            <button key={chip} onClick={() => { setActiveFilter(chip); setPage(0); }} style={{
+              background: activeFilter === chip ? "#fff" : "rgba(255,255,255,0.1)",
+              color: activeFilter === chip ? "#111" : "rgba(255,255,255,0.8)",
+              border: activeFilter === chip ? "none" : "1px solid rgba(255,255,255,0.18)",
+              borderRadius: 50, padding: "6px 16px", fontSize: 13, fontWeight: activeFilter === chip ? 700 : 400,
+              cursor: "pointer", fontFamily: "'League Spartan'", transition: "all 0.18s",
+            }}>
+              {chip}
+            </button>
+          ))}
+          {/* Sort dropdown — right-aligned */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, fontFamily: "'League Spartan'" }}>Sort:</span>
+            <select value={sortBy} onChange={e => { setSortBy(e.target.value); setPage(0); }} style={{
+              background: "rgba(255,255,255,0.1)", color: "#fff", border: "1px solid rgba(255,255,255,0.18)",
+              borderRadius: 8, padding: "6px 12px", fontSize: 13, fontFamily: "'League Spartan'",
+              cursor: "pointer", outline: "none",
+            }}>
+              <option value="match"      style={{ background: "#1a1a2e", color: "#fff" }}>Best Match</option>
+              <option value="price_asc"  style={{ background: "#1a1a2e", color: "#fff" }}>Price: Low to High</option>
+              <option value="price_desc" style={{ background: "#1a1a2e", color: "#fff" }}>Price: High to Low</option>
+              <option value="discount"   style={{ background: "#1a1a2e", color: "#fff" }}>Biggest Discount</option>
+            </select>
+          </div>
+        </div>
+
+        {/* ── Results info ── */}
+        <div style={{ fontFamily: "'League Spartan'", fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>
+          Showing {safePageNum * PER + 1}–{Math.min((safePageNum + 1) * PER, filtered.length)} of {filtered.length} results
+          {activeFilter !== "All" && <span style={{ marginLeft: 8, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>· {activeFilter}</span>}
+        </div>
+
+        {/* ── Grid ── */}
+        {visible.length === 0 && filtered.length === 0 && searchQ ? (
+          <div style={{ textAlign:"center", padding:"40px 0", color:"rgba(255,255,255,0.4)", fontFamily:"'League Spartan'" }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>🔍</div>
+            <div style={{ fontSize:18, fontWeight:600, marginBottom:6 }}>No results for "{searchQ}"</div>
+            <div style={{ fontSize:14, opacity:0.6 }}>Try a different keyword or clear filters</div>
+          </div>
+        ) : visible.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.35)" }}>
             <Spinner />
             <div style={{ marginTop: 12, fontSize: 16 }}>Loading…</div>
           </div>
         ) : (
-          <div
-            className="rec-grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3,1fr)",
-              gap: 14,
-            }}
-          >
+          <div className="rec-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 20 }}>
             {visible.map((item, i) => (
               <ProductCard
                 key={item.catalog_item_id || i}
                 item={item}
                 onClick={() => onSelectItem(item)}
+                onAddToCart={onAddToCart}
+                wishlisted={wishlist ? wishlist.has(item.catalog_item_id||item.id) : false}
+                onToggleWishlist={onToggleWishlist}
               />
             ))}
           </div>
@@ -2452,12 +2733,12 @@ function StepFinish({ profile, recommendations, onSelectItem }) {
                 key={i}
                 onClick={() => setPage(i)}
                 style={{
-                  width: i === page ? 20 : 7,
+                  width: i === safePageNum ? 20 : 7,
                   height: 7,
                   borderRadius: 4,
                   cursor: "pointer",
                   background:
-                    i === page
+                    i === safePageNum
                       ? "rgba(255,255,255,0.85)"
                       : "rgba(255,255,255,0.25)",
                   transition: "all 0.25s",
@@ -2466,21 +2747,75 @@ function StepFinish({ profile, recommendations, onSelectItem }) {
             ))}
           </div>
         )}
+
+        {/* ── Best Deals section ── */}
+        {(() => {
+          const deals = recommendations.filter(i => (i.discount_percent||0) >= 10).sort((a,b)=>(b.discount_percent||0)-(a.discount_percent||0)).slice(0,10);
+          if (!deals.length) return null;
+          return (
+            <div style={{ marginTop:32 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+                <span style={{ fontFamily:"'League Spartan'", fontSize:20, fontWeight:700, color:"#fff" }}>🔥 Best Deals</span>
+                <span style={{ background:"rgba(239,68,68,0.2)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:50, padding:"2px 12px", fontSize:12, color:"#fca5a5", fontFamily:"'League Spartan'" }}>Up to {Math.round(Math.max(...deals.map(d=>d.discount_percent||0)))}% off</span>
+              </div>
+              <div style={{ display:"flex", gap:14, overflowX:"auto", paddingBottom:8, scrollbarWidth:"none" }}>
+                {deals.map((item,i) => (
+                  <div key={item.catalog_item_id||i} style={{ flexShrink:0, width:170 }}>
+                    <ProductCard item={item} onClick={()=>onSelectItem(item)} onAddToCart={onAddToCart} compact wishlisted={wishlist ? wishlist.has(item.catalog_item_id||item.id) : false} onToggleWishlist={onToggleWishlist} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── Recently Viewed ── */}
+        {recentlyViewed && recentlyViewed.length > 0 && (
+          <div style={{ marginTop:32 }}>
+            <div style={{ fontFamily:"'League Spartan'", fontSize:20, fontWeight:700, color:"#fff", marginBottom:14 }}>
+              👁 Recently Viewed
+            </div>
+            <div style={{ display:"flex", gap:14, overflowX:"auto", paddingBottom:8, scrollbarWidth:"none" }}>
+              {recentlyViewed.map((item,i) => (
+                <div key={item.catalog_item_id||i} style={{ flexShrink:0, width:170 }}>
+                  <ProductCard item={item} onClick={()=>onSelectItem(item)} onAddToCart={onAddToCart} compact wishlisted={wishlist ? wishlist.has(item.catalog_item_id||item.id) : false} onToggleWishlist={onToggleWishlist} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </GlassCard>
     </Screen>
   );
 }
 
-function ProductDetail({ item, onBack }) {
+function ProductDetail({ item, onBack, allRecs = [], onAddToCart }) {
   const fb =
     "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&fit=crop";
   const fallbackImg = item?.primary_image_url || fb;
-  const allImgs = item?.images?.length
-    ? item.images.map((i) => i.image_url || fallbackImg).filter(Boolean)
-    : [resolveImg(item) || fallbackImg].filter(Boolean);
-  const [idx, setIdx] = useState(0);
+  // Group images into sets of 3 (front/back/side per variant)
+  const imgSets = (() => {
+    const rawImgs = item?.images?.length ? item.images : [];
+    // Group by color_variant field
+    const groups = {};
+    const order = [];
+    for (const img of rawImgs) {
+      const cv = img.color_variant || "default";
+      if (!groups[cv]) { groups[cv] = []; order.push(cv); }
+      groups[cv].push({ url: img.image_url || fallbackImg, type: img.image_type || "front" });
+    }
+    const sets = order.map(cv => groups[cv]);
+    if (!sets.length) sets.push([{ url: resolveImg(item) || fallbackImg, type: "front" }]);
+    return sets;
+  })();
+  const colors = item?.available_colors || [];
+  const [setIdx, setSetIdx] = useState(0);
+  const [viewIdx, setViewIdx] = useState(0);
+  const [selSize, setSelSize] = useState(null);
+  const [liked, setLiked] = useState(false);
+  const currentSet = imgSets[setIdx] || imgSets[0];
+  const currentImg = (currentSet[viewIdx] || currentSet[0] || {}).url || fallbackImg;
   const rawTags = resolveTags(item);
-  // Deduplicate tags (case-insensitive) — e.g. "DRESSES" + "DRESS" → just "DRESSES"
   const tags = rawTags.filter((t, i, arr) => {
     const tl = t.toLowerCase();
     return !arr.slice(0, i).some(prev => {
@@ -2492,323 +2827,427 @@ function ProductDetail({ item, onBack }) {
   const score = resolveScore(item);
   const disc = item?.discount_percent ? Math.round(item.discount_percent) : 0;
   const catLabel = item?.category || tags[0] || "Category";
-  const colors = item?.available_colors || [];
   const desc = item?.description || item?.recommendation_reason || "";
+  const reason = item?.recommendation_reason || "";
+
+  const scoreColor = score >= 70 ? "#34d399" : score >= 40 ? "#fbbf24" : "#c084fc";
+  const scoreGrad = score >= 70
+    ? "linear-gradient(90deg,#34d399,#06b6d4)"
+    : score >= 40
+    ? "linear-gradient(90deg,#fbbf24,#f59e0b)"
+    : "linear-gradient(90deg,#c084fc,#818cf8)";
+
   return (
     <Screen bg={BG1} style={{ justifyContent: "flex-start" }}>
       <style>{CSS}</style>
       <StepBar step={3} />
-      <GlassCard>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            marginBottom: 16,
-          }}
-        >
+      <div style={{
+        width: "100%", maxWidth: 1100,
+        animation: "fadeUp 0.4s ease both",
+      }}>
+        {/* Top bar */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <button
             onClick={onBack}
             style={{
-              background: "rgba(255,255,255,0.15)",
-              backdropFilter: "blur(50px)",
-              border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: 100,
-              padding: "10px 22px",
-              color: "#fff",
+              background: "rgba(255,255,255,0.08)",
+              backdropFilter: "blur(40px)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 14,
+              padding: "12px 24px",
+              color: "rgba(255,255,255,0.85)",
               cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 16,
-              fontWeight: 500,
-              fontFamily: "'League Spartan'",
-              transition: "background 0.2s",
+              display: "flex", alignItems: "center", gap: 8,
+              fontSize: 15, fontWeight: 500, fontFamily: "'League Spartan'",
+              transition: "all 0.25s",
             }}
-            onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.25)"}
-            onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.15)"}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.15)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.25)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M10 3L5 8L10 13"
-                stroke="white"
-                strokeWidth="2.88"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Back
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            Back to Results
           </button>
-        </div>
-        <div
-          className="detail-grid"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "auto 1fr",
-            gap: 36,
-            alignItems: "start",
-          }}
-        >
-          <div className="detail-img-col" style={{ width: 340, maxWidth: "100%" }}>
-            <div
-              className="detail-main-img"
-              style={{
-                borderRadius: 25,
-                overflow: "hidden",
-                border: "5px solid rgba(225,175,187,0.55)",
-                marginBottom: 14,
-                width: "100%",
-                maxWidth: 320,
-                height: 370,
-              }}
-            >
-              <img
-                src={allImgs[idx] || fb}
-                alt={item?.name}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  display: "block",
-                }}
-              />
+          {reason && (
+            <div style={{
+              background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.25)",
+              borderRadius: 12, padding: "8px 18px",
+              fontSize: 13, color: "#c084fc", fontFamily: "'League Spartan'", fontWeight: 500,
+              display: "flex", alignItems: "center", gap: 6,
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#c084fc" opacity="0.6"/></svg>
+              {reason}
             </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              {(allImgs.length >= 3 ? allImgs : Array(3).fill(allImgs[0] || fb))
-                .slice(0, 3)
-                .map((url, i) => (
-                  <img
-                    key={i}
-                    src={url}
-                    onClick={() => setIdx(i)}
-                    alt=""
-                    style={{
-                      width: 92,
-                      maxWidth: "30%",
-                      height: 92,
-                      borderRadius: 12,
-                      objectFit: "cover",
-                      cursor: "pointer",
-                      border:
-                        i === idx
-                          ? "3px solid rgba(225,175,187,0.8)"
-                          : "2px solid rgba(255,255,255,0.15)",
-                      transition: "border-color 0.18s",
-                    }}
-                  />
+          )}
+        </div>
+
+        {/* Main card */}
+        <div style={{
+          background: "linear-gradient(135deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 100%)",
+          backdropFilter: "blur(40px)", WebkitBackdropFilter: "blur(40px)",
+          borderRadius: 32,
+          border: "1px solid rgba(255,255,255,0.08)",
+          overflow: "hidden",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08)",
+        }}>
+          <div className="detail-grid" style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr",
+            minHeight: 600,
+          }}>
+            {/* Left — Image gallery */}
+            <div className="detail-img-col" style={{
+              padding: 28,
+              background: "linear-gradient(160deg,rgba(240,236,255,0.06) 0%,rgba(200,180,255,0.04) 100%)",
+              borderRight: "1px solid rgba(255,255,255,0.06)",
+              display: "flex", flexDirection: "column", gap: 16,
+            }}>
+              <div style={{ display: "flex", gap: 12, flex: 1 }}>
+                {/* Left: color variant thumbnails */}
+                {imgSets.length > 1 && (
+                  <div style={{
+                    display: "flex", flexDirection: "column", gap: 6,
+                    maxHeight: 500, overflowY: "auto", paddingRight: 4,
+                    scrollbarWidth: "thin",
+                  }}>
+                    {imgSets.map((set, si) => (
+                      <div key={si}
+                        onClick={() => { setSetIdx(si); setViewIdx(0); }}
+                        onMouseEnter={() => { setSetIdx(si); setViewIdx(0); }}
+                        style={{
+                          width: 62, height: 62, borderRadius: 10, overflow: "hidden",
+                          cursor: "pointer", flexShrink: 0,
+                          border: si === setIdx ? `2px solid ${scoreColor}` : "1.5px solid rgba(255,255,255,0.12)",
+                          opacity: si === setIdx ? 1 : 0.55,
+                          transition: "all 0.15s",
+                          background: "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          padding: 4,
+                        }}>
+                        <img src={set[0]?.url || fb} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Main image */}
+                <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{
+                    borderRadius: 24, overflow: "hidden",
+                    flex: 1, minHeight: 380,
+                    background: "linear-gradient(145deg,#f8f6ff,#f0eef8)",
+                    border: "none",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    padding: "12px",
+                  }}>
+                    <img src={currentImg} alt={item?.name}
+                      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", maxHeight: 480 }} />
+                  </div>
+                  {/* Like button */}
+                  <button onClick={() => setLiked(!liked)} style={{
+                    position: "absolute", top: 16, right: 16,
+                    width: 44, height: 44, borderRadius: "50%",
+                    background: liked ? "rgba(239,68,68,0.25)" : "rgba(0,0,0,0.4)",
+                    backdropFilter: "blur(10px)",
+                    border: liked ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(255,255,255,0.15)",
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "all 0.3s",
+                  }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? "#ef4444" : "none"} stroke={liked ? "#ef4444" : "white"} strokeWidth="2">
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    </svg>
+                  </button>
+                  {/* Match badge */}
+                  <div style={{
+                    position: "absolute", top: 16, left: 16,
+                    background: "rgba(0,0,0,0.6)", backdropFilter: "blur(10px)",
+                    borderRadius: 12, padding: "6px 14px",
+                    display: "flex", alignItems: "center", gap: 6,
+                    border: `1px solid ${scoreColor}33`,
+                  }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: scoreColor }} />
+                    <span style={{ color: scoreColor, fontSize: 13, fontWeight: 700, fontFamily: "'League Spartan'" }}>
+                      {score}% Match
+                    </span>
+                  </div>
+                  {/* Image set counter */}
+                  {imgSets.length > 1 && (
+                    <div style={{
+                      position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)",
+                      background: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)",
+                      borderRadius: 10, padding: "5px 14px",
+                      fontSize: 12, color: "#fff", fontFamily: "'League Spartan'", fontWeight: 600,
+                      border: "1px solid rgba(255,255,255,0.1)",
+                    }}>
+                      {setIdx + 1} / {imgSets.length}
+                    </div>
+                  )}
+                  {/* Bottom thumbnails */}
+                  <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                    {currentSet.map((imgObj, i) => (
+                      <div key={i} style={{ textAlign: "center" }}>
+                        <div onClick={() => setViewIdx(i)} style={{
+                          width: 78, height: 78, borderRadius: 14, overflow: "hidden",
+                          cursor: "pointer",
+                          border: i === viewIdx ? `2.5px solid ${scoreColor}` : "1.5px solid rgba(255,255,255,0.12)",
+                          opacity: i === viewIdx ? 1 : 0.55,
+                          transition: "all 0.2s",
+                          background: "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          padding: 4,
+                          boxShadow: i === viewIdx ? `0 4px 16px ${scoreColor}44` : "none",
+                        }}>
+                          <img src={imgObj.url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                        </div>
+                        <span style={{
+                          fontSize: 9, color: "rgba(255,255,255,0.35)", fontFamily: "'League Spartan'",
+                          textTransform: "uppercase", letterSpacing: 1, display: "block", marginTop: 4,
+                        }}>
+                          {imgObj.type}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right — Product info */}
+            <div style={{
+              padding: "36px 40px", display: "flex", flexDirection: "column", gap: 20,
+              overflowY: "auto", maxHeight: 700,
+            }}>
+              {/* Category badge */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{
+                  background: "linear-gradient(135deg, rgba(168,85,247,0.2), rgba(99,102,241,0.2))",
+                  border: "1px solid rgba(168,85,247,0.25)",
+                  borderRadius: 10, padding: "5px 16px",
+                  fontSize: 12, fontWeight: 600, color: "#c084fc",
+                  fontFamily: "'League Spartan'", textTransform: "uppercase", letterSpacing: 1.5,
+                }}>
+                  {catLabel}
+                </span>
+                {item?.in_stock !== false && (
+                  <span style={{
+                    background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.25)",
+                    borderRadius: 10, padding: "5px 14px",
+                    fontSize: 12, fontWeight: 600, color: "#4ade80",
+                    fontFamily: "'League Spartan'", letterSpacing: 0.5,
+                  }}>
+                    In Stock
+                  </span>
+                )}
+              </div>
+
+              {/* Title */}
+              <h1 style={{
+                fontFamily: "'League Spartan'", fontWeight: 600,
+                fontSize: "clamp(24px, 3vw, 36px)", lineHeight: 1.15,
+                color: "#fff", margin: 0, letterSpacing: -0.3,
+              }}>
+                {cleanName(item)}
+              </h1>
+
+              {/* Score bar */}
+              <div style={{
+                background: "rgba(255,255,255,0.04)", borderRadius: 16, padding: "14px 18px",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", fontFamily: "'League Spartan'", textTransform: "uppercase", letterSpacing: 1 }}>
+                    Style Match
+                  </span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: scoreColor, fontFamily: "'League Spartan'" }}>
+                    {score}%
+                  </span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                  <div style={{
+                    width: `${score}%`, height: "100%", borderRadius: 3,
+                    background: scoreGrad,
+                    transition: "width 0.8s ease",
+                    boxShadow: `0 0 12px ${scoreColor}44`,
+                  }} />
+                </div>
+              </div>
+
+              {/* Tags */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {tags.slice(0, 5).map((t, i) => (
+                  <span key={i} style={{
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 10, padding: "6px 14px",
+                    fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.7)",
+                    fontFamily: "'League Spartan'", textTransform: "uppercase", letterSpacing: 0.5,
+                  }}>
+                    {t}
+                  </span>
                 ))}
+              </div>
+
+              {/* Description */}
+              {desc && (
+                <p style={{
+                  fontFamily: "'League Spartan'", fontWeight: 300, fontSize: 15,
+                  color: "rgba(255,255,255,0.5)", lineHeight: 1.65, margin: 0,
+                }}>
+                  {desc}
+                </p>
+              )}
+
+              {/* Divider */}
+              <div style={{ height: 1, background: "rgba(255,255,255,0.06)" }} />
+
+              {/* Price section */}
+              <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+                <span style={{
+                  fontFamily: "'League Spartan'", fontWeight: 700, fontSize: 36, color: "#fff",
+                  letterSpacing: -0.5,
+                }}>
+                  {"\u20B9"}{price > 0 ? price.toLocaleString("en-IN") : "999"}
+                </span>
+                {disc > 0 && (
+                  <span style={{
+                    background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.2)",
+                    borderRadius: 8, padding: "4px 12px",
+                    fontSize: 14, fontWeight: 600, color: "#4ade80", fontFamily: "'League Spartan'",
+                  }}>
+                    -{disc}%
+                  </span>
+                )}
+              </div>
+
+              {/* Colors */}
+              {colors.length > 0 && (
+                <div>
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10,
+                  }}>
+                    <span style={{
+                      color: "rgba(255,255,255,0.4)", fontSize: 11,
+                      textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "'League Spartan'", fontWeight: 600,
+                    }}>
+                      {colors.length} Colors Available
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", maxHeight: 120, overflowY: "auto" }}>
+                    {colors.map((c) => (
+                      <span key={c} style={{
+                        background: "rgba(255,255,255,0.05)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: 10, padding: "6px 14px",
+                        color: "rgba(255,255,255,0.7)",
+                        fontSize: 12, fontFamily: "'League Spartan'", fontWeight: 500,
+                        textTransform: "capitalize",
+                        display: "flex", alignItems: "center", gap: 6,
+                      }}>
+                        <span style={{
+                          width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                          background: "rgba(255,255,255,0.3)",
+                          border: "1px solid rgba(255,255,255,0.15)",
+                        }} />
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sizes */}
+              {item?.available_sizes?.length > 0 && (
+                <div>
+                  <div style={{
+                    color: "rgba(255,255,255,0.4)", fontSize: 11, marginBottom: 10,
+                    textTransform: "uppercase", letterSpacing: 1.5, fontFamily: "'League Spartan'", fontWeight: 600,
+                  }}>
+                    Sizes
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {item.available_sizes.map((s) => (
+                      <button key={s} onClick={() => setSelSize(selSize === s ? null : s)} style={{
+                        width: 48, height: 48,
+                        background: selSize === s ? "rgba(168,85,247,0.2)" : "rgba(255,255,255,0.05)",
+                        border: selSize === s ? "1px solid rgba(168,85,247,0.5)" : "1px solid rgba(255,255,255,0.1)",
+                        borderRadius: 12,
+                        color: selSize === s ? "#c084fc" : "rgba(255,255,255,0.7)",
+                        fontSize: 14, fontFamily: "'League Spartan'", fontWeight: 600,
+                        cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                        transition: "all 0.2s",
+                      }}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                <button
+                  style={{
+                    flex: 1,
+                    background: "linear-gradient(135deg,#a855f7,#6366f1)",
+                    border: "none", borderRadius: 16,
+                    padding: "18px 32px",
+                    color: "#fff", fontSize: 17, fontWeight: 700,
+                    fontFamily: "'League Spartan'", cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                    boxShadow: "0 8px 28px rgba(168,85,247,0.3)",
+                    transition: "all 0.25s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 12px 36px rgba(168,85,247,0.45)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 8px 28px rgba(168,85,247,0.3)"; }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M6 2L3 6V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V6L18 2H6Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M3 6H21" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                    <path d="M16 10C16 12.2 14.2 14 12 14C9.8 14 8 12.2 8 10" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Add to Bag
+                </button>
+                <button
+                  onClick={() => setLiked(!liked)}
+                  style={{
+                    width: 60, height: 60,
+                    background: liked ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
+                    border: liked ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 16, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "all 0.25s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = liked ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.1)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = liked ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)"; }}
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill={liked ? "#ef4444" : "none"} stroke={liked ? "#ef4444" : "rgba(255,255,255,0.5)"} strokeWidth="2">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-              paddingTop: 8,
-            }}
-          >
-            <div
-              style={{
-                fontFamily: "'League Spartan'",
-                fontWeight: 300,
-                fontSize: 22,
-                color: "rgba(255,255,255,0.7)",
-                textTransform: "capitalize",
-              }}
-            >
-              {catLabel}
+        </div>
+      </div>
+
+      {/* ── You May Also Like ── */}
+      {(() => {
+        const thisCat = (item?.category || "").toLowerCase();
+        const similar = allRecs
+          .filter(r => (r.catalog_item_id || r.id) !== (item?.catalog_item_id || item?.id)
+                    && (r.category || "").toLowerCase() === thisCat)
+          .slice(0, 4);
+        if (!similar.length) return null;
+        return (
+          <div style={{ width: "100%", maxWidth: 1100, marginTop: 32, paddingBottom: 32 }}>
+            <div style={{ fontFamily: "'League Spartan'", fontSize: 20, fontWeight: 600, color: "#fff", marginBottom: 16 }}>
+              You May Also Like
             </div>
-            <div
-              style={{
-                fontFamily: "'League Spartan'",
-                fontWeight: 400,
-                fontSize: "min(62.965px,5.8vw)",
-                lineHeight: "58px",
-                color: "#fff",
-                letterSpacing: -0.5,
-              }}
-            >
-              {cleanName(item)}
-            </div>
-            {/* Match score bar */}
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{
-                flex: 1, height: 6, borderRadius: 3,
-                background: "rgba(255,255,255,0.1)",
-                overflow: "hidden",
-              }}>
-                <div style={{
-                  width: `${score}%`, height: "100%", borderRadius: 3,
-                  background: score >= 70
-                    ? "linear-gradient(90deg,#48d296,#00c9a7)"
-                    : score >= 40
-                    ? "linear-gradient(90deg,#f59e0b,#eab308)"
-                    : "linear-gradient(90deg,#a855f7,#6366f1)",
-                }} />
-              </div>
-              <span style={{
-                fontFamily: "'League Spartan'", fontWeight: 600, fontSize: 18,
-                color: score >= 70 ? "#48d296" : score >= 40 ? "#eab308" : "#c084fc",
-              }}>
-                {score}% Match
-              </span>
-            </div>
-            {/* Tags */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {tags.slice(0, 4).map((t, i) => (
-                <span
-                  key={i}
-                  style={{
-                    background: "rgba(255,255,255,0.15)",
-                    border: "1px solid rgba(255,255,255,0.25)",
-                    borderRadius: 8,
-                    padding: "5px 14px",
-                    fontSize: 14,
-                    fontWeight: 400,
-                    color: "#fff",
-                    fontFamily: "'League Spartan'",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {t}
-                </span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+              {similar.map((r, i) => (
+                <ProductCard key={r.catalog_item_id || i} item={r} onClick={() => {}} onAddToCart={onAddToCart} compact />
               ))}
             </div>
-            {/* Description */}
-            {desc && (
-              <div style={{
-                fontFamily: "'League Spartan'", fontWeight: 300, fontSize: 16,
-                color: "rgba(255,255,255,0.6)", lineHeight: 1.5,
-              }}>
-                {desc}
-              </div>
-            )}
-            {/* Price */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                marginTop: 4,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "'League Spartan'",
-                  fontWeight: 700,
-                  fontSize: 32,
-                  color: "#fff",
-                }}
-              >
-                ${price > 0 ? price.toFixed(2) : "99.90"}
-              </span>
-              {disc > 0 && <span
-                style={{
-                  background: "rgba(72,210,150,0.2)",
-                  border: "1px solid rgba(72,210,150,0.3)",
-                  borderRadius: 8,
-                  padding: "4px 12px",
-                  fontSize: 16,
-                  fontWeight: 600,
-                  color: "#48d296",
-                  fontFamily: "'League Spartan'",
-                }}
-              >
-                -{disc}% OFF
-              </span>}
-            </div>
-            {/* Color options */}
-            {colors.length > 0 && (
-              <div>
-                <div style={{
-                  color: "rgba(255,255,255,0.4)", fontSize: 11, marginBottom: 8,
-                  textTransform: "uppercase", letterSpacing: 1, fontFamily: "'League Spartan'",
-                }}>
-                  Available Colors
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {colors.map((c) => (
-                    <span key={c} style={{
-                      background: "rgba(255,255,255,0.1)",
-                      border: "1px solid rgba(255,255,255,0.2)",
-                      borderRadius: 8, padding: "6px 14px",
-                      color: "#fff", fontSize: 13, fontFamily: "'League Spartan'",
-                      textTransform: "capitalize",
-                    }}>
-                      {c}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Sizes */}
-            {item?.available_sizes?.length > 0 && (
-              <div>
-                <div
-                  style={{
-                    color: "rgba(255,255,255,0.4)",
-                    fontSize: 11,
-                    marginBottom: 8,
-                    textTransform: "uppercase",
-                    letterSpacing: 1,
-                    fontFamily: "'League Spartan'",
-                  }}
-                >
-                  Available Sizes
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {item.available_sizes.map((s) => (
-                    <span
-                      key={s}
-                      style={{
-                        background: "rgba(255,255,255,0.1)",
-                        border: "1px solid rgba(255,255,255,0.2)",
-                        borderRadius: 8,
-                        padding: "6px 14px",
-                        color: "#fff",
-                        fontSize: 14,
-                        fontFamily: "'League Spartan'",
-                        textTransform: "capitalize",
-                      }}
-                    >
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            <button
-              style={{
-                background: "linear-gradient(135deg,#a855f7,#6366f1,#a855f7)",
-                backgroundSize: "200% 200%",
-                animation: "gradientShift 3s ease infinite",
-                border: "none",
-                borderRadius: 16,
-                padding: "20px 36px",
-                color: "#fff",
-                fontSize: 22,
-                fontWeight: 700,
-                fontFamily: "'League Spartan'",
-                cursor: "pointer",
-                marginTop: 14,
-                textAlign: "center",
-                width: "100%",
-                letterSpacing: 0.5,
-                boxShadow: "0 6px 24px rgba(168,85,247,0.35)",
-                transition: "transform 0.2s, box-shadow 0.2s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 32px rgba(168,85,247,0.5)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 6px 24px rgba(168,85,247,0.35)"; }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{marginRight:10,verticalAlign:"middle"}}>
-                <path d="M6 2L3 6V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V6L18 2H6Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M3 6H21" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                <path d="M16 10C16 12.2 14.2 14 12 14C9.8 14 8 12.2 8 10" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Add to Bag
-            </button>
           </div>
-        </div>
-      </GlassCard>
+        );
+      })()}
     </Screen>
   );
 }
@@ -2854,7 +3293,7 @@ function AIChat({ profile, baseRecs }) {
       if (cat) {
         const r = await fetch(
           `${API}/api/recommendations/${email}?category=${cat}&limit=8`,
-          { headers: authHeaders, signal: AbortSignal.timeout(15000) },
+          { headers: authHeaders, signal: AbortSignal.timeout(90000) },
         );
         if (r.ok) {
           const d = await r.json();
@@ -2871,7 +3310,7 @@ function AIChat({ profile, baseRecs }) {
         ).slice(0, 8);
       if (!items.length) {
         const r = await fetch(`${API}/api/recommendations/trending?limit=8`, {
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(90000),
         });
         if (r.ok) {
           const d = await r.json();
@@ -3154,6 +3593,31 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [recs, setRecs] = useState([]);
   const [err, setErr] = useState("");
+  const [cart, setCart] = useState([]);
+  const [cartFlash, setCartFlash] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [wishlist, setWishlist] = useState(new Set());
+  const [recentlyViewed, setRecentlyViewed] = useState([]);
+
+  const toggleWishlist = (item) => {
+    const id = item?.catalog_item_id||item?.id;
+    setWishlist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  };
+  const addRecentlyViewed = (item) => {
+    setRecentlyViewed(prev => { const id = item?.catalog_item_id||item?.id; const filtered = prev.filter(x=>(x.catalog_item_id||x.id)!==id); return [item, ...filtered].slice(0,10); });
+  };
+
+  const handleAddToCart = (item) => {
+    setCart(prev => {
+      const id = item.catalog_item_id || item.id;
+      const exists = prev.find(x => (x.catalog_item_id || x.id) === id);
+      return exists ? prev.map(x => (x.catalog_item_id || x.id) === id ? { ...x, qty: (x.qty || 1) + 1 } : x)
+                    : [...prev, { ...item, qty: 1 }];
+    });
+    setCartFlash(true);
+    setTimeout(() => setCartFlash(false), 600);
+    setCartOpen(true);
+  };
   const [profile, setProfile] = useState({
     email: "",
     name: "",
@@ -3161,8 +3625,10 @@ export default function App() {
     age: "",
     city: "",
     color: "Pink",
+    colors: [],        // multi-color selection
     fit: "Regular",
     size: "M",
+    categories: [],    // what clothing types the user wants
     height: "",
     weight: "",
     shoulder: "",
@@ -3187,7 +3653,7 @@ export default function App() {
     const r = await fetch(`${API}/api/save-profile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(180000),
       body: JSON.stringify({
         email,
         password: derivePassword(email),
@@ -3202,6 +3668,15 @@ export default function App() {
           shirt_size: profile.shirtSize,
           pants_size: profile.pantsSize,
           body_type: profile.bodyType || "",
+          // Map fit label → build value the ranker understands
+          build: (() => {
+            const f = (profile.fit || "").toLowerCase();
+            if (f === "slim")                         return "slim";
+            if (f === "athletic" || f === "regular")  return "athletic";
+            if (f === "plus size" || f === "plus")    return "plus";
+            if (f === "oversized")                    return "average";
+            return "";
+          })(),
           bmi:
             Number(profile.height) && Number(profile.weight)
               ? parseFloat(
@@ -3212,13 +3687,19 @@ export default function App() {
                 )
               : null,
         },
-        preferred_colors: profile.color ? [profile.color.toLowerCase()] : [],
+        // Use what the user actually selected — fall back to gender-based list
+        // only when user didn't make any explicit selection
+        preferred_colors: profile.colors?.length
+          ? profile.colors.map(c => c.toLowerCase())
+          : profile.color ? [profile.color.toLowerCase()] : [],
         preferred_categories: (() => {
+          if (profile.categories?.length) return profile.categories.map(c => c.toLowerCase());
+          // fallback: gender-based (broad, for when user skips selection)
           const g = (profile.gender || "").toLowerCase();
           if (g === "men" || g === "male" || g === "man")
-            return ["shirt", "pant", "jacket", "t-shirt"];
+            return ["shirt", "pant", "t-shirt", "jeans"];
           if (g === "women" || g === "female" || g === "woman")
-            return ["dress", "shirt", "skirt", "blouse"];
+            return ["dress", "top", "blouse"];
           return [];
         })(),
         style_preferences: [
@@ -3249,22 +3730,25 @@ export default function App() {
     const email = encodeURIComponent(profile.email.trim());
     const token = sessionStorage.getItem("hueiq_token");
     const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-    try {
-      const r = await fetch(
-        `${API}/api/recommendations/${email}?limit=24&include_breakdown=true`,
-        { headers: authHeaders, signal: AbortSignal.timeout(15000) },
-      );
-      if (r.ok) {
-        const d = await r.json();
-        const a = d.recommendations || d.items || [];
-        if (a.length) return a;
+    // Try personalized recommendations (with retry for slow catalog warm-up)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch(
+          `${API}/api/recommendations/${email}?limit=48&include_breakdown=true`,
+          { headers: authHeaders, signal: AbortSignal.timeout(180000) },
+        );
+        if (r.ok) {
+          const d = await r.json();
+          const a = d.recommendations || d.items || [];
+          if (a.length) return a;
+        }
+      } catch (e) {
+        console.warn(`recs attempt ${attempt + 1}:`, e.message);
       }
-    } catch (e) {
-      console.warn(e.message);
     }
     try {
       const r = await fetch(`${API}/api/recommendations/trending?limit=20`, {
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(180000),
       });
       if (r.ok) {
         const d = await r.json();
@@ -3343,8 +3827,26 @@ export default function App() {
       </>
     );
 
+  const cartCount = cart.reduce((s, x) => s + (x.qty || 1), 0);
+
   return (
     <>
+      {/* ── Floating cart counter ── */}
+      {cartCount >= 0 && step === 3 && (
+        <button onClick={()=>setCartOpen(true)} style={{
+          position:"fixed", top:18, right:18, zIndex:200,
+          background: cartFlash ? "#16a34a" : cartCount > 0 ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.15)",
+          color: cartFlash ? "#fff" : cartCount > 0 ? "#111" : "rgba(255,255,255,0.7)",
+          borderRadius:50, padding:"8px 18px", border:"none",
+          display:"flex", alignItems:"center", gap:8,
+          fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:15,
+          boxShadow: cartCount > 0 ? "0 4px 20px rgba(0,0,0,0.25)" : "none",
+          transition:"background 0.3s, color 0.3s",
+          cursor:"pointer",
+        }}>
+          🛍 {cartCount > 0 ? `Bag · ${cartCount}` : "Bag"}
+        </button>
+      )}
       {step === 3 && (
         <button
           onClick={() => setView("ai")}
@@ -3372,7 +3874,7 @@ export default function App() {
         </button>
       )}
       {view === "detail" && selItem ? (
-        <ProductDetail item={selItem} onBack={() => setView("wizard")} />
+        <ProductDetail item={selItem} onBack={() => setView("wizard")} allRecs={recs} onAddToCart={handleAddToCart} wishlist={wishlist} onToggleWishlist={toggleWishlist} />
       ) : step === 0 ? (
         <StepBasicInfo
           data={profile}
@@ -3398,10 +3900,11 @@ export default function App() {
         <StepFinish
           profile={profile}
           recommendations={recs}
-          onSelectItem={(item) => {
-            setSelItem(item);
-            setView("detail");
-          }}
+          onSelectItem={(item) => { setSelItem(item); setView("detail"); addRecentlyViewed(item); }}
+          onAddToCart={handleAddToCart}
+          wishlist={wishlist}
+          onToggleWishlist={toggleWishlist}
+          recentlyViewed={recentlyViewed}
         />
       )}
       {err && (
@@ -3423,6 +3926,20 @@ export default function App() {
         >
           ⚠ {err} — showing available results
         </div>
+      )}
+      {cartOpen && (
+        <CartDrawer
+          cart={cart}
+          onClose={() => setCartOpen(false)}
+          onUpdateQty={(item, newQty) => {
+            if (newQty <= 0) {
+              setCart(prev => prev.filter(x => (x.catalog_item_id||x.id) !== (item.catalog_item_id||item.id)));
+            } else {
+              setCart(prev => prev.map(x => (x.catalog_item_id||x.id) === (item.catalog_item_id||item.id) ? {...x, qty: newQty} : x));
+            }
+          }}
+          onRemove={(item) => setCart(prev => prev.filter(x => (x.catalog_item_id||x.id) !== (item.catalog_item_id||item.id)))}
+        />
       )}
     </>
   );
