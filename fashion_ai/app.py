@@ -108,6 +108,16 @@ async def _refresh_boss_token() -> bool:
             if new_token:
                 BOSS_TOKEN = new_token
                 log.info("BOSS_TOKEN refreshed via admin login ✓")
+                # Persist to .env so next server restart uses the fresh token
+                try:
+                    env_path = os.path.join(os.path.dirname(__file__), ".env")
+                    env_text = open(env_path, encoding="utf-8").read()
+                    import re as _re2
+                    env_text = _re2.sub(r"BOSS_TOKEN=.*", f"BOSS_TOKEN={new_token}", env_text)
+                    open(env_path, "w", encoding="utf-8").write(env_text)
+                    log.info("BOSS_TOKEN saved to .env")
+                except Exception as _e:
+                    log.warning("Could not save BOSS_TOKEN to .env: %s", _e)
                 return True
             log.warning("Admin login succeeded but no access_token in response")
         else:
