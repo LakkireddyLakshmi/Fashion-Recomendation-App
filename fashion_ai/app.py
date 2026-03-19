@@ -431,6 +431,8 @@ def _gender(item: Dict) -> str:
         "women", "woman", "womens", "women's", "ladies", "girls", "female",
         "miss chase", "vero moda", "sassafras", "tokyo talkies",
         "blouse", "kurta", "anarkali", "lehenga", "saree",
+        "dress", "dresses", "skirt", "skirts", "jumpsuit", "top", "tops",
+        "blouse", "bra", "lingerie", "bikini", "gown", "frock",
     )
     is_women = any(k in text for k in women_kw)
     if is_women:
@@ -440,6 +442,8 @@ def _gender(item: Dict) -> str:
         " men ", " men's", "mens ", "for men", "boys ", " male",
         "highlander", "peter england", "ben martin", "majestic man",
         "levi's men", "symbol men", "bewakoof x streetwear men",
+        "shirt", "tshirt", "t-shirt", "trouser", "trousers",
+        "blazer", "suit", "kurta men", "dhoti", "sherwani",
     )
     is_men = any(k in text for k in men_kw)
     if is_men:
@@ -602,7 +606,7 @@ async def _fetch_page(skip: int, cat: Optional[str] = None) -> List[Dict]:
     """Fetch a single catalog page from Boss API."""
     c = await _boss_client()
     h = _boss_headers()
-    params: Dict[str, Any] = {"limit": 500, "skip": skip}
+    params: Dict[str, Any] = {"limit": 50, "skip": skip}
     if cat:
         params["category"] = cat
     try:
@@ -661,6 +665,15 @@ def _filter_real_items(items: List[Dict]) -> List[Dict]:
 
         # Discard obvious placeholder/seed rows that have nothing useful
         if not name and not category and not has_img:
+            continue
+
+        # Discard auto-generated placeholder items:
+        # They have UUID-style names AND zero price AND no description
+        import re as _re
+        is_uuid_name = bool(name and _re.match(r'^[A-Za-z\s]+ [0-9a-f]{8}$', name))
+        has_price = float(item.get("base_price") or 0) > 0
+        has_desc  = bool(item.get("description"))
+        if is_uuid_name and not has_price and not has_desc:
             continue
 
         seen.add(iid)
@@ -2459,6 +2472,17 @@ async def startup():
     # Connect to Boss API and refresh catalog in background
     asyncio.create_task(_init())
 
+async def _keep_boss_warm():
+    """Ping Boss API every 4 minutes to prevent Azure scale-to-zero cold starts."""
+    await asyncio.sleep(60)   # wait for initial startup to settle
+    while True:
+        try:
+            c = await _boss_client()
+            await c.get("/health", headers=_boss_headers(), timeout=10.0)
+        except Exception:
+            pass
+        await asyncio.sleep(240)   # 4 minutes
+
 async def _init():
     """
     Connect to Boss API and start catalog loading.
@@ -2476,6 +2500,8 @@ async def _init():
 
     # Always start catalog loading immediately — don't wait for token refresh
     asyncio.create_task(_load_all_pages_bg())
+    # Keep Boss API warm — ping every 4 min to prevent Azure scale-to-zero
+    asyncio.create_task(_keep_boss_warm())
 
     # Health check — informational only, give up quickly if unreachable
     for attempt in range(3):
