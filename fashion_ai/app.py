@@ -37,7 +37,7 @@ try:
 except ImportError:
     JWT_OK = False
 
-load_dotenv()
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("hueiq")
@@ -606,7 +606,7 @@ async def _fetch_page(skip: int, cat: Optional[str] = None) -> List[Dict]:
     if cat:
         params["category"] = cat
     try:
-        r = await c.get("/api/catalog", params=params, headers=h, timeout=15.0)
+        r = await c.get("/api/catalog", params=params, headers=h, timeout=120.0)
         if r.status_code == 200:
             raw = r.json()
             page = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
@@ -619,7 +619,7 @@ async def _fetch_page(skip: int, cat: Optional[str] = None) -> List[Dict]:
             refreshed = await _refresh_boss_token()
             if refreshed:
                 # Retry once with fresh token
-                r2 = await c.get("/api/catalog", params=params, headers=_boss_headers(), timeout=15.0)
+                r2 = await c.get("/api/catalog", params=params, headers=_boss_headers(), timeout=120.0)
                 if r2.status_code == 200:
                     raw = r2.json()
                     page = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
@@ -681,7 +681,7 @@ async def _load_all_pages_bg():
     try:
         all_items: List[Dict] = []
         PARALLEL = 4          # fetch 4 pages simultaneously
-        PAGE_SIZE = 500
+        PAGE_SIZE = 50        # small pages — Boss API times out on large queries
 
         # Phase 1: probe how many pages exist by fetching first PARALLEL pages
         skip = 0
