@@ -685,6 +685,30 @@ def _filter_real_items(items: List[Dict]) -> List[Dict]:
         filtered.append(item)
     return filtered
 
+async def _scout_real_items():
+    """
+    Jump straight to skip=2800 where real catalog items are known to exist.
+    Called at startup so real items appear within ~10s instead of waiting 2 minutes
+    for the sequential background loader to crawl through 56 pages of UUID placeholders.
+    """
+    global _full_catalog_cache
+    SCOUT_SKIPS = [2800, 2850, 2900, 2950, 3000, 3050, 2750, 2700]
+    try:
+        pages = await asyncio.gather(*[_fetch_page(s) for s in SCOUT_SKIPS])
+        scout_items: List[Dict] = []
+        for pg in pages:
+            scout_items.extend(pg)
+        filtered = _filter_real_items(scout_items)
+        if filtered:
+            _full_catalog_cache = filtered
+            _cset("cat:full", filtered, 3600)
+            log.info("Scout: %d real items loaded immediately from skip=2700-3050", len(filtered))
+        else:
+            log.warning("Scout: no real items found at skip=2700-3050, background load will find them")
+    except Exception as e:
+        log.warning("Scout failed: %s", e)
+
+
 async def _load_all_pages_bg():
     """
     Background task: fetch all catalog pages in PARALLEL batches of 4.
@@ -2546,7 +2570,11 @@ async def _init():
     else:
         log.info("BOSS_TOKEN is valid")
 
-    # Always start catalog loading immediately — don't wait for token refresh
+    # Scout: immediately fetch real items from known skip positions (skip=2800+)
+    # so users see real products within ~10s instead of waiting 2 min
+    if not _full_catalog_cache:
+        asyncio.create_task(_scout_real_items())
+    # Full background load: fetch all pages from skip=0 for complete catalog
     asyncio.create_task(_load_all_pages_bg())
     # Keep Boss API warm — ping every 4 min to prevent Azure scale-to-zero
     asyncio.create_task(_keep_boss_warm())
