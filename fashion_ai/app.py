@@ -722,13 +722,16 @@ async def _load_all_pages_bg():
                 all_items.extend(pg)
         skip += PARALLEL * PAGE_SIZE
 
-        # Update cache with first batch immediately
+        # Update cache with first batch immediately (only if real items found)
         filtered = _filter_real_items(all_items)
         if filtered:
             _full_catalog_cache = filtered
             _cset("cat:full", filtered, 3600)
-        log.info("Background: first batch %d items fetched, %d real (%.0fs)",
-                 len(all_items), len(filtered), time.time() - t0)
+            log.info("Background: first batch %d items fetched, %d real (%.0fs)",
+                     len(all_items), len(filtered), time.time() - t0)
+        else:
+            log.info("Background: first batch %d items fetched, 0 real yet — continuing (%.0fs)",
+                     len(all_items), time.time() - t0)
         first_pages_done = any(len(pg) < PAGE_SIZE for pg in pages)
 
         while not first_pages_done:
@@ -746,7 +749,7 @@ async def _load_all_pages_bg():
             filtered = _filter_real_items(all_items)
             if filtered:
                 _full_catalog_cache = filtered
-            _cset("cat:full", filtered, 3600)
+                _cset("cat:full", filtered, 3600)
             skip += PARALLEL * PAGE_SIZE
             log.info("Background: %d items fetched, %d real (%.0fs)",
                      len(all_items), len(filtered), time.time() - t0)
@@ -834,7 +837,7 @@ async def fetch_catalog(
         if not _catalog_loading:
             asyncio.create_task(_load_all_pages_bg())
 
-        return filtered if filtered else first_page[:50]  # fallback
+        return filtered if filtered else _DEMO_CATALOG[:]  # fallback until real items load
 
     except Exception as e:
         log.warning("Catalog quick-fetch failed: %s", e)
