@@ -264,12 +264,12 @@ async def db_create_user(data: Dict) -> Dict:
     try:
         c = await _boss_client()
 
-        # Step 1: signup via Boss auth
+        # Step 1: signup via Boss auth (10s timeout — fall back to in-memory if cold)
         signup_r = await c.post("/api/auth/signup", json={
             "email": email,
             "password": password,
             "user_type": "shopper",
-        }, headers={"Content-Type": "application/json"})
+        }, headers={"Content-Type": "application/json"}, timeout=10.0)
 
         if signup_r.status_code in (200, 201):
             signup_data = signup_r.json()
@@ -300,7 +300,7 @@ async def db_create_user(data: Dict) -> Dict:
         if boss_uid:
             await c.put(f"/api/users/{boss_uid}", json={
                 "profile_data": profile_data,
-            }, headers=_boss_headers(boss_token))
+            }, headers=_boss_headers(boss_token), timeout=10.0)
 
         doc = {
             "user_id":           boss_uid,
@@ -392,7 +392,7 @@ async def db_update_profile(uid: str, pj: Dict) -> Optional[Dict]:
         c = await _boss_client()
         r = await c.put(f"/api/users/{uid}", json={
             "profile_data": pj,
-        }, headers=_boss_headers())
+        }, headers=_boss_headers(), timeout=10.0)
         if r.status_code == 200:
             doc = _boss_user_to_doc(r.json())
             # Ensure profile_data_json has the merged data
