@@ -609,7 +609,7 @@ _DEMO_CATALOG: List[Dict] = [
      "style_tags": {"tags": ["casual", "trendy", "top"]}, "variants": []},
 ]
 _DISK_CACHE_PATH = os.path.join(os.path.dirname(__file__), "_catalog_cache.json")
-_DISK_CACHE_MAX_AGE = 6 * 3600   # 6 hours — refresh if older than this
+_DISK_CACHE_MAX_AGE = 7 * 24 * 3600   # 7 days — seed cache is always valid; background task refreshes it
 
 def _load_disk_cache() -> List[Dict]:
     """Load catalog from disk cache. Returns [] if missing or too old."""
