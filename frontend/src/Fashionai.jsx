@@ -2146,6 +2146,293 @@ function StepMeasurements({ data, setData, onSubmit, onBack, loading }) {
   );
 }
 
+// ── Comments Section ──────────────────────────────────────────────────────────
+function CommentsSection({ itemId, userName }) {
+  const KEY = `hueiq_comments_${itemId}`;
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; } };
+  const [comments, setComments] = useState(load);
+  const [text, setText] = useState("");
+  const [stars, setStars] = useState(0);
+  const [hoverStar, setHoverStar] = useState(0);
+  const [sort, setSort] = useState("newest");
+  const [replyTo, setReplyTo] = useState(null);
+  const [replyText, setReplyText] = useState("");
+  const [expandedReplies, setExpandedReplies] = useState(new Set());
+
+  const getUserId = () => {
+    let id = localStorage.getItem("hueiq_uid");
+    if (!id) { id = Math.random().toString(36).slice(2); localStorage.setItem("hueiq_uid", id); }
+    return id;
+  };
+  const persist = (updated) => { localStorage.setItem(KEY, JSON.stringify(updated)); setComments(updated); };
+  const submitComment = () => {
+    if (!text.trim()) return;
+    persist([{ id: Date.now().toString(), author: userName || "You", text: text.trim(), stars, ts: Date.now(), likes: 0, likedBy: [], replies: [] }, ...comments]);
+    setText(""); setStars(0);
+  };
+  const toggleLike = (commentId, replyId = null) => {
+    const uid = getUserId();
+    persist(comments.map(c => {
+      if (replyId && c.id === commentId) {
+        return { ...c, replies: c.replies.map(r => r.id !== replyId ? r : r.likedBy.includes(uid)
+          ? { ...r, likes: r.likes - 1, likedBy: r.likedBy.filter(x => x !== uid) }
+          : { ...r, likes: r.likes + 1, likedBy: [...r.likedBy, uid] }) };
+      }
+      if (c.id !== commentId || replyId) return c;
+      return c.likedBy.includes(uid)
+        ? { ...c, likes: c.likes - 1, likedBy: c.likedBy.filter(x => x !== uid) }
+        : { ...c, likes: c.likes + 1, likedBy: [...c.likedBy, uid] };
+    }));
+  };
+  const submitReply = (commentId) => {
+    if (!replyText.trim()) return;
+    persist(comments.map(c => c.id !== commentId ? c : {
+      ...c, replies: [...c.replies, { id: Date.now().toString(), author: userName || "You", text: replyText.trim(), ts: Date.now(), likes: 0, likedBy: [] }]
+    }));
+    setReplyTo(null); setReplyText("");
+  };
+  const deleteComment = (commentId, replyId = null) => {
+    if (replyId) persist(comments.map(c => c.id !== commentId ? c : { ...c, replies: c.replies.filter(r => r.id !== replyId) }));
+    else persist(comments.filter(c => c.id !== commentId));
+  };
+  const sorted = [...comments].sort((a, b) =>
+    sort === "top" ? b.likes - a.likes : sort === "oldest" ? a.ts - b.ts : b.ts - a.ts
+  );
+  const uid = getUserId();
+  const fmtTime = (ts) => {
+    const diff = Date.now() - ts;
+    if (diff < 60000) return "just now";
+    if (diff < 3600000) return `${Math.floor(diff/60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff/3600000)}h ago`;
+    return new Date(ts).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  };
+  const STAR_LABELS = ["", "Poor", "Fair", "Good", "Great", "Excellent"];
+
+  return (
+    <div style={{ width: "100%", maxWidth: 1100, marginTop: 32, paddingBottom: 40, fontFamily: "'League Spartan',sans-serif" }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
+        💬 Reviews & Comments
+        <span style={{ background: "rgba(255,255,255,0.1)", borderRadius: 50, padding: "2px 14px", fontSize: 14, fontWeight: 400, color: "rgba(255,255,255,0.6)" }}>
+          {comments.length}
+        </span>
+      </div>
+      {/* Add comment box */}
+      <div style={{ background: "rgba(255,255,255,0.06)", borderRadius: 20, padding: "20px 24px", border: "1px solid rgba(255,255,255,0.1)", marginBottom: 24 }}>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>
+          Reviewing as <strong style={{ color: "#c084fc" }}>{userName || "Anonymous"}</strong>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          {[1,2,3,4,5].map(s => (
+            <button key={s} onMouseEnter={() => setHoverStar(s)} onMouseLeave={() => setHoverStar(0)} onClick={() => setStars(s === stars ? 0 : s)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 2, transition: "transform 0.15s", transform: (hoverStar >= s || (!hoverStar && stars >= s)) ? "scale(1.25)" : "scale(1)" }}>
+              <svg width="22" height="22" viewBox="0 0 24 24">
+                <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+                  fill={(hoverStar >= s || (!hoverStar && stars >= s)) ? "#f59e0b" : "rgba(255,255,255,0.12)"} strokeWidth="0" />
+              </svg>
+            </button>
+          ))}
+          {(stars > 0 || hoverStar > 0) && (
+            <span style={{ color: "#f59e0b", fontSize: 13, alignSelf: "center" }}>{STAR_LABELS[hoverStar || stars]}</span>
+          )}
+        </div>
+        <textarea value={text} onChange={e => setText(e.target.value.slice(0,500))} placeholder="Share your thoughts about this item…" rows={3}
+          style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "12px 16px",
+            color: "#fff", fontSize: 14, fontFamily: "'League Spartan'", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>{text.length}/500</span>
+          <button onClick={submitComment} disabled={!text.trim()} style={{
+            background: text.trim() ? "linear-gradient(135deg,#a855f7,#6366f1)" : "rgba(255,255,255,0.08)",
+            border: "none", borderRadius: 10, padding: "10px 24px",
+            color: text.trim() ? "#fff" : "rgba(255,255,255,0.3)", fontSize: 13, fontWeight: 700,
+            fontFamily: "'League Spartan'", cursor: text.trim() ? "pointer" : "default", transition: "all 0.2s",
+          }}>Post Review</button>
+        </div>
+      </div>
+      {/* Sort bar */}
+      {comments.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+          <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Sort:</span>
+          {[["newest","Newest"],["top","Most Helpful"],["oldest","Oldest"]].map(([val,label]) => (
+            <button key={val} onClick={() => setSort(val)} style={{
+              background: sort===val ? "rgba(168,85,247,0.2)" : "rgba(255,255,255,0.06)",
+              border: sort===val ? "1px solid rgba(168,85,247,0.4)" : "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 50, padding: "4px 14px", fontSize: 12, color: sort===val ? "#c084fc" : "rgba(255,255,255,0.6)",
+              cursor: "pointer", fontFamily: "'League Spartan'", transition: "all 0.15s",
+            }}>{label}</button>
+          ))}
+        </div>
+      )}
+      {/* Comments list */}
+      {sorted.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "30px 0", color: "rgba(255,255,255,0.3)" }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>💬</div>
+          <div>Be the first to review this item!</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {sorted.map(c => {
+            const isLiked = c.likedBy.includes(uid);
+            const showReplies = expandedReplies.has(c.id);
+            const isOwn = c.author === (userName || "You");
+            return (
+              <div key={c.id} style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: "18px 20px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: `hsl(${(c.author.charCodeAt(0)*7)%360}deg,60%,55%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                      {c.author[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>{c.author}</div>
+                      <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 11 }}>{fmtTime(c.ts)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {c.stars > 0 && (
+                      <div style={{ display: "flex", gap: 2 }}>
+                        {[1,2,3,4,5].map(s => (
+                          <svg key={s} width="11" height="11" viewBox="0 0 24 24">
+                            <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+                              fill={s <= c.stars ? "#f59e0b" : "rgba(255,255,255,0.1)"} strokeWidth="0" />
+                          </svg>
+                        ))}
+                      </div>
+                    )}
+                    {isOwn && (
+                      <button onClick={() => deleteComment(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.2)", fontSize: 16, padding: "2px 6px", transition: "color 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.color = "#ef4444"} onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.2)"}>×</button>
+                    )}
+                  </div>
+                </div>
+                <p style={{ color: "rgba(255,255,255,0.8)", fontSize: 14, lineHeight: 1.6, margin: "0 0 12px", fontWeight: 300 }}>{c.text}</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <button onClick={() => toggleLike(c.id)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, color: isLiked ? "#ef4444" : "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: 600, transition: "color 0.15s", padding: 0 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill={isLiked ? "#ef4444" : "none"} stroke="currentColor" strokeWidth="2">
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    </svg>
+                    {c.likes > 0 ? `${c.likes} ` : ""}Helpful
+                  </button>
+                  <button onClick={() => { setReplyTo(replyTo === c.id ? null : c.id); setReplyText(""); }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.4)", fontSize: 12, display: "flex", alignItems: "center", gap: 5, padding: 0, transition: "color 0.15s", fontFamily: "'League Spartan'" }}
+                    onMouseEnter={e => e.currentTarget.style.color = "#c084fc"} onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.4)"}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 10h10a8 8 0 0 1 8 8v2M3 10l6 6M3 10l6-6"/></svg>
+                    Reply
+                  </button>
+                  {c.replies.length > 0 && (
+                    <button onClick={() => { const s = new Set(expandedReplies); s.has(c.id) ? s.delete(c.id) : s.add(c.id); setExpandedReplies(s); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(168,85,247,0.7)", fontSize: 12, fontFamily: "'League Spartan'", padding: 0 }}>
+                      {showReplies ? "Hide" : "View"} {c.replies.length} {c.replies.length === 1 ? "reply" : "replies"}
+                    </button>
+                  )}
+                </div>
+                {replyTo === c.id && (
+                  <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "flex-end" }}>
+                    <textarea value={replyText} onChange={e => setReplyText(e.target.value)} placeholder="Write a reply…" rows={2}
+                      style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "10px 14px", color: "#fff", fontSize: 13, fontFamily: "'League Spartan'", resize: "none", outline: "none" }} />
+                    <button onClick={() => submitReply(c.id)} disabled={!replyText.trim()} style={{
+                      background: replyText.trim() ? "rgba(168,85,247,0.3)" : "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(168,85,247,0.3)", borderRadius: 10, padding: "10px 16px",
+                      color: replyText.trim() ? "#c084fc" : "rgba(255,255,255,0.3)", fontSize: 12, fontWeight: 700,
+                      fontFamily: "'League Spartan'", cursor: replyText.trim() ? "pointer" : "default",
+                    }}>Reply</button>
+                  </div>
+                )}
+                {showReplies && c.replies.length > 0 && (
+                  <div style={{ marginTop: 14, paddingLeft: 16, borderLeft: "2px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 12 }}>
+                    {c.replies.map(r => {
+                      const rLiked = r.likedBy.includes(uid);
+                      return (
+                        <div key={r.id}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                            <div style={{ width: 28, height: 28, borderRadius: "50%", background: `hsl(${(r.author.charCodeAt(0)*7)%360}deg,50%,50%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>
+                              {r.author[0].toUpperCase()}
+                            </div>
+                            <span style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>{r.author}</span>
+                            <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>{fmtTime(r.ts)}</span>
+                            {r.author === (userName || "You") && (
+                              <button onClick={() => deleteComment(c.id, r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.2)", fontSize: 13, padding: "0 4px", marginLeft: "auto", transition: "color 0.15s" }}
+                                onMouseEnter={e => e.currentTarget.style.color = "#ef4444"} onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.2)"}>×</button>
+                            )}
+                          </div>
+                          <p style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, lineHeight: 1.5, margin: "0 0 6px", fontWeight: 300 }}>{r.text}</p>
+                          <button onClick={() => toggleLike(c.id, r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: rLiked ? "#ef4444" : "rgba(255,255,255,0.35)", fontSize: 11, fontFamily: "'League Spartan'", display: "flex", alignItems: "center", gap: 4, padding: 0 }}>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill={rLiked ? "#ef4444" : "none"} stroke="currentColor" strokeWidth="2">
+                              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                            </svg>
+                            {r.likes > 0 ? `${r.likes} ` : ""}Helpful
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Liked Items Drawer ────────────────────────────────────────────────────────
+function LikedDrawer({ items, wishlist, onClose, onSelectItem, onAddToCart, onToggleWishlist }) {
+  const likedItems = items.filter(item => wishlist.has(item.catalog_item_id || item.id));
+  return (
+    <>
+      <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:300, backdropFilter:"blur(4px)" }} />
+      <div style={{ position:"fixed", right:0, top:0, bottom:0, width:390, maxWidth:"100vw", background:"linear-gradient(160deg,#1a0f2e,#0f1729)", borderLeft:"1px solid rgba(255,255,255,0.1)", zIndex:301, display:"flex", flexDirection:"column", fontFamily:"'League Spartan',sans-serif", boxShadow:"-8px 0 40px rgba(0,0,0,0.4)" }}>
+        <div style={{ padding:"20px 20px 14px", borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#ef4444" stroke="none"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+              <span style={{ fontSize:18, fontWeight:700, color:"#fff" }}>Liked Items</span>
+              <span style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:50, padding:"2px 10px", fontSize:12, color:"#fca5a5" }}>{likedItems.length}</span>
+            </div>
+            <button onClick={onClose} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.5)", fontSize:24, cursor:"pointer", lineHeight:1 }}>×</button>
+          </div>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding:"16px 20px", display:"flex", flexDirection:"column", gap:14 }}>
+          {likedItems.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"60px 0", color:"rgba(255,255,255,0.3)" }}>
+              <div style={{ fontSize:40, marginBottom:12 }}>❤️</div>
+              <div style={{ fontSize:16, fontWeight:600, marginBottom:6 }}>No liked items yet</div>
+              <div style={{ fontSize:13, opacity:0.6 }}>Tap the heart on any item to save it here</div>
+            </div>
+          ) : likedItems.map((item, i) => {
+            const img = resolveImg(item);
+            const price = resolvePrice(item);
+            const name = cleanName(item);
+            return (
+              <div key={item.catalog_item_id || i} onClick={() => { onClose(); onSelectItem(item); }}
+                style={{ display:"flex", gap:12, background:"rgba(255,255,255,0.04)", borderRadius:14, overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)", cursor:"pointer", transition:"background 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.08)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}>
+                <div style={{ width:80, height:80, flexShrink:0, background:"#f7f7f9", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <img src={img || "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=200&fit=crop"} alt={name} style={{ width:"100%", height:"100%", objectFit:"contain", padding:4 }} />
+                </div>
+                <div style={{ flex:1, padding:"10px 12px 10px 0", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
+                  <div>
+                    <div style={{ color:"rgba(255,255,255,0.5)", fontSize:10, textTransform:"uppercase", letterSpacing:0.8, marginBottom:3 }}>{item.category || "Fashion"}</div>
+                    <div style={{ color:"#fff", fontSize:13, fontWeight:600, lineHeight:1.3, overflow:"hidden", textOverflow:"ellipsis", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" }}>{name}</div>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:6 }}>
+                    <span style={{ fontSize:15, fontWeight:800, color:"#fff" }}>₹{(price > 0 ? price : 999).toLocaleString("en-IN")}</span>
+                    <div style={{ display:"flex", gap:6 }}>
+                      <button onClick={e => { e.stopPropagation(); onAddToCart(item); }} style={{ background:"rgba(168,85,247,0.2)", border:"1px solid rgba(168,85,247,0.3)", borderRadius:8, padding:"5px 12px", color:"#c084fc", fontSize:11, fontWeight:700, fontFamily:"'League Spartan'", cursor:"pointer" }}>Add to Bag</button>
+                      <button onClick={e => { e.stopPropagation(); onToggleWishlist(item); }} style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.25)", borderRadius:8, width:32, height:32, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                        <svg width="14" height="13" viewBox="0 0 16 15" fill="#ef4444" stroke="none"><path d="M8 13.5L1.5 7C0.6 6.1 0 4.9 0 3.6 0 1.6 1.6 0 3.6 0c1.1 0 2.2.5 2.9 1.4L8 3l1.5-1.6C10.2.5 11.3 0 12.4 0 14.4 0 16 1.6 16 3.6c0 1.3-.6 2.5-1.5 3.4L8 13.5z"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ProductCard({ item, onClick, compact = false, onAddToCart, wishlisted = false, onToggleWishlist }) {
   const [err, setErr] = useState(false);
   const [liked, setLiked] = useState(false);
@@ -2481,7 +2768,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("match");
   const [searchQ, setSearchQ] = useState("");
-  const [priceFilter, setPriceFilter] = useState("all");
+  const [priceFilter, setPriceFilter] = useState("500to5k");
   const PER = 12;
 
   // Derive unique category chips from recommendations
@@ -2511,9 +2798,10 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       );
     }
     if (priceFilter === "under500")     list = list.filter(i => (resolvePrice(i)||0) < 500);
+    if (priceFilter === "500to5k")      list = list.filter(i => { const p = resolvePrice(i)||0; return p>=500 && p<=5000; });
     if (priceFilter === "500to2k")      list = list.filter(i => { const p = resolvePrice(i)||0; return p>=500 && p<2000; });
-    if (priceFilter === "2kto5k")       list = list.filter(i => { const p = resolvePrice(i)||0; return p>=2000 && p<5000; });
-    if (priceFilter === "above5k")      list = list.filter(i => (resolvePrice(i)||0) >= 5000);
+    if (priceFilter === "2kto5k")       list = list.filter(i => { const p = resolvePrice(i)||0; return p>=2000 && p<=5000; });
+    if (priceFilter === "above5k")      list = list.filter(i => (resolvePrice(i)||0) > 5000);
     const sorted = [...list];
     if (sortBy === "price_asc")  sorted.sort((a, b) => (resolvePrice(a)||0) - (resolvePrice(b)||0));
     if (sortBy === "price_desc") sorted.sort((a, b) => (resolvePrice(b)||0) - (resolvePrice(a)||0));
@@ -2643,6 +2931,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
           <span style={{ color:"rgba(255,255,255,0.45)", fontSize:12, alignSelf:"center", fontFamily:"'League Spartan'" }}>Budget:</span>
           {[
             {label:"All Prices",val:"all"},
+            {label:"₹500–₹5K",val:"500to5k"},
             {label:"Under ₹500",val:"under500"},
             {label:"₹500–₹2K",val:"500to2k"},
             {label:"₹2K–₹5K",val:"2kto5k"},
@@ -2748,6 +3037,27 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
           </div>
         )}
 
+        {/* ── Liked Items section ── */}
+        {(() => {
+          const liked = wishlist ? recommendations.filter(item => wishlist.has(item.catalog_item_id||item.id)) : [];
+          if (!liked.length) return null;
+          return (
+            <div style={{ marginTop:32 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+                <span style={{ fontFamily:"'League Spartan'", fontSize:20, fontWeight:700, color:"#fff" }}>❤️ Liked Items</span>
+                <span style={{ background:"rgba(239,68,68,0.15)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:50, padding:"2px 12px", fontSize:12, color:"#fca5a5", fontFamily:"'League Spartan'" }}>{liked.length} saved</span>
+              </div>
+              <div style={{ display:"flex", gap:14, overflowX:"auto", paddingBottom:8, scrollbarWidth:"none" }}>
+                {liked.map((item,i) => (
+                  <div key={item.catalog_item_id||i} style={{ flexShrink:0, width:170 }}>
+                    <ProductCard item={item} onClick={()=>onSelectItem(item)} onAddToCart={onAddToCart} compact wishlisted={true} onToggleWishlist={onToggleWishlist} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── Best Deals section ── */}
         {(() => {
           const deals = recommendations.filter(i => (i.discount_percent||0) >= 10).sort((a,b)=>(b.discount_percent||0)-(a.discount_percent||0)).slice(0,10);
@@ -2789,7 +3099,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
   );
 }
 
-function ProductDetail({ item, onBack, allRecs = [], onAddToCart }) {
+function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new Set(), onToggleWishlist, userProfile }) {
   const fb =
     "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&fit=crop";
   const fallbackImg = item?.primary_image_url || fb;
@@ -2812,7 +3122,9 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart }) {
   const [setIdx, setSetIdx] = useState(0);
   const [viewIdx, setViewIdx] = useState(0);
   const [selSize, setSelSize] = useState(null);
-  const [liked, setLiked] = useState(false);
+  const itemId = item?.catalog_item_id || item?.id;
+  const liked = wishlist.has(itemId);
+  const toggleLiked = () => onToggleWishlist && onToggleWishlist(item);
   const currentSet = imgSets[setIdx] || imgSets[0];
   const currentImg = (currentSet[viewIdx] || currentSet[0] || {}).url || fallbackImg;
   const rawTags = resolveTags(item);
@@ -2941,14 +3253,14 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart }) {
                       style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", maxHeight: 480 }} />
                   </div>
                   {/* Like button */}
-                  <button onClick={() => setLiked(!liked)} style={{
+                  <button onClick={toggleLiked} style={{
                     position: "absolute", top: 16, right: 16,
                     width: 44, height: 44, borderRadius: "50%",
                     background: liked ? "rgba(239,68,68,0.25)" : "rgba(0,0,0,0.4)",
                     backdropFilter: "blur(10px)",
                     border: liked ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(255,255,255,0.15)",
                     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.3s",
+                    transition: "all 0.3s", transform: liked ? "scale(1.1)" : "scale(1)",
                   }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? "#ef4444" : "none"} stroke={liked ? "#ef4444" : "white"} strokeWidth="2">
                       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -3205,17 +3517,16 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart }) {
                   Add to Bag
                 </button>
                 <button
-                  onClick={() => setLiked(!liked)}
+                  onClick={toggleLiked}
                   style={{
                     width: 60, height: 60,
-                    background: liked ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
-                    border: liked ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.1)",
+                    background: liked ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.05)",
+                    border: liked ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(255,255,255,0.1)",
                     borderRadius: 16, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    transition: "all 0.25s",
+                    transition: "all 0.25s", transform: liked ? "scale(1.05)" : "scale(1)",
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = liked ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.1)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = liked ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)"; }}
+                  title={liked ? "Remove from Liked" : "Add to Liked"}
                 >
                   <svg width="22" height="22" viewBox="0 0 24 24" fill={liked ? "#ef4444" : "none"} stroke={liked ? "#ef4444" : "rgba(255,255,255,0.5)"} strokeWidth="2">
                     <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
@@ -3226,6 +3537,9 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart }) {
           </div>
         </div>
       </div>
+
+      {/* ── Comments Section ── */}
+      <CommentsSection itemId={item?.catalog_item_id || item?.id || "unknown"} userName={userProfile?.name || ""} />
 
       {/* ── You May Also Like ── */}
       {(() => {
@@ -3597,6 +3911,7 @@ export default function App() {
   const [cartFlash, setCartFlash] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [wishlist, setWishlist] = useState(new Set());
+  const [likedOpen, setLikedOpen] = useState(false);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
 
   const toggleWishlist = (item) => {
@@ -3833,19 +4148,36 @@ export default function App() {
     <>
       {/* ── Floating cart counter ── */}
       {cartCount >= 0 && step === 3 && (
-        <button onClick={()=>setCartOpen(true)} style={{
-          position:"fixed", top:18, right:18, zIndex:200,
-          background: cartFlash ? "#16a34a" : cartCount > 0 ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.15)",
-          color: cartFlash ? "#fff" : cartCount > 0 ? "#111" : "rgba(255,255,255,0.7)",
-          borderRadius:50, padding:"8px 18px", border:"none",
-          display:"flex", alignItems:"center", gap:8,
-          fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:15,
-          boxShadow: cartCount > 0 ? "0 4px 20px rgba(0,0,0,0.25)" : "none",
-          transition:"background 0.3s, color 0.3s",
-          cursor:"pointer",
-        }}>
-          🛍 {cartCount > 0 ? `Bag · ${cartCount}` : "Bag"}
-        </button>
+        <div style={{ position:"fixed", top:18, right:18, zIndex:200, display:"flex", gap:10 }}>
+          {/* Liked button */}
+          <button onClick={()=>setLikedOpen(true)} style={{
+            background: wishlist.size > 0 ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.12)",
+            color: wishlist.size > 0 ? "#fca5a5" : "rgba(255,255,255,0.65)",
+            borderRadius:50, padding:"8px 18px", border: wishlist.size > 0 ? "1px solid rgba(239,68,68,0.35)" : "1px solid rgba(255,255,255,0.18)",
+            display:"flex", alignItems:"center", gap:7,
+            fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:15,
+            boxShadow: wishlist.size > 0 ? "0 4px 20px rgba(239,68,68,0.2)" : "none",
+            transition:"all 0.3s", cursor:"pointer",
+          }}>
+            <svg width="15" height="14" viewBox="0 0 16 15" fill={wishlist.size > 0 ? "#ef4444" : "none"} stroke={wishlist.size > 0 ? "#ef4444" : "rgba(255,255,255,0.65)"} strokeWidth="1.8">
+              <path d="M8 13.5L1.5 7C0.6 6.1 0 4.9 0 3.6 0 1.6 1.6 0 3.6 0c1.1 0 2.2.5 2.9 1.4L8 3l1.5-1.6C10.2.5 11.3 0 12.4 0 14.4 0 16 1.6 16 3.6c0 1.3-.6 2.5-1.5 3.4L8 13.5z" strokeLinejoin="round"/>
+            </svg>
+            {wishlist.size > 0 ? `Liked · ${wishlist.size}` : "Liked"}
+          </button>
+          {/* Bag button */}
+          <button onClick={()=>setCartOpen(true)} style={{
+            background: cartFlash ? "#16a34a" : cartCount > 0 ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.15)",
+            color: cartFlash ? "#fff" : cartCount > 0 ? "#111" : "rgba(255,255,255,0.7)",
+            borderRadius:50, padding:"8px 18px", border:"none",
+            display:"flex", alignItems:"center", gap:8,
+            fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:15,
+            boxShadow: cartCount > 0 ? "0 4px 20px rgba(0,0,0,0.25)" : "none",
+            transition:"background 0.3s, color 0.3s",
+            cursor:"pointer",
+          }}>
+            🛍 {cartCount > 0 ? `Bag · ${cartCount}` : "Bag"}
+          </button>
+        </div>
       )}
       {step === 3 && (
         <button
@@ -3874,7 +4206,7 @@ export default function App() {
         </button>
       )}
       {view === "detail" && selItem ? (
-        <ProductDetail item={selItem} onBack={() => setView("wizard")} allRecs={recs} onAddToCart={handleAddToCart} wishlist={wishlist} onToggleWishlist={toggleWishlist} />
+        <ProductDetail item={selItem} onBack={() => setView("wizard")} allRecs={recs} onAddToCart={handleAddToCart} wishlist={wishlist} onToggleWishlist={toggleWishlist} userProfile={profile} />
       ) : step === 0 ? (
         <StepBasicInfo
           data={profile}
@@ -3926,6 +4258,16 @@ export default function App() {
         >
           ⚠ {err} — showing available results
         </div>
+      )}
+      {likedOpen && (
+        <LikedDrawer
+          items={recs}
+          wishlist={wishlist}
+          onClose={() => setLikedOpen(false)}
+          onSelectItem={(item) => { setLikedOpen(false); setSelItem(item); setView("detail"); addRecentlyViewed(item); }}
+          onAddToCart={handleAddToCart}
+          onToggleWishlist={toggleWishlist}
+        />
       )}
       {cartOpen && (
         <CartDrawer
