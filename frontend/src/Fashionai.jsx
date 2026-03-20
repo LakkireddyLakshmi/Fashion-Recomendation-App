@@ -3566,7 +3566,7 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
   );
 }
 
-function AIChat({ profile, baseRecs }) {
+function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onSelectItem }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -3631,6 +3631,8 @@ function AIChat({ profile, baseRecs }) {
           items = d.recommendations || d.items || [];
         }
       }
+      // Filter to ₹500–₹5000 range (same as main recommendations)
+      items = items.filter(i => { const p = resolvePrice(i)||0; return p >= 500 && p <= 5000; });
       setMsgs((m) => m.filter((x) => x.id !== "prep"));
       setMsgs((m) => [
         ...m,
@@ -3810,8 +3812,10 @@ function AIChat({ profile, baseRecs }) {
                 <ProductCard
                   key={item.catalog_item_id || i}
                   item={item}
-                  onClick={() => {}}
+                  onClick={() => onSelectItem && onSelectItem(item)}
                   compact
+                  wishlisted={wishlist.has(item.catalog_item_id || item.id)}
+                  onToggleWishlist={onToggleWishlist}
                 />
               ))}
             </div>
@@ -4138,7 +4142,7 @@ export default function App() {
         >
           ← Back
         </button>
-        <AIChat profile={profile} baseRecs={recs} />
+        <AIChat profile={profile} baseRecs={recs} wishlist={wishlist} onToggleWishlist={toggleWishlist} onSelectItem={(item) => { setSelItem(item); setView("detail"); addRecentlyViewed(item); }} />
       </>
     );
 
