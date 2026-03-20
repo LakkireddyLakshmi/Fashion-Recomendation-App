@@ -3497,8 +3497,8 @@ function XpectrumChatView({ email, onBack }) {
 
   useEffect(() => {
     chatRef.current = new XpectrumChat({
-      baseUrl: import.meta.env.VITE_CHAT_BASE_URL,
-      apiKey: import.meta.env.VITE_CHAT_API_KEY,
+      baseUrl: import.meta.env.VITE_CHAT_BASE_URL || "",
+      apiKey: import.meta.env.VITE_CHAT_API_KEY || "",
       user: email || "user",
     });
     return () => chatRef.current?.destroy();
