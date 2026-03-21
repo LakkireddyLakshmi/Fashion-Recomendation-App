@@ -1,26 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { XpectrumChat } from "@xpectrum/sdk";
-import { BG1 } from "./Fashionai";
 
+const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "";
+const CHAT_KEY = import.meta.env.VITE_CHAT_API_KEY || "";
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
 export default function ProfileChat({ email, name, onProfileComplete }) {
-  const chatRef = useRef(null);
   const bottomRef = useRef(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(undefined);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    chatRef.current = new XpectrumChat({
-      baseUrl: import.meta.env.VITE_CHAT_BASE_URL || "",
-      apiKey: import.meta.env.VITE_CHAT_API_KEY || "",
-      user: email,
-    });
-    return () => chatRef.current?.destroy();
-  }, [email]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -82,7 +72,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
       const data = await r.json();
       if (data.token) sessionStorage.setItem("hueiq_token", data.token);
 
-      // Fetch recommendations
       const recToken = sessionStorage.getItem("hueiq_token");
       const recHeaders = recToken ? { Authorization: `Bearer ${recToken}` } : {};
       let recs = [];
@@ -120,8 +109,9 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
     }
   };
 
+  // Direct fetch-based streaming (handles agent_message events)
   const sendMessage = useCallback(async (text) => {
-    if (!text.trim() || loading || !chatRef.current) return;
+    if (!text.trim() || loading || !CHAT_BASE || !CHAT_KEY) return;
 
     setLoading(true);
     const userMsg = { id: `user-${Date.now()}`, role: "user", text };
@@ -130,37 +120,89 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
 
     let fullResponse = "";
 
-    await chatRef.current.sendMessage(text, {
-      conversationId,
-      onMessage: (responseText, messageId, convId) => {
-        setConversationId(convId);
-        fullResponse = responseText;
-        setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { id: messageId, role: "assistant", text: responseText };
-          return updated;
-        });
-      },
-      onError: (err) => {
-        setMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            text: "Sorry, something went wrong. Please try again.",
-          };
-          return updated;
-        });
-        setLoading(false);
-      },
-      onCompleted: () => {
-        setLoading(false);
-        const profile = extractProfile(fullResponse);
-        if (profile) {
-          saveProfile(profile);
+    try {
+      const res = await fetch(`${CHAT_BASE}/chat-messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${CHAT_KEY}`,
+        },
+        body: JSON.stringify({
+          inputs: {},
+          query: text,
+          response_mode: "streaming",
+          conversation_id: conversationId || "",
+          user: email,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const jsonStr = line.slice(6).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const data = JSON.parse(jsonStr);
+
+            if (data.event === "agent_message" || data.event === "message") {
+              fullResponse += data.answer || "";
+              if (data.conversation_id) setConversationId(data.conversation_id);
+              const currentResponse = fullResponse;
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  id: data.message_id || assistantMsg.id,
+                  role: "assistant",
+                  text: currentResponse,
+                };
+                return updated;
+              });
+            }
+
+            if (data.event === "message_end") {
+              if (data.conversation_id) setConversationId(data.conversation_id);
+            }
+
+            if (data.event === "error") {
+              throw new Error(data.message || "Stream error");
+            }
+          } catch (parseErr) {
+            if (parseErr.message?.includes("Stream error") || parseErr.message?.includes("API error")) throw parseErr;
+          }
         }
-      },
-    });
-  }, [conversationId, loading]);
+      }
+
+      setLoading(false);
+      const profile = extractProfile(fullResponse);
+      if (profile) saveProfile(profile);
+
+    } catch (err) {
+      console.error("Chat error:", err);
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...updated[updated.length - 1],
+          text: "Sorry, something went wrong. Please try again.",
+        };
+        return updated;
+      });
+      setLoading(false);
+    }
+  }, [conversationId, loading, email]);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -168,7 +210,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
     setInput("");
   };
 
-  // Clean display text — remove the JSON block from visible messages
   const cleanText = (text) => {
     return text.replace(/```json[\s\S]*?```/g, "").replace(/\{[\s\S]*?"profile_complete"[\s\S]*?\}/g, "").trim();
   };
@@ -176,41 +217,72 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
   return (
     <div style={{
       position: "fixed", inset: 0,
-      backgroundImage: `url(${BG1})`, backgroundSize: "cover", backgroundPosition: "center",
+      background: "#fff",
       display: "flex", flexDirection: "column",
-      fontFamily: "'League Spartan', sans-serif",
+      fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
     }}>
       {/* Header */}
       <div style={{
-        padding: "18px 28px",
+        padding: "16px 28px",
         display: "flex", alignItems: "center", gap: 12,
-        borderBottom: "1px solid rgba(255,255,255,0.08)",
+        borderBottom: "1px solid #f0f0f0",
       }}>
         <div style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          width: 36, height: 36, borderRadius: 10,
           background: "linear-gradient(135deg, #7c3aed, #a855f7)",
-          borderRadius: 12, padding: "8px 14px",
-          color: "#fff", fontWeight: 700, fontSize: 16,
         }}>
-          ✦ HueIQ
+          <span style={{ color: "#fff", fontSize: 16, fontWeight: 700 }}>H</span>
         </div>
-        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 15 }}>
-          Style Profile Setup
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: "#111" }}>HueIQ</div>
+          <div style={{ color: "#999", fontSize: 12 }}>Style Profile Setup</div>
         </div>
       </div>
 
       {/* Messages */}
       <div style={{
-        flex: 1, overflowY: "auto", padding: "20px 28px",
-        display: "flex", flexDirection: "column", gap: 14,
+        flex: 1, overflowY: "auto", padding: "24px 28px",
+        display: "flex", flexDirection: "column", gap: 16,
       }}>
         {messages.length === 0 && !loading && (
-          <div style={{ margin: "auto", textAlign: "center" }}>
-            <div style={{ fontSize: 48, marginBottom: 10 }}>✦</div>
-            <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 20 }}>
-              Let's build your style profile
+          <div style={{ margin: "auto", textAlign: "center", maxWidth: 460 }}>
+            <div style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 64, height: 64, borderRadius: 18,
+              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+              marginBottom: 20,
+            }}>
+              <span style={{ color: "#fff", fontSize: 28, fontWeight: 700 }}>H</span>
             </div>
-            <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 14, marginTop: 6 }}>
-              Type "hi" to get started
+            <div style={{ fontSize: 24, fontWeight: 700, color: "#111", marginBottom: 8 }}>
+              Welcome to HueIQ
+            </div>
+            <div style={{ color: "#888", fontSize: 15, lineHeight: 1.5, marginBottom: 24 }}>
+              I'll help you build your style profile so we can find your perfect fashion matches.
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              {["👋 Say hi to get started", "🎨 I love fashion", "👗 Help me find my style"].map((suggestion) => (
+                <button
+                  key={suggestion}
+                  onClick={() => { setInput(""); sendMessage(suggestion.replace(/^[^\s]+ /, "")); }}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: 100,
+                    border: "1px solid #e8e8e8",
+                    background: "#fafafa",
+                    color: "#555",
+                    fontSize: 14,
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+                  }}
+                  onMouseEnter={(e) => { e.target.style.background = "#f0f0f0"; e.target.style.borderColor = "#ccc"; }}
+                  onMouseLeave={(e) => { e.target.style.background = "#fafafa"; e.target.style.borderColor = "#e8e8e8"; }}
+                >
+                  {suggestion}
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -222,20 +294,26 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
             <div key={msg.id} style={{
               display: "flex",
               justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+              gap: 10, alignItems: "flex-end",
             }}>
+              {msg.role === "assistant" && (
+                <div style={{
+                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                  background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>H</span>
+                </div>
+              )}
               <div style={{
-                maxWidth: "80%",
+                maxWidth: "70%",
                 padding: "12px 18px",
-                borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                background: msg.role === "user"
-                  ? "linear-gradient(135deg, #7c3aed, #a855f7)"
-                  : "rgba(255,255,255,0.08)",
-                color: "#fff",
+                borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px",
+                background: msg.role === "user" ? "#111" : "#f5f5f5",
+                color: msg.role === "user" ? "#fff" : "#222",
                 fontSize: 15,
-                lineHeight: 1.5,
+                lineHeight: 1.6,
                 whiteSpace: "pre-wrap",
-                backdropFilter: msg.role === "assistant" ? "blur(20px)" : "none",
-                border: msg.role === "assistant" ? "1px solid rgba(255,255,255,0.08)" : "none",
               }}>
                 {displayText || "..."}
               </div>
@@ -243,25 +321,52 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
           );
         })}
 
+        {loading && messages.length > 0 && messages[messages.length - 1]?.text === "" && (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 8,
+              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>H</span>
+            </div>
+            <div style={{
+              padding: "12px 18px", borderRadius: "20px 20px 20px 4px",
+              background: "#f5f5f5", color: "#999", fontSize: 14,
+            }}>
+              <span className="typing-dots">Thinking...</span>
+            </div>
+          </div>
+        )}
+
         {saving && (
           <div style={{
-            textAlign: "center", padding: "20px 0",
-            color: "rgba(255,255,255,0.6)", fontSize: 16,
+            textAlign: "center", padding: "24px 0",
+            color: "#888", fontSize: 15,
           }}>
-            <div style={{ marginBottom: 8, fontSize: 24 }}>✦</div>
-            Saving your profile & finding your perfect matches...
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "#f5f5f5", padding: "12px 24px", borderRadius: 100,
+            }}>
+              <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
+              Saving your profile & finding matches...
+            </div>
           </div>
         )}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* Input Bar */}
       <div style={{
         padding: "16px 28px 24px",
-        borderTop: "1px solid rgba(255,255,255,0.08)",
+        borderTop: "1px solid #f0f0f0",
       }}>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{
+          display: "flex", gap: 10, alignItems: "center",
+          background: "#f5f5f5", borderRadius: 100,
+          padding: "6px 6px 6px 22px",
+        }}>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -270,15 +375,12 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
             disabled={loading || saving}
             style={{
               flex: 1,
-              padding: "14px 22px",
-              borderRadius: 100,
+              padding: "10px 0",
               border: "none",
-              background: "rgba(255,255,255,0.1)",
-              backdropFilter: "blur(50px)",
-              color: "#fff",
-              fontSize: 16,
-              fontWeight: 300,
-              fontFamily: "'League Spartan', sans-serif",
+              background: "transparent",
+              color: "#111",
+              fontSize: 15,
+              fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
               outline: "none",
             }}
           />
@@ -286,20 +388,18 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
             onClick={handleSend}
             disabled={loading || saving || !input.trim()}
             style={{
-              padding: "14px 24px",
-              borderRadius: 100,
+              width: 40, height: 40,
+              borderRadius: "50%",
               border: "none",
-              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+              background: loading || saving || !input.trim() ? "#ddd" : "#111",
               color: "#fff",
-              fontSize: 16,
-              fontWeight: 700,
-              fontFamily: "'League Spartan', sans-serif",
+              fontSize: 18,
               cursor: loading || saving ? "wait" : "pointer",
-              opacity: loading || saving || !input.trim() ? 0.5 : 1,
-              transition: "opacity 0.2s",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "background 0.2s",
             }}
           >
-            Send
+            ↑
           </button>
         </div>
       </div>
