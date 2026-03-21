@@ -4,9 +4,6 @@ const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "";
 const CHAT_KEY = import.meta.env.VITE_CHAT_API_KEY || "";
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
-const PROFILE_STEPS = [
-  "Gender", "Age", "Colors", "Categories", "Fit", "Height", "Weight", "Body Type"
-];
 
 export default function ProfileChat({ email, name, onProfileComplete }) {
   const bottomRef = useRef(null);
@@ -17,7 +14,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(undefined);
   const [saving, setSaving] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef(null);
 
@@ -28,11 +24,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
   useEffect(() => {
     if (!loading && !saving) inputRef.current?.focus();
   }, [loading, saving]);
-
-  useEffect(() => {
-    const userMsgCount = messages.filter(m => m.role === "user").length;
-    setCurrentStep(Math.min(userMsgCount, PROFILE_STEPS.length));
-  }, [messages]);
 
   const extractProfile = (text) => {
     const jsonMatch = text.match(/\{[\s\S]*?"profile_complete"\s*:\s*true[\s\S]*?\}/);
@@ -174,57 +165,183 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
     setInput("");
   };
 
-  const toggleVoice = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Speech recognition is not supported in this browser. Please use Chrome.");
-      return;
-    }
-
+  const toggleVoice = async () => {
     if (isListening) {
-      recognitionRef.current?.stop();
+      if (recognitionRef.current?.stop) recognitionRef.current.stop();
       setIsListening(false);
       return;
     }
 
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognitionRef.current = recognition;
-    let finalText = "";
+    // Try Web Speech API first (works on Chrome HTTPS)
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      recognitionRef.current = recognition;
+      recognition.onstart = () => setIsListening(true);
+      recognition.onresult = (event) => {
+        let interim = "", finalText = "";
+        for (let i = 0; i < event.results.length; i++) {
+          const t = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        setInput(finalText || interim);
+      };
+      recognition.onerror = (e) => {
+        console.warn("Web Speech error:", e.error, "- falling back to mic recording");
+        setIsListening(false);
+        if (e.error === "not-allowed") {
+          alert("Microphone access denied. Please allow it in browser settings.");
+          return;
+        }
+        // Fall back to MediaRecorder for network/other errors
+        startMicRecording();
+      };
+      recognition.onend = () => setIsListening(false);
 
-    recognition.onstart = () => setIsListening(true);
-    recognition.onresult = (event) => {
-      let interim = "";
-      finalText = "";
-      for (let i = 0; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t;
-        else interim += t;
-      }
-      setInput(finalText || interim);
-    };
-    recognition.onerror = (e) => {
-      console.error("Speech error:", e.error);
+      try { recognition.start(); return; }
+      catch (e) { console.warn("Web Speech failed, using fallback"); }
+    }
+
+    // Fallback: record with MediaRecorder and send to Xpectrum
+    startMicRecording();
+  };
+
+  const startMicRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks = [];
+      recognitionRef.current = { stop: () => recorder.stop() };
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstart = () => setIsListening(true);
+      recorder.onstop = async () => {
+        setIsListening(false);
+        stream.getTracks().forEach(t => t.stop());
+        const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+        const blob = new Blob(chunks, { type: mimeType });
+        if (blob.size < 1000) { console.warn("Recording too short"); return; }
+
+        // Send to Xpectrum audio-to-text
+        if (CHAT_BASE && CHAT_KEY) {
+          try {
+            setInput("Transcribing...");
+            const fd = new FormData();
+            fd.append("file", blob, `recording.${ext}`);
+            fd.append("user", email || "user");
+            const res = await fetch(`${CHAT_BASE}/audio-to-text`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${CHAT_KEY}` },
+              body: fd,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.text) { setInput(data.text); return; }
+            }
+          } catch (err) { console.warn("Xpectrum STT failed:", err); }
+        }
+        setInput("");
+        alert("Voice transcription is not available. Please type your answer.");
+      };
+
+      recorder.start();
+      // Auto-stop after 8 seconds
+      setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 8000);
+    } catch (err) {
       setIsListening(false);
-      if (e.error === "not-allowed") {
+      if (err.name === "NotAllowedError") {
         alert("Microphone access denied. Please allow it in browser settings.");
-      } else if (e.error === "network") {
-        alert("Speech recognition requires HTTPS. Please use the deployed site or Chrome with localhost.");
+      } else {
+        alert("Could not access microphone. Please check your device settings.");
       }
-    };
-    recognition.onend = () => setIsListening(false);
-
-    try { recognition.start(); }
-    catch (e) { console.error("Speech start failed:", e); setIsListening(false); }
+    }
   };
 
   const cleanText = (text) => {
     return text.replace(/```json[\s\S]*?```/g, "").replace(/\{[\s\S]*?"profile_complete"[\s\S]*?\}/g, "").trim();
   };
 
-  const progress = (currentStep / PROFILE_STEPS.length) * 100;
+
+  const hasMessages = messages.length > 0;
+
+  const inputBar = (
+    <div style={{
+      maxWidth: 680, width: "100%", margin: "0 auto", boxSizing: "border-box",
+    }}>
+      <div style={{
+        display: "flex", alignItems: "flex-end", gap: 0,
+        background: "#f4f4f4", borderRadius: 24,
+        padding: "6px 6px 6px 20px",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+        transition: "box-shadow 0.2s",
+      }}>
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+          }}
+          placeholder={isListening ? "Listening..." : saving ? "Saving..." : "Message HueIQ..."}
+          disabled={loading || saving}
+          rows={1}
+          style={{
+            flex: 1, padding: "10px 0", border: "none", background: "transparent",
+            color: "#111", fontSize: 15, lineHeight: 1.5,
+            fontFamily: "'Inter', system-ui, sans-serif",
+            outline: "none", resize: "none",
+            maxHeight: 120, overflowY: "auto",
+          }}
+          onInput={(e) => {
+            e.target.style.height = "auto";
+            e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+          }}
+        />
+        {/* Mic button */}
+        <button onClick={toggleVoice} disabled={loading || saving}
+          style={{
+            width: 36, height: 36, borderRadius: "50%", border: "none",
+            background: isListening ? "#ef4444" : "transparent",
+            color: isListening ? "#fff" : "#888",
+            fontSize: 17, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all 0.2s ease",
+            flexShrink: 0,
+            animation: isListening ? "micPulse 1.5s ease-in-out infinite" : "none",
+          }}
+          title={isListening ? "Stop listening" : "Speak your answer"}
+        >
+          {isListening ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          )}
+        </button>
+        {/* Send button */}
+        <button onClick={handleSend} disabled={loading || saving || !input.trim()}
+          style={{
+            width: 36, height: 36, borderRadius: "50%", border: "none",
+            background: loading || saving || !input.trim() ? "transparent" : "#111",
+            color: loading || saving || !input.trim() ? "#bbb" : "#fff",
+            fontSize: 16, cursor: loading || saving ? "wait" : "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all 0.15s ease",
+            flexShrink: 0,
+          }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div style={{
@@ -233,180 +350,103 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
       display: "flex", flexDirection: "column",
       fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     }}>
-      {/* Header */}
-      <div style={{
-        padding: "14px 24px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: "1px solid #f0f0f0",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>HueIQ</div>
-            <div style={{ color: "#bbb", fontSize: 11 }}>Building your style profile</div>
-          </div>
-        </div>
-
-        {/* Progress */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 12, color: "#bbb", fontWeight: 500 }}>
-            Step {currentStep} of {PROFILE_STEPS.length}
-          </span>
-          <div style={{
-            width: 100, height: 3, borderRadius: 100,
-            background: "#f0f0f0", overflow: "hidden",
-          }}>
-            <div style={{
-              width: `${progress}%`, height: "100%", borderRadius: 100,
-              background: "#111",
-              transition: "width 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-            }} />
-          </div>
-        </div>
-      </div>
-
-      {/* Step pills */}
-      <div style={{
-        padding: "10px 24px", display: "flex", gap: 4, overflowX: "auto",
-        borderBottom: "1px solid #f8f8f8",
-      }}>
-        {PROFILE_STEPS.map((step, i) => (
-          <div key={step} style={{
-            padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 500,
-            whiteSpace: "nowrap", flexShrink: 0,
-            background: i < currentStep ? "#111" : i === currentStep ? "#f5f5f5" : "#fafafa",
-            color: i < currentStep ? "#fff" : i === currentStep ? "#555" : "#ddd",
-            transition: "all 0.3s ease",
-          }}>
-            {i < currentStep ? "✓" : ""} {step}
-          </div>
-        ))}
-      </div>
-
-      {/* Messages */}
-      <div style={{
-        flex: 1, overflowY: "auto", padding: "28px 24px",
-        display: "flex", flexDirection: "column", gap: 20,
-        maxWidth: 720, width: "100%", margin: "0 auto",
-      }}>
-        {messages.length === 0 && !loading && (
-          <div style={{ margin: "auto", textAlign: "center", maxWidth: 480 }}>
-            <p style={{
-              color: "#555", fontSize: 16, lineHeight: 1.7, margin: "0",
-            }}>
-              Can you please share a few details about yourself, such as your age, gender, height (cm), weight (kg), preferred categories, favorite colors, preferred fit, and body type?
+      {/* Centered layout when no messages (like ChatGPT) */}
+      {!hasMessages && !saving ? (
+        <div style={{
+          flex: 1, display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          padding: "40px 24px",
+          gap: 32,
+        }}>
+          <div style={{ textAlign: "center", maxWidth: 520 }}>
+            <p style={{ color: "#888", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+              Tell me about yourself — your age, gender, style preferences, favorite colors, and body type — so I can find your perfect fashion matches.
             </p>
           </div>
-        )}
 
-        {messages.map((msg) => {
-          const displayText = msg.role === "assistant" ? cleanText(msg.text) : msg.text;
-          if (!displayText) return null;
-          return (
-            <div key={msg.id} style={{
-              display: "flex",
-              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              gap: 10, alignItems: "flex-start",
-            }}>
-              <div style={{
-                maxWidth: "75%",
-                padding: "12px 18px",
-                borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                background: msg.role === "user" ? "#111" : "#f5f5f5",
-                color: msg.role === "user" ? "#fff" : "#222",
-                fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap",
-              }}>
-                {displayText}
-              </div>
-            </div>
-          );
-        })}
+          {/* Centered input */}
+          {inputBar}
 
-        {loading && messages.length > 0 && messages[messages.length - 1]?.text === "" && (
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-            <div style={{
-              padding: "14px 18px", borderRadius: "18px 18px 18px 4px",
-              background: "#f5f5f5", display: "flex", gap: 5,
-            }}>
-              <span style={{ ...dotStyle, animationDelay: "0s" }} />
-              <span style={{ ...dotStyle, animationDelay: "0.15s" }} />
-              <span style={{ ...dotStyle, animationDelay: "0.3s" }} />
-            </div>
-          </div>
-        )}
-
-        {saving && (
-          <div style={{ textAlign: "center", padding: "28px 0" }}>
-            <div style={{
-              display: "inline-flex", alignItems: "center", gap: 10,
-              background: "#f5f5f5", padding: "12px 24px", borderRadius: 100,
-            }}>
-              <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>
-              <span style={{ color: "#666", fontSize: 14, fontWeight: 500 }}>
-                Building your wardrobe...
-              </span>
-            </div>
-          </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Input */}
-      <div style={{
-        padding: "16px 24px 24px",
-        maxWidth: 720, width: "100%", margin: "0 auto", boxSizing: "border-box",
-      }}>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 0,
-          border: "1px solid #e5e5e5", borderRadius: 14,
-          padding: "4px 4px 4px 18px",
-          transition: "border-color 0.2s",
-        }}
-          onFocus={() => {}}
-        >
-          {/* Mic button */}
-          <button onClick={toggleVoice} disabled={loading || saving}
-            style={{
-              width: 36, height: 36, borderRadius: 8, border: "none",
-              background: isListening ? "#ef4444" : "transparent",
-              color: isListening ? "#fff" : "#999",
-              fontSize: 18, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "all 0.2s ease",
-              flexShrink: 0, marginRight: 4,
-              animation: isListening ? "micPulse 1.5s ease-in-out infinite" : "none",
-            }}
-            title={isListening ? "Stop listening" : "Speak your answer"}
-          >
-            🎤
-          </button>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-            placeholder={isListening ? "Listening..." : saving ? "Saving..." : "Type or speak your answer..."}
-            disabled={loading || saving}
-            style={{
-              flex: 1, padding: "12px 0", border: "none", background: "transparent",
-              color: "#111", fontSize: 15,
-              fontFamily: "'Inter', system-ui, sans-serif",
-              outline: "none",
-            }}
-          />
-          <button onClick={handleSend} disabled={loading || saving || !input.trim()}
-            style={{
-              width: 40, height: 40, borderRadius: 10, border: "none",
-              background: loading || saving || !input.trim() ? "#f0f0f0" : "#111",
-              color: loading || saving || !input.trim() ? "#ccc" : "#fff",
-              fontSize: 18, cursor: loading || saving ? "wait" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "all 0.15s ease",
-            }}>
-            ↑
-          </button>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Messages area */}
+          <div style={{
+            flex: 1, overflowY: "auto", padding: "28px 24px",
+            display: "flex", flexDirection: "column", gap: 24,
+            maxWidth: 720, width: "100%", margin: "0 auto",
+          }}>
+            {messages.map((msg) => {
+              const displayText = msg.role === "assistant" ? cleanText(msg.text) : msg.text;
+              if (!displayText) return null;
+              return (
+                <div key={msg.id} style={{
+                  display: "flex",
+                  justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                  gap: 12, alignItems: "flex-start",
+                }}>
+                  {msg.role === "assistant" && (
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                      background: "#111", display: "flex", alignItems: "center", justifyContent: "center",
+                      marginTop: 2,
+                    }}>
+                      <span style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>H</span>
+                    </div>
+                  )}
+                  <div style={{
+                    maxWidth: "75%",
+                    padding: msg.role === "user" ? "12px 18px" : "0",
+                    borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "0",
+                    background: msg.role === "user" ? "#111" : "transparent",
+                    color: msg.role === "user" ? "#fff" : "#333",
+                    fontSize: 15, lineHeight: 1.7, whiteSpace: "pre-wrap",
+                  }}>
+                    {displayText}
+                  </div>
+                </div>
+              );
+            })}
+
+            {loading && messages.length > 0 && messages[messages.length - 1]?.text === "" && (
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                  background: "#111", display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <span style={{ color: "#fff", fontSize: 13, fontWeight: 700 }}>H</span>
+                </div>
+                <div style={{ display: "flex", gap: 5, paddingTop: 8 }}>
+                  <span style={{ ...dotStyle, animationDelay: "0s" }} />
+                  <span style={{ ...dotStyle, animationDelay: "0.15s" }} />
+                  <span style={{ ...dotStyle, animationDelay: "0.3s" }} />
+                </div>
+              </div>
+            )}
+
+            {saving && (
+              <div style={{ textAlign: "center", padding: "28px 0" }}>
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 10,
+                  background: "#f5f5f5", padding: "14px 28px", borderRadius: 100,
+                }}>
+                  <span style={{ display: "inline-block", animation: "spin 1s linear infinite", fontSize: 18 }}>⟳</span>
+                  <span style={{ color: "#555", fontSize: 14, fontWeight: 500 }}>
+                    Building your wardrobe...
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Bottom input */}
+          <div style={{ padding: "12px 24px 20px" }}>
+            {inputBar}
+          </div>
+        </>
+      )}
 
       <style>{`
         @keyframes pulse {
