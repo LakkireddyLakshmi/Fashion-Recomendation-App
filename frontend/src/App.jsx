@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AuthProvider, useAuthInfo, useRedirectFunctions } from "@propelauth/react";
 import ProfileChat from "./ProfileChat";
 import Fashionai from "./Fashionai";
@@ -12,7 +12,14 @@ function AppInner() {
   const [profileData, setProfileData] = useState(null);
   const [recs, setRecs] = useState([]);
 
-  if (loading) {
+  // Show loading only for a short time, then show login anyway
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setTimedOut(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (loading && !timedOut) {
     return (
       <div style={{
         position: "fixed", inset: 0, background: "#fff",
