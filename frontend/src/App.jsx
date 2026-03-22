@@ -54,14 +54,18 @@ function AppInner() {
           <p style={{ color: "#888", fontSize: 15, lineHeight: 1.6, margin: "0 0 32px" }}>
             AI-powered fashion recommendations, personalized for you.
           </p>
-          <button onClick={() => redirectToSignupPage()} style={{
+          <button onClick={() => {
+            try { redirectToSignupPage(); } catch(err) { void err; window.location.href = AUTH_URL + "/en/signup"; }
+          }} style={{
             width: "100%", padding: "14px 0", borderRadius: 12,
             background: "#111", color: "#fff", border: "none",
             fontSize: 15, fontWeight: 600, cursor: "pointer", marginBottom: 12,
           }}>
             Get Started
           </button>
-          <button onClick={() => redirectToLoginPage()} style={{
+          <button onClick={() => {
+            try { redirectToLoginPage(); } catch(err) { void err; window.location.href = AUTH_URL + "/en/login"; }
+          }} style={{
             width: "100%", padding: "14px 0", borderRadius: 12,
             background: "#fff", color: "#111", border: "1px solid #e0e0e0",
             fontSize: 15, fontWeight: 600, cursor: "pointer",
