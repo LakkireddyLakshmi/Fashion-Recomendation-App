@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { TextGenerateEffect } from "./components/ui/text-generate-effect";
 
 const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "";
 const CHAT_KEY = import.meta.env.VITE_CHAT_API_KEY || "";
@@ -359,9 +360,12 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
           gap: 32,
         }}>
           <div style={{ textAlign: "center", maxWidth: 520 }}>
-            <p style={{ color: "#888", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
-              Tell me about yourself — your age, gender, style preferences, favorite colors, and body type — so I can find your perfect fashion matches.
-            </p>
+            <TextGenerateEffect
+              words="Tell me about yourself — your age, gender, style preferences, favorite colors, and body type — so I can find your perfect fashion matches."
+              className="text-lg"
+              duration={0.4}
+              filter={true}
+            />
           </div>
 
           {/* Centered input */}

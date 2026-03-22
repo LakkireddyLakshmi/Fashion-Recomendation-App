@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "../../lib/utils";
+import { TextGenerateEffect } from "./text-generate-effect";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -356,36 +357,38 @@ export const SignInPage = ({ className, onAuth }) => {
                   transition={{ duration: 0.4, ease: "easeOut" }}
                   className="text-center"
                 >
-                  <div className="mb-10">
-                    <h1 className="text-5xl font-bold tracking-tight text-white mb-4">
-                      {isLogin ? "Welcome back" : "Get started"}
-                    </h1>
-                    <p className="text-lg text-white/50 font-light">Your AI fashion stylist</p>
+                  <div className="mb-14">
+                    <TextGenerateEffect
+                      words={isLogin ? "Welcome back" : "Get started"}
+                      className="text-5xl tracking-tight"
+                      duration={0.6}
+                    />
+                    <p className="text-lg text-white/50 font-light mt-4">Your AI fashion stylist</p>
                   </div>
 
                   <div>
                     {/* Google Sign-In */}
-                    <div ref={googleBtnRef} className="flex justify-center [&_iframe]:!w-full [&>div]:!w-full mb-8" />
+                    <div ref={googleBtnRef} className="flex justify-center [&_iframe]:!w-full [&>div]:!w-full" />
 
-                    <div className="flex items-center gap-4 mb-8">
+                    <div className="flex items-center gap-4 my-10">
                       <div className="h-px bg-white/10 flex-1" />
                       <span className="text-white/40 text-sm">or</span>
                       <div className="h-px bg-white/10 flex-1" />
                     </div>
 
-                    <form onSubmit={handleEmailSubmit} className="mb-8">
+                    <form onSubmit={handleEmailSubmit}>
                       <div className="relative">
                         <input
                           type="email"
                           placeholder="you@example.com"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-4 px-6 pr-14 focus:outline-none focus:border-white/30 text-center bg-transparent text-base"
+                          className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-5 px-8 pr-16 focus:outline-none focus:border-white/30 text-center bg-transparent text-lg"
                           required
                         />
                         <button
                           type="submit"
-                          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors group overflow-hidden"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-white w-12 h-12 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors group overflow-hidden text-lg"
                         >
                           <span className="relative w-full h-full block overflow-hidden">
                             <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">→</span>
@@ -396,7 +399,7 @@ export const SignInPage = ({ className, onAuth }) => {
                     </form>
                   </div>
 
-                  <p className="text-sm text-white/40">
+                  <p className="text-sm text-white/40 mt-12">
                     {isLogin ? "Don't have an account? " : "Already have an account? "}
                     <button
                       onClick={() => { setIsLogin(!isLogin); setError(""); }}
