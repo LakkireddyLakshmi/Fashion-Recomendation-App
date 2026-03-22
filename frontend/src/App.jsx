@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AuthProvider, useAuthInfo, useRedirectFunctions } from "@propelauth/react";
+import { AuthProvider, useAuthInfo } from "@propelauth/react";
 import ProfileChat from "./ProfileChat";
 import Fashionai from "./Fashionai";
 
@@ -8,26 +8,12 @@ const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://952380306.propelautht
 function AppInner() {
   const authInfo = useAuthInfo();
   const { isLoggedIn, loading, user } = authInfo;
-  const redirectFns = useRedirectFunctions();
-
   const handleSignup = () => {
-    try {
-      console.log("Redirecting to signup...", redirectFns);
-      redirectFns.handleSignup();
-    } catch (e) {
-      console.error("Signup redirect failed:", e);
-      window.location.href = AUTH_URL + "/signup";
-    }
+    window.location.href = AUTH_URL + "/en/signup";
   };
 
   const handleLogin = () => {
-    try {
-      console.log("Redirecting to login...", redirectFns);
-      redirectFns.handleLogin();
-    } catch (e) {
-      console.error("Login redirect failed:", e);
-      window.location.href = AUTH_URL + "/login";
-    }
+    window.location.href = AUTH_URL + "/en/login";
   };
   const [profileDone, setProfileDone] = useState(false);
   const [profileData, setProfileData] = useState(null);
