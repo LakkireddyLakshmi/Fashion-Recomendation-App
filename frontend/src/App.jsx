@@ -6,8 +6,29 @@ import Fashionai from "./Fashionai";
 const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://952380306.propelauthtest.com";
 
 function AppInner() {
-  const { isLoggedIn, loading, user } = useAuthInfo();
-  const { redirectToLoginPage, redirectToSignupPage } = useRedirectFunctions();
+  const authInfo = useAuthInfo();
+  const { isLoggedIn, loading, user } = authInfo;
+  const redirectFns = useRedirectFunctions();
+
+  const handleSignup = () => {
+    try {
+      console.log("Redirecting to signup...", redirectFns);
+      redirectFns.handleSignup();
+    } catch (e) {
+      console.error("Signup redirect failed:", e);
+      window.location.href = AUTH_URL + "/signup";
+    }
+  };
+
+  const handleLogin = () => {
+    try {
+      console.log("Redirecting to login...", redirectFns);
+      redirectFns.handleLogin();
+    } catch (e) {
+      console.error("Login redirect failed:", e);
+      window.location.href = AUTH_URL + "/login";
+    }
+  };
   const [profileDone, setProfileDone] = useState(false);
   const [profileData, setProfileData] = useState(null);
   const [recs, setRecs] = useState([]);
@@ -61,7 +82,7 @@ function AppInner() {
           </p>
 
           <button
-            onClick={() => redirectToSignupPage()}
+            onClick={() => handleSignup()}
             style={{
               width: "100%", padding: "14px 0", borderRadius: 12,
               background: "#111", color: "#fff", border: "none",
@@ -75,7 +96,7 @@ function AppInner() {
           </button>
 
           <button
-            onClick={() => redirectToLoginPage()}
+            onClick={() => handleLogin()}
             style={{
               width: "100%", padding: "14px 0", borderRadius: 12,
               background: "#fff", color: "#111",
