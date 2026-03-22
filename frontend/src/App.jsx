@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AuthProvider, useAuthInfo, useRedirectFunctions } from "@propelauth/react";
+import { AuthProvider, useAuthInfo } from "@propelauth/react";
 import ProfileChat from "./ProfileChat";
 import Fashionai from "./Fashionai";
 
@@ -7,7 +7,6 @@ const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://952380306.propelautht
 
 function AppInner() {
   const { isLoggedIn, loading, user } = useAuthInfo();
-  const { redirectToLoginPage, redirectToSignupPage } = useRedirectFunctions();
   const [profileDone, setProfileDone] = useState(false);
   const [profileData, setProfileData] = useState(null);
   const [recs, setRecs] = useState([]);
@@ -54,18 +53,14 @@ function AppInner() {
           <p style={{ color: "#888", fontSize: 15, lineHeight: 1.6, margin: "0 0 32px" }}>
             AI-powered fashion recommendations, personalized for you.
           </p>
-          <button onClick={() => {
-            try { redirectToSignupPage(); } catch(err) { void err; window.location.href = AUTH_URL + "/en/signup"; }
-          }} style={{
+          <button onClick={() => { window.location.href = AUTH_URL + "/en/signup"; }} style={{
             width: "100%", padding: "14px 0", borderRadius: 12,
             background: "#111", color: "#fff", border: "none",
             fontSize: 15, fontWeight: 600, cursor: "pointer", marginBottom: 12,
           }}>
             Get Started
           </button>
-          <button onClick={() => {
-            try { redirectToLoginPage(); } catch(err) { void err; window.location.href = AUTH_URL + "/en/login"; }
-          }} style={{
+          <button onClick={() => { window.location.href = AUTH_URL + "/en/login"; }} style={{
             width: "100%", padding: "14px 0", borderRadius: 12,
             background: "#fff", color: "#111", border: "1px solid #e0e0e0",
             fontSize: 15, fontWeight: 600, cursor: "pointer",
