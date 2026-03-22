@@ -3571,8 +3571,9 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
 
     // ── Gender detection ──
     let gender = null;
-    if (t.includes("women") || t.includes("woman") || t.includes("ladies") || t.includes("girl") || t.includes("female") || t.includes("her")) gender = "women";
-    else if (t.includes("men's") || t.includes("mens") || t.includes("man") || t.includes("boy") || t.includes("male") || t.includes("guys") || t.includes("him")) gender = "men";
+    // Gender: check women FIRST (because "women" contains "men", "female" contains "male")
+    if (/\b(women|woman|ladies|lady|girl|girls|female|her|she|feminine)\b/.test(t)) gender = "women";
+    else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|gentleman|masculine|men'?s|mens)\b/.test(t)) gender = "men";
 
     // ── Style/occasion detection ──
     let style = null;
@@ -4243,58 +4244,224 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
           {(chatResults || chatLoading) && (
             <div style={{
               position: "fixed", inset: 0, zIndex: 99,
-              background: "rgba(10,0,20,0.95)",
-              backdropFilter: "blur(10px)",
+              background: "linear-gradient(135deg, rgba(10,0,30,0.97) 0%, rgba(20,5,40,0.98) 50%, rgba(10,0,25,0.97) 100%)",
+              backdropFilter: "blur(24px)",
               overflowY: "auto",
-              padding: "80px 24px 120px",
+              padding: "0 0 120px",
             }}>
-              <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              {/* Header */}
+              <div style={{
+                position: "sticky", top: 0, zIndex: 10,
+                background: "linear-gradient(180deg, rgba(10,0,30,1) 0%, rgba(10,0,30,0.95) 80%, transparent 100%)",
+                padding: "28px 32px 20px",
+              }}>
+                <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
-                    {chatMsg && <p style={{ color: "rgba(255,255,255,0.8)", fontSize: 18, fontFamily: "'League Spartan',sans-serif", margin: 0 }}>{chatMsg}</p>}
-                    {chatQuery && <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginTop: 4 }}>Searched: "{chatQuery}"</p>}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                      <div style={{
+                        background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+                        borderRadius: 8, padding: "4px 8px", color: "#fff", fontWeight: 700, fontSize: 12,
+                      }}>✦ AI</div>
+                      {chatMsg && <p style={{
+                        color: "#fff", fontSize: 20, fontWeight: 600,
+                        fontFamily: "'League Spartan',sans-serif", margin: 0,
+                      }}>{chatMsg}</p>}
+                    </div>
+                    {chatQuery && (
+                      <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, margin: 0, fontStyle: "italic" }}>
+                        "{chatQuery}"
+                      </p>
+                    )}
                   </div>
                   <button onClick={() => { setChatResults(null); setChatMsg(""); setChatQuery(""); }} style={{
-                    background: "rgba(255,255,255,0.1)", border: "none", color: "#fff",
-                    borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontSize: 14,
+                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+                    color: "rgba(255,255,255,0.7)", borderRadius: 12, padding: "10px 20px",
+                    cursor: "pointer", fontSize: 13, fontWeight: 500,
                     fontFamily: "'League Spartan',sans-serif",
-                  }}>Close</button>
+                    transition: "all 0.2s",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.12)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
+                  >
+                    <span style={{ fontSize: 16 }}>×</span> Close
+                  </button>
                 </div>
+              </div>
+
+              <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 32px" }}>
                 {chatLoading ? (
-                  <div style={{ textAlign: "center", padding: 60 }}>
-                    <div style={{ width: 40, height: 40, border: "3px solid rgba(255,255,255,0.1)", borderTopColor: "#a855f7", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
-                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Searching...</p>
+                  <div style={{ textAlign: "center", padding: "100px 0" }}>
+                    <div style={{
+                      width: 56, height: 56,
+                      border: "3px solid rgba(168,85,247,0.15)",
+                      borderTopColor: "#a855f7",
+                      borderRadius: "50%",
+                      animation: "spin 0.8s linear infinite",
+                      margin: "0 auto 20px",
+                    }} />
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 15, fontFamily: "'League Spartan',sans-serif" }}>
+                      Finding your perfect matches...
+                    </p>
                   </div>
                 ) : chatResults && chatResults.length > 0 ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 20 }}>
-                    {chatResults.map((item, i) => {
-                      const img = item.primary_image_url || (item.images?.[0]?.image_url) || "";
-                      const p = resolvePrice(item);
-                      return (
-                        <div key={item.catalog_item_id || i} onClick={() => { setSelItem(item); setView("detail"); setChatResults(null); }}
-                          style={{
-                            background: "rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden",
-                            cursor: "pointer", border: "1px solid rgba(255,255,255,0.08)",
-                            transition: "transform 0.2s, border-color 0.2s",
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.borderColor = "rgba(124,58,237,0.4)"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
-                        >
-                          <div style={{ aspectRatio: "3/4", overflow: "hidden", background: "#1a1a2e" }}>
-                            {img && <img src={img} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />}
+                  <>
+                    <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, marginBottom: 20, fontWeight: 500, letterSpacing: 1, textTransform: "uppercase" }}>
+                      {chatResults.length} results found
+                    </p>
+                    <div style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                      gap: 24,
+                    }}>
+                      {chatResults.map((item, i) => {
+                        const img = item.primary_image_url || (item.images?.[0]?.image_url) || "";
+                        const p = resolvePrice(item);
+                        const colors = (item.available_colors || []).slice(0, 4);
+                        return (
+                          <div key={item.catalog_item_id || i}
+                            onClick={() => { setSelItem(item); setView("detail"); setChatResults(null); }}
+                            style={{
+                              background: "rgba(255,255,255,0.04)",
+                              borderRadius: 20,
+                              overflow: "hidden",
+                              cursor: "pointer",
+                              border: "1px solid rgba(255,255,255,0.06)",
+                              transition: "all 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = "translateY(-6px) scale(1.02)";
+                              e.currentTarget.style.borderColor = "rgba(168,85,247,0.4)";
+                              e.currentTarget.style.boxShadow = "0 20px 40px rgba(124,58,237,0.15)";
+                              e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = "translateY(0) scale(1)";
+                              e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)";
+                              e.currentTarget.style.boxShadow = "none";
+                              e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+                            }}
+                          >
+                            {/* Image */}
+                            <div style={{
+                              aspectRatio: "3/4", overflow: "hidden",
+                              background: "linear-gradient(135deg, #1a1a2e, #16132e)",
+                              position: "relative",
+                            }}>
+                              {img ? (
+                                <img src={img} alt={item.name} style={{
+                                  width: "100%", height: "100%", objectFit: "cover",
+                                  transition: "transform 0.4s ease",
+                                }} loading="lazy"
+                                  onMouseEnter={(e) => e.target.style.transform = "scale(1.05)"}
+                                  onMouseLeave={(e) => e.target.style.transform = "scale(1)"}
+                                />
+                              ) : (
+                                <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 40 }}>👗</span>
+                                </div>
+                              )}
+                              {/* Category badge */}
+                              {item.category && (
+                                <div style={{
+                                  position: "absolute", top: 12, left: 12,
+                                  background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)",
+                                  borderRadius: 8, padding: "4px 10px",
+                                  color: "#a855f7", fontSize: 10, fontWeight: 600,
+                                  textTransform: "uppercase", letterSpacing: 0.5,
+                                }}>
+                                  {item.category}
+                                </div>
+                              )}
+                              {/* Wishlist */}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleWishlist(item.catalog_item_id || item.id); }}
+                                style={{
+                                  position: "absolute", top: 12, right: 12,
+                                  background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)",
+                                  border: "none", borderRadius: "50%",
+                                  width: 36, height: 36, cursor: "pointer",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  color: wishlist.has(item.catalog_item_id || item.id) ? "#ef4444" : "rgba(255,255,255,0.6)",
+                                  fontSize: 16, transition: "all 0.2s",
+                                }}
+                              >
+                                {wishlist.has(item.catalog_item_id || item.id) ? "♥" : "♡"}
+                              </button>
+                            </div>
+
+                            {/* Info */}
+                            <div style={{ padding: "16px 18px 18px" }}>
+                              <p style={{
+                                color: "#fff", fontSize: 14, fontWeight: 500, margin: 0,
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                lineHeight: 1.4,
+                              }}>{item.name}</p>
+
+                              {/* Colors */}
+                              {colors.length > 0 && (
+                                <div style={{ display: "flex", gap: 4, marginTop: 10, alignItems: "center" }}>
+                                  {colors.map((c, ci) => (
+                                    <div key={ci} style={{
+                                      width: 14, height: 14, borderRadius: "50%",
+                                      border: "1.5px solid rgba(255,255,255,0.15)",
+                                      background: c.toLowerCase().includes("black") ? "#111" :
+                                        c.toLowerCase().includes("white") ? "#f5f5f5" :
+                                        c.toLowerCase().includes("blue") ? "#3b82f6" :
+                                        c.toLowerCase().includes("red") ? "#ef4444" :
+                                        c.toLowerCase().includes("green") ? "#22c55e" :
+                                        c.toLowerCase().includes("pink") ? "#ec4899" :
+                                        c.toLowerCase().includes("yellow") ? "#eab308" :
+                                        c.toLowerCase().includes("purple") ? "#a855f7" :
+                                        c.toLowerCase().includes("orange") ? "#f97316" :
+                                        c.toLowerCase().includes("navy") ? "#1e3a5f" :
+                                        c.toLowerCase().includes("grey") || c.toLowerCase().includes("gray") ? "#6b7280" :
+                                        c.toLowerCase().includes("brown") ? "#92400e" :
+                                        c.toLowerCase().includes("beige") || c.toLowerCase().includes("cream") ? "#d4c5a9" :
+                                        c.toLowerCase().includes("wine") || c.toLowerCase().includes("maroon") ? "#7f1d1d" :
+                                        c.toLowerCase().includes("teal") ? "#14b8a6" :
+                                        "#888",
+                                    }} title={c} />
+                                  ))}
+                                  {(item.available_colors || []).length > 4 && (
+                                    <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, marginLeft: 2 }}>
+                                      +{(item.available_colors || []).length - 4}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Price + sizes */}
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+                                {p > 0 ? (
+                                  <span style={{
+                                    color: "#fff", fontSize: 18, fontWeight: 700,
+                                    fontFamily: "'League Spartan',sans-serif",
+                                  }}>${p}</span>
+                                ) : (
+                                  <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 13 }}>Price on request</span>
+                                )}
+                                {(item.available_sizes || []).length > 0 && (
+                                  <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 11 }}>
+                                    {(item.available_sizes || []).slice(0, 4).join(" · ")}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          <div style={{ padding: "12px 14px" }}>
-                            <p style={{ color: "#fff", fontSize: 13, fontWeight: 500, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</p>
-                            <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "4px 0 0" }}>{item.category}</p>
-                            {p > 0 && <p style={{ color: "#a855f7", fontSize: 14, fontWeight: 600, margin: "6px 0 0" }}>${p}</p>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 ) : (
-                  <div style={{ textAlign: "center", padding: 60 }}>
-                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 16 }}>No results found. Try something like "blue dress" or "casual shirts".</p>
+                  <div style={{ textAlign: "center", padding: "100px 0" }}>
+                    <span style={{ fontSize: 48, display: "block", marginBottom: 16, opacity: 0.3 }}>🔍</span>
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 18, fontFamily: "'League Spartan',sans-serif", marginBottom: 8 }}>
+                      No results found
+                    </p>
+                    <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
+                      Try "blue dress", "casual shirts", or "black jeans"
+                    </p>
                   </div>
                 )}
               </div>
@@ -4344,8 +4511,8 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
                 for (const c of colorWords) { if (t.includes(c)) { color = c === "gray" ? "grey" : c; break; } }
 
                 let gender = null;
-                if (t.includes("women") || t.includes("ladies") || t.includes("girl")) gender = "women";
-                else if (t.includes("men") || t.includes("boy") || t.includes("guys")) gender = "men";
+                if (/\b(women|woman|ladies|lady|girl|girls|female|her|she|feminine)\b/.test(t)) gender = "women";
+                else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|gentleman|masculine|men'?s|mens)\b/.test(t)) gender = "men";
 
                 try {
                   const params = new URLSearchParams({ limit: "20" });
