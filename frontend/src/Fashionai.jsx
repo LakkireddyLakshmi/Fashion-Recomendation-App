@@ -3512,86 +3512,206 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
   }, []);
   const parseIntent = (t) => {
     t = t.toLowerCase().trim();
+    const result = { cat: null, color: null, gender: null, size: null, style: null, occasion: null, maxPrice: null, minPrice: null, sortBy: null, pattern: null, material: null, fit: null, label: "picks", isGeneral: false };
 
-    // ── Category detection (order matters: check specific before generic) ──
+    // ── Category detection (order matters: specific before generic) ──
     const catMap = [
-      { keys: ["t-shirt", "tshirt", "tee"], cat: "t-shirt", label: "t-shirts" },
-      { keys: ["dress", "gown", "frock", "maxi", "midi", "mini dress"], cat: "dress", label: "dresses" },
-      { keys: ["jumpsuit", "romper", "playsuit"], cat: "jumpsuit", label: "jumpsuits" },
-      { keys: ["shirt", "button down", "button-down"], cat: "shirt", label: "shirts" },
-      { keys: ["jeans", "jean", "denim"], cat: "jeans", label: "jeans" },
-      { keys: ["trouser", "pant", "chino", "formal pant"], cat: "trousers", label: "trousers" },
-      { keys: ["blazer", "jacket", "coat", "overcoat", "bomber"], cat: "blazer", label: "blazers & jackets" },
-      { keys: ["jogger", "track pant", "sweatpant"], cat: "joggers", label: "joggers" },
-      { keys: ["cargo", "cargo pant"], cat: "cargo", label: "cargo pants" },
-      { keys: ["hoodie", "sweater", "sweatshirt", "pullover", "winter", "cardigan"], cat: "winterwear", label: "winterwear" },
-      { keys: ["top", "blouse", "crop top", "tank", "cami"], cat: "top", label: "tops" },
-      { keys: ["kurta", "kurti", "ethnic"], cat: "kurta", label: "ethnic wear" },
-      { keys: ["shorts", "bermuda"], cat: "shorts", label: "shorts" },
-      { keys: ["skirt"], cat: "skirt", label: "skirts" },
-      { keys: ["bottom", "bottomwear", "lower"], cat: "bottomwear", label: "bottomwear" },
+      { keys: [/\bt-?shirts?\b/, /\btees?\b/], cat: "t-shirt", label: "t-shirts" },
+      { keys: [/\bdress(es)?\b/, /\bgowns?\b/, /\bfrocks?\b/, /\bmaxi\b/, /\bmidi\b/], cat: "dress", label: "dresses" },
+      { keys: [/\bjumpsuits?\b/, /\brompers?\b/, /\bplaysuits?\b/], cat: "jumpsuit", label: "jumpsuits" },
+      { keys: [/\bshirts?\b/, /\bbutton.?downs?\b/], cat: "shirt", label: "shirts" },
+      { keys: [/\bjeans?\b/, /\bdenims?\b/], cat: "jeans", label: "jeans" },
+      { keys: [/\btrousers?\b/, /\bpants?\b/, /\bchinos?\b/, /\bslacks?\b/], cat: "trousers", label: "trousers" },
+      { keys: [/\bblazers?\b/, /\bjackets?\b/, /\bcoats?\b/, /\bbombers?\b/, /\bovercoats?\b/], cat: "blazer", label: "blazers & jackets" },
+      { keys: [/\bjoggers?\b/, /\btrack\s?pants?\b/, /\bsweatpants?\b/], cat: "joggers", label: "joggers" },
+      { keys: [/\bcargo\b/], cat: "cargo", label: "cargo pants" },
+      { keys: [/\bhoodi(e|es)\b/, /\bsweaters?\b/, /\bsweatshirts?\b/, /\bpullovers?\b/, /\bcardigans?\b/, /\bwinter\s?wear\b/], cat: "winterwear", label: "winterwear" },
+      { keys: [/\btops?\b/, /\bblous(e|es)\b/, /\bcrop\s?tops?\b/, /\btanks?\b/, /\bcamis?\b/], cat: "top", label: "tops" },
+      { keys: [/\bkurtas?\b/, /\bkurtis?\b/, /\bethnic\b/], cat: "kurta", label: "ethnic wear" },
+      { keys: [/\bshorts?\b/, /\bbermudas?\b/], cat: "shorts", label: "shorts" },
+      { keys: [/\bskirts?\b/], cat: "skirt", label: "skirts" },
+      { keys: [/\bbottom(wear|s)?\b/, /\blowers?\b/], cat: "bottomwear", label: "bottomwear" },
+      { keys: [/\bleggings?\b/, /\bjeggings?\b/], cat: "leggings", label: "leggings" },
+      { keys: [/\bsare(e|es|i|is)?\b/], cat: "saree", label: "sarees" },
+      { keys: [/\bsuit\b/, /\bformal\s?suit\b/], cat: "suit", label: "suits" },
     ];
-    let cat = null, label = "picks";
     for (const m of catMap) {
-      if (m.keys.some(k => t.includes(k))) { cat = m.cat; label = m.label; break; }
+      if (m.keys.some(re => re.test(t))) { result.cat = m.cat; result.label = m.label; break; }
     }
 
-    // ── Color detection (multiple colors supported) ──
-    const colorMap = {
-      "black": "black", "white": "white", "red": "red", "blue": "blue",
-      "green": "green", "pink": "pink", "yellow": "yellow", "orange": "orange",
-      "purple": "purple", "brown": "brown", "beige": "beige", "navy": "navy",
-      "grey": "grey", "gray": "grey", "maroon": "maroon", "teal": "teal",
-      "cream": "cream", "coral": "coral", "gold": "gold", "silver": "silver",
-      "lavender": "lavender", "olive": "olive", "rust": "rust", "wine": "wine",
-      "peach": "peach", "turquoise": "turquoise", "ivory": "ivory", "khaki": "khaki",
-      // Natural language
-      "dark": "black", "light": "white", "bright": "red",
-    };
-    let color = null;
-    for (const [word, mapped] of Object.entries(colorMap)) {
-      if (t.includes(word)) { color = mapped; break; }
+    // ── Color detection (regex for precision) ──
+    const colorRules = [
+      { re: /\bblack\b/, color: "black" }, { re: /\bwhite\b/, color: "white" },
+      { re: /\bred\b/, color: "red" }, { re: /\bblue\b/, color: "blue" },
+      { re: /\bgreen\b/, color: "green" }, { re: /\bpink\b/, color: "pink" },
+      { re: /\byellow\b/, color: "yellow" }, { re: /\borange\b/, color: "orange" },
+      { re: /\bpurple\b|\bviolet\b/, color: "purple" }, { re: /\bbrown\b/, color: "brown" },
+      { re: /\bbeige\b/, color: "beige" }, { re: /\bnavy\b/, color: "navy" },
+      { re: /\bgre(y|ay)\b/, color: "grey" }, { re: /\bmaroon\b|\bburgundy\b/, color: "maroon" },
+      { re: /\bteal\b|\bcyan\b/, color: "teal" }, { re: /\bcream\b|\bivory\b/, color: "cream" },
+      { re: /\bcoral\b/, color: "coral" }, { re: /\bgold(en)?\b/, color: "gold" },
+      { re: /\bsilver\b/, color: "silver" }, { re: /\blavender\b|\blilac\b/, color: "lavender" },
+      { re: /\bolive\b/, color: "olive" }, { re: /\brust\b/, color: "rust" },
+      { re: /\bwine\b/, color: "wine" }, { re: /\bpeach\b/, color: "peach" },
+      { re: /\bturquoise\b|\baqua\b/, color: "turquoise" }, { re: /\bkhaki\b|\btan\b/, color: "khaki" },
+      { re: /\bmustard\b/, color: "yellow" }, { re: /\bmagenta\b|\bfuchsia\b/, color: "pink" },
+      { re: /\bcharcoal\b/, color: "grey" }, { re: /\bindigo\b/, color: "navy" },
+      { re: /\bmint\b/, color: "green" }, { re: /\brose\b/, color: "pink" },
+      // Natural language color groups
+      { re: /\bdark\s?colou?rs?\b/, color: "black" }, { re: /\blight\s?colou?rs?\b/, color: "white" },
+      { re: /\bbright\s?colou?rs?\b/, color: "red" }, { re: /\bpastel\b/, color: "pink" },
+      { re: /\bearth\s?tone\b|\bneutral\b/, color: "beige" },
+    ];
+    for (const { re, color } of colorRules) {
+      if (re.test(t)) { result.color = color; break; }
     }
 
     // ── Size detection ──
-    let size = null;
-    const sizeMap = {
-      "xxs": "XXS", "xs": "XS", "extra small": "XS",
-      "small": "S", " s ": "S",
-      "medium": "M", " m ": "M",
-      "large": "L", " l ": "L",
-      "xl": "XL", "extra large": "XL",
-      "xxl": "XXL", "2xl": "XXL",
-      "xxxl": "XXXL", "3xl": "XXXL",
-      "free size": "Free Size",
-    };
-    for (const [word, mapped] of Object.entries(sizeMap)) {
-      if ((" " + t + " ").includes(word)) { size = mapped; break; }
+    const sizeRules = [
+      { re: /\bxxs\b|\b2xs\b/, size: "XXS" }, { re: /\bxs\b|\bextra\s?small\b/, size: "XS" },
+      { re: /\bsmall\b/, size: "S" }, { re: /\bmedium\b/, size: "M" },
+      { re: /\blarge\b/, size: "L" }, { re: /\bxl\b|\bextra\s?large\b/, size: "XL" },
+      { re: /\bxxl\b|\b2xl\b/, size: "XXL" }, { re: /\bxxxl\b|\b3xl\b/, size: "XXXL" },
+      { re: /\b4xl\b/, size: "4XL" }, { re: /\b5xl\b/, size: "5XL" },
+      { re: /\bfree\s?size\b|\bone\s?size\b/, size: "Free Size" },
+    ];
+    for (const { re, size } of sizeRules) {
+      if (re.test(t)) { result.size = size; break; }
     }
 
-    // ── Gender detection ──
-    let gender = null;
-    // Gender: check women FIRST (because "women" contains "men", "female" contains "male")
-    if (/\b(women|woman|ladies|lady|girl|girls|female|her|she|feminine)\b/.test(t)) gender = "women";
-    else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|gentleman|masculine|men'?s|mens)\b/.test(t)) gender = "men";
+    // ── Gender detection (women FIRST — "women" contains "men") ──
+    if (/\b(women|woman|ladies|lady|girl|girls|female|her|she|feminine|women'?s|womens)\b/.test(t)) result.gender = "women";
+    else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|gentleman|masculine|men'?s|mens)\b/.test(t)) result.gender = "men";
+    else if (/\bunisex\b|\beveryone\b|\ball genders?\b/.test(t)) result.gender = "unisex";
 
-    // ── Style/occasion detection ──
-    let style = null;
-    if (t.includes("casual")) style = "casual";
-    else if (t.includes("formal") || t.includes("office") || t.includes("work")) style = "formal";
-    else if (t.includes("party") || t.includes("evening") || t.includes("night out")) style = "party";
-    else if (t.includes("sporty") || t.includes("gym") || t.includes("athletic")) style = "sporty";
-    else if (t.includes("street") || t.includes("urban")) style = "streetwear";
+    // ── Occasion detection ──
+    if (/\bcasual\b|\beveryday\b|\brelaxed\b|\bchill\b|\blounging?\b|\bcomfy\b|\bcomfortable\b/.test(t)) result.occasion = "casual";
+    else if (/\bformal\b|\boffice\b|\bwork\b|\bbusiness\b|\bmeeting\b|\bprofessional\b|\bcorporate\b/.test(t)) result.occasion = "formal";
+    else if (/\bparty\b|\bevening\b|\bnight\s?out\b|\bclub\b|\bcocktail\b|\bprom\b|\bdance\b/.test(t)) result.occasion = "party";
+    else if (/\bwedding\b|\breception\b|\bengagement\b|\bbridal\b|\bfestiv(e|al)\b|\bcelebration\b/.test(t)) result.occasion = "wedding";
+    else if (/\bdate\b|\bromantic\b|\bdinne?r\b/.test(t)) result.occasion = "date";
+    else if (/\bgym\b|\bworkout\b|\bexercise\b|\bsport(s|y)?\b|\bathlet(ic|e)\b|\bfitness\b|\brunning\b|\byoga\b/.test(t)) result.occasion = "sporty";
+    else if (/\bstreet\s?wear\b|\burban\b|\bhip\s?hop\b/.test(t)) result.occasion = "streetwear";
+    else if (/\bbeach\b|\bvacation\b|\bholiday\b|\btravel\b|\btrip\b/.test(t)) result.occasion = "vacation";
+    else if (/\binterview\b/.test(t)) result.occasion = "formal";
+    else if (/\bcollege\b|\bschool\b|\bcampus\b/.test(t)) result.occasion = "casual";
+
+    // ── Style detection ──
+    if (/\btrendy\b|\btrending\b|\bin\s?style\b|\bfashionable\b|\blatest\b|\bnew\b|\bmodern\b/.test(t)) result.style = "trending";
+    else if (/\bclassic\b|\btimeless\b|\belegant\b|\bsophisticat(ed|ion)\b/.test(t)) result.style = "classic";
+    else if (/\bvintage\b|\bretro\b|\bold\s?school\b/.test(t)) result.style = "vintage";
+    else if (/\bboho\b|\bbohemian\b|\bhippie\b/.test(t)) result.style = "boho";
+    else if (/\bminimal(ist)?\b|\bsimple\b|\bclean\b|\bbasic\b/.test(t)) result.style = "minimal";
+    else if (/\bbold\b|\bstatement\b|\beye.?catching\b|\bstandout\b/.test(t)) result.style = "bold";
+    else if (/\bcute\b|\badorable\b|\bpretty\b|\bsweet\b/.test(t)) result.style = "cute";
+    else if (/\bsexy\b|\bhot\b|\balluring\b/.test(t)) result.style = "sexy";
+    else if (/\bmodest\b|\bcovered\b|\bconservative\b/.test(t)) result.style = "modest";
+
+    // ── Fit detection ──
+    if (/\bslim\s?fit\b|\bfitted\b|\btight\b|\bbodycon\b|\bskinny\b/.test(t)) result.fit = "slim";
+    else if (/\bregular\s?fit\b|\bnormal\b|\bstandard\b|\bclassic\s?fit\b/.test(t)) result.fit = "regular";
+    else if (/\bloose\b|\brelaxed\s?fit\b|\bbaggy\b|\bcomfort\s?fit\b/.test(t)) result.fit = "loose";
+    else if (/\boversized?\b|\bboxy\b|\bdrop\s?shoulder\b/.test(t)) result.fit = "oversized";
+
+    // ── Pattern detection ──
+    if (/\bstripe[ds]?\b|\bstriped\b/.test(t)) result.pattern = "striped";
+    else if (/\bcheck(ed|s)?\b|\bplaid\b|\btartan\b/.test(t)) result.pattern = "checked";
+    else if (/\bfloral\b|\bflower\b/.test(t)) result.pattern = "floral";
+    else if (/\bprint(ed|s)?\b|\bgraphic\b|\blogo\b/.test(t)) result.pattern = "printed";
+    else if (/\bsolid\b|\bplain\b/.test(t)) result.pattern = "solid";
+    else if (/\bpolka\s?dot\b|\bdotted\b/.test(t)) result.pattern = "polka";
+    else if (/\bcamo(uflage)?\b|\bmilitary\b/.test(t)) result.pattern = "camo";
+    else if (/\babstract\b|\bgeometric\b/.test(t)) result.pattern = "abstract";
+
+    // ── Material detection ──
+    if (/\bcotton\b/.test(t)) result.material = "cotton";
+    else if (/\bsilk(y)?\b|\bsatin\b/.test(t)) result.material = "silk";
+    else if (/\bdenim\b/.test(t)) result.material = "denim";
+    else if (/\bleather\b|\bfaux\s?leather\b/.test(t)) result.material = "leather";
+    else if (/\blinen\b/.test(t)) result.material = "linen";
+    else if (/\bpolyester\b|\bsynthetic\b/.test(t)) result.material = "polyester";
+    else if (/\bwool(len)?\b|\bknit(ted)?\b/.test(t)) result.material = "wool";
+    else if (/\bchiffon\b|\bgeorgette\b/.test(t)) result.material = "chiffon";
+    else if (/\brayon\b|\bviscose\b/.test(t)) result.material = "rayon";
+    else if (/\bvelvet\b/.test(t)) result.material = "velvet";
 
     // ── Price detection ──
-    let maxPrice = null;
-    const priceMatch = t.match(/under\s*\$?(\d+)|below\s*\$?(\d+)|less than\s*\$?(\d+)|budget\s*\$?(\d+)|cheap/);
-    if (priceMatch) {
-      maxPrice = parseInt(priceMatch[1] || priceMatch[2] || priceMatch[3] || priceMatch[4] || "100");
-    }
-    if (t.includes("cheap") || t.includes("affordable") || t.includes("budget")) maxPrice = maxPrice || 100;
+    const underMatch = t.match(/\b(?:under|below|less\s?than|max|within|upto|up\s?to)\s*\$?\s*(\d+)/);
+    const aboveMatch = t.match(/\b(?:above|over|more\s?than|min|atleast|at\s?least|starting)\s*\$?\s*(\d+)/);
+    const rangeMatch = t.match(/\$?\s*(\d+)\s*(?:to|-)\s*\$?\s*(\d+)/);
+    if (rangeMatch) { result.minPrice = parseInt(rangeMatch[1]); result.maxPrice = parseInt(rangeMatch[2]); }
+    else if (underMatch) result.maxPrice = parseInt(underMatch[1]);
+    else if (aboveMatch) result.minPrice = parseInt(aboveMatch[1]);
 
-    return { cat, color, gender, size, style, maxPrice, label };
+    if (/\bcheap(est|er)?\b|\baffordable\b|\bbudget\b|\binexpensive\b|\blow\s?price\b|\beconom(y|ical)\b/.test(t)) result.sortBy = "price_asc";
+    if (/\bexpensive\b|\bpremium\b|\bluxury\b|\bhigh\s?end\b|\bdesigner\b|\bhigh\s?price\b|\bcostly\b|\bpricey\b/.test(t)) result.sortBy = "price_desc";
+    if (/\bpopular\b|\bbest\s?sell(er|ing)\b|\btop\s?rated\b|\bhighest\s?rated\b|\bmost\s?liked\b/.test(t)) result.sortBy = "popular";
+    if (/\bnew(est)?\b|\blatest\b|\bjust\s?arrived\b|\bnew\s?arrival\b|\brecent\b|\bfresh\b/.test(t)) result.sortBy = "newest";
+
+    // ── General queries (no specific product) ──
+    if (/\btrending\b|\bwhat'?s?\s?hot\b|\bwhat'?s?\s?new\b|\bshow\s?me\s?(everything|all)\b|\bsurprise\s?me\b|\brecommend\b|\bsuggest\b/.test(t) && !result.cat) {
+      result.isGeneral = true;
+      result.label = "trending picks";
+    }
+    if (/\bsimilar\b|\blike\s?this\b|\bmore\s?like\b|\balternative\b/.test(t)) result.style = "similar";
+    if (/\bdifferent\b|\bsomething\s?else\b|\bother\b|\bnew\s?options\b/.test(t)) result.style = "different";
+
+    return result;
+  };
+
+  const _filterItems = (items, intent) => {
+    let filtered = [...items];
+    const { size, maxPrice, minPrice, sortBy, pattern, material, fit, occasion, style } = intent;
+
+    // Size filter
+    if (size) filtered = filtered.filter(i => (i.available_sizes || []).some(s => s.toUpperCase() === size.toUpperCase()));
+
+    // Price filters
+    if (maxPrice) filtered = filtered.filter(i => { const p = resolvePrice(i) || 0; return p > 0 && p <= maxPrice; });
+    if (minPrice) filtered = filtered.filter(i => { const p = resolvePrice(i) || 0; return p >= minPrice; });
+
+    // Pattern filter (search in name + style_tags)
+    if (pattern) filtered = filtered.filter(i => {
+      const s = ((i.style_tags || []).join(" ") + " " + (i.name || "")).toLowerCase();
+      return s.includes(pattern);
+    });
+
+    // Material filter
+    if (material) filtered = filtered.filter(i => {
+      const s = ((i.style_tags || []).join(" ") + " " + (i.name || "") + " " + (i.description || "")).toLowerCase();
+      return s.includes(material);
+    });
+
+    // Fit filter
+    if (fit) filtered = filtered.filter(i => {
+      const s = ((i.style_tags || []).join(" ") + " " + (i.name || "")).toLowerCase();
+      return s.includes(fit);
+    });
+
+    // Occasion/style filter
+    const styleKeywords = {
+      casual: ["casual", "everyday", "relaxed", "comfortable", "basic"],
+      formal: ["formal", "office", "business", "professional", "classic", "slim-fit"],
+      party: ["party", "evening", "sequin", "embellished", "glitter", "glamorous"],
+      wedding: ["wedding", "festive", "ethnic", "traditional", "embroidered"],
+      sporty: ["sport", "athletic", "gym", "jogger", "track", "active"],
+      streetwear: ["street", "urban", "oversized", "graphic", "hip-hop", "baggy"],
+      vacation: ["beach", "resort", "floral", "tropical", "lightweight"],
+    };
+    if (occasion && styleKeywords[occasion]) {
+      const kws = styleKeywords[occasion];
+      const oFiltered = filtered.filter(i => {
+        const s = ((i.style_tags || []).join(" ") + " " + (i.name || "") + " " + (i.category || "")).toLowerCase();
+        return kws.some(k => s.includes(k));
+      });
+      if (oFiltered.length > 0) filtered = oFiltered;
+    }
+
+    // Sort
+    if (sortBy === "price_asc") filtered.sort((a, b) => (resolvePrice(a) || 9999) - (resolvePrice(b) || 9999));
+    else if (sortBy === "price_desc") filtered.sort((a, b) => (resolvePrice(b) || 0) - (resolvePrice(a) || 0));
+
+    return filtered;
   };
 
   const send = async () => {
@@ -3601,15 +3721,17 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
     setResults(null);
     setMsgs((m) => [...m, { role: "user", text: txt }]);
     setLoading(true);
-    const { cat, color, gender, size, style, maxPrice, label } = parseIntent(txt);
+    const intent = parseIntent(txt);
+    const { cat, color, gender, label, isGeneral, sortBy } = intent;
     setMsgs((m) => [
       ...m,
       { role: "ai", text: "Searching our catalog . . .", id: "prep" },
     ]);
     try {
       let items = [];
+
       // Build query params for API
-      const params = new URLSearchParams({ limit: "20" });
+      const params = new URLSearchParams({ limit: "50" }); // fetch more for client-side filtering
       if (cat) params.set("category", cat);
       if (color) params.set("color", color);
       if (gender) params.set("gender", gender);
@@ -3623,74 +3745,55 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
         items = d.recommendations || d.items || [];
       }
 
-      // Client-side filtering for size, price, style (API doesn't support these)
-      if (items.length > 0) {
-        if (size) {
-          items = items.filter(i => {
-            const sizes = (i.available_sizes || []).map(s => s.toUpperCase());
-            return sizes.includes(size.toUpperCase());
-          });
-        }
-        if (maxPrice) {
-          items = items.filter(i => {
-            const p = resolvePrice(i) || 0;
-            return p > 0 && p <= maxPrice;
-          });
-        }
-        if (style) {
-          items = items.filter(i => {
-            const tags = ((i.style_tags || []).join(" ") + " " + (i.name || "") + " " + (i.category || "")).toLowerCase();
-            return tags.includes(style);
-          });
-        }
-      }
+      // Apply advanced client-side filters
+      if (items.length > 0) items = _filterItems(items, intent);
 
       // Fallback: filter from cached baseRecs
       if (!items.length) {
-        items = baseRecs.filter((i) => {
-          const icat = ((i.category || "") + " " + (i.name || "")).toLowerCase();
-          const icolors = ((i.available_colors || []).join(" ") + " " + (i.name || "")).toLowerCase();
-          const isizes = (i.available_sizes || []).map(s => s.toUpperCase());
-          let match = true;
-          if (cat) match = match && icat.includes(cat);
-          if (color) match = match && icolors.includes(color);
-          if (size) match = match && isizes.includes(size.toUpperCase());
-          if (gender) match = match && ((i.gender || "").toLowerCase().includes(gender));
-          if (maxPrice) { const p = resolvePrice(i) || 0; match = match && p > 0 && p <= maxPrice; }
-          return match;
-        }).slice(0, 12);
+        let fallback = baseRecs;
+        if (cat) fallback = fallback.filter(i => ((i.category || "") + " " + (i.name || "")).toLowerCase().includes(cat));
+        if (color) fallback = fallback.filter(i => ((i.available_colors || []).join(" ") + " " + (i.name || "")).toLowerCase().includes(color));
+        if (gender) fallback = fallback.filter(i => (i.gender || "").toLowerCase().includes(gender));
+        fallback = _filterItems(fallback, intent);
+        items = fallback.slice(0, 20);
       }
 
-      // Final fallback: just trending
+      // Final fallback: trending
       if (!items.length) {
-        const r2 = await fetch(`${API}/api/recommendations/trending?limit=12`, {
-          signal: AbortSignal.timeout(90000),
-        });
-        if (r2.ok) {
-          const d = await r2.json();
-          items = d.recommendations || d.items || [];
-        }
+        const r2 = await fetch(`${API}/api/recommendations/trending?limit=20`, { signal: AbortSignal.timeout(90000) });
+        if (r2.ok) { const d = await r2.json(); items = _filterItems(d.recommendations || d.items || [], intent); }
       }
 
-      // Limit results
-      items = items.slice(0, 12);
+      items = items.slice(0, 16);
 
-      // Build natural response
-      const parts = [color, size, label].filter(Boolean);
-      const desc = parts.join(" ") || "fashion picks";
+      // Build natural AI response
+      const descParts = [];
+      if (intent.sortBy === "price_desc") descParts.push("premium");
+      if (intent.sortBy === "price_asc") descParts.push("affordable");
+      if (intent.occasion) descParts.push(intent.occasion);
+      if (color) descParts.push(color);
+      if (intent.size) descParts.push(`size ${intent.size}`);
+      if (intent.fit) descParts.push(`${intent.fit} fit`);
+      if (intent.pattern) descParts.push(intent.pattern);
+      if (intent.material) descParts.push(intent.material);
+      descParts.push(label);
+      const desc = descParts.join(" ");
+
       setMsgs((m) => m.filter((x) => x.id !== "prep"));
       if (items.length) {
-        setMsgs((m) => [...m, { role: "ai", text: `Here are ${items.length} ${desc} curated for you ✦` }]);
+        const responses = [
+          `Here are ${items.length} ${desc} curated for you ✦`,
+          `Found ${items.length} ${desc} that match your style ✦`,
+          `${items.length} ${desc} picked just for you ✦`,
+        ];
+        setMsgs((m) => [...m, { role: "ai", text: responses[Math.floor(Math.random() * responses.length)] }]);
       } else {
-        setMsgs((m) => [...m, { role: "ai", text: `Sorry, I couldn't find any ${desc} right now. Try something like "blue dress" or "casual shirts".` }]);
+        setMsgs((m) => [...m, { role: "ai", text: `I couldn't find ${desc} right now. Try a different combination — like "blue dress" or "casual men's shirts".` }]);
       }
       setResults(items);
     } catch {
       setMsgs((m) => m.filter((x) => x.id !== "prep"));
-      setMsgs((m) => [
-        ...m,
-        { role: "ai", text: "Couldn't load recommendations right now." },
-      ]);
+      setMsgs((m) => [...m, { role: "ai", text: "Something went wrong. Please try again." }]);
     } finally {
       setLoading(false);
     }
