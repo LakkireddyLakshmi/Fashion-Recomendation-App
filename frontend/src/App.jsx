@@ -1,54 +1,10 @@
-import { useState, useEffect } from "react";
-import { AuthProvider, useAuthInfo } from "@propelauth/react";
-import ProfileChat from "./ProfileChat";
-import Fashionai from "./Fashionai";
+import { lazy, Suspense } from "react";
 
 const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://952380306.propelauthtest.com";
 
-function AuthenticatedApp() {
-  const { isLoggedIn, user } = useAuthInfo();
-  const [profileDone, setProfileDone] = useState(false);
-  const [profileData, setProfileData] = useState(null);
-  const [recs, setRecs] = useState([]);
-
-  if (isLoggedIn && user) {
-    if (!profileDone) {
-      return (
-        <ProfileChat
-          email={user.email}
-          name={user.firstName || user.email.split("@")[0]}
-          onProfileComplete={(profile, recommendations) => {
-            setProfileData(profile);
-            setRecs(recommendations);
-            setProfileDone(true);
-          }}
-        />
-      );
-    }
-    return (
-      <Fashionai
-        initialProfile={{
-          email: user.email,
-          name: user.firstName || user.email.split("@")[0],
-          gender: profileData?.gender || "",
-          age: profileData?.age || "",
-          city: profileData?.city || "",
-          colors: profileData?.colors || [],
-          categories: profileData?.categories || [],
-          fit: profileData?.fit || "Regular",
-          height: profileData?.height || "",
-          weight: profileData?.weight || "",
-          bodyType: profileData?.bodyType || "",
-        }}
-        initialRecs={recs}
-        skipWizard={true}
-      />
-    );
-  }
-
-  // Still loading or not logged in inside AuthProvider
-  return null;
-}
+// Check URL params for post-login redirect from PropelAuth
+const urlParams = new URLSearchParams(window.location.search);
+const isReturningFromAuth = document.cookie.includes("__pa") || urlParams.has("state");
 
 function LoginPage() {
   return (
@@ -85,55 +41,31 @@ function LoginPage() {
   );
 }
 
+// Only load PropelAuth when returning from auth
+const PropelAuthApp = lazy(() => import("./PropelAuthApp"));
+
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    // Quick check if user has a valid session
-    fetch(AUTH_URL + "/api/v1/refresh_token", {
-      method: "GET",
-      credentials: "include",
-    })
-      .then(res => {
-        setIsLoggedIn(res.ok);
-        setChecking(false);
-      })
-      .catch(() => {
-        setIsLoggedIn(false);
-        setChecking(false);
-      });
-
-    // Never wait more than 2 seconds
-    const t = setTimeout(() => setChecking(false), 2000);
-    return () => clearTimeout(t);
-  }, []);
-
-  if (checking) {
+  if (isReturningFromAuth) {
     return (
-      <div style={{
-        position: "fixed", inset: 0, background: "#fff",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
+      <Suspense fallback={
         <div style={{
-          width: 40, height: 40, border: "3px solid #f0f0f0",
-          borderTopColor: "#111", borderRadius: "50%",
-          animation: "spin 0.8s linear infinite",
-        }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
+          position: "fixed", inset: 0, background: "#fff",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            width: 40, height: 40, border: "3px solid #f0f0f0",
+            borderTopColor: "#111", borderRadius: "50%",
+            animation: "spin 0.8s linear infinite",
+          }} />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      }>
+        <PropelAuthApp />
+      </Suspense>
     );
   }
 
-  if (!isLoggedIn) {
-    return <LoginPage />;
-  }
-
-  return (
-    <AuthProvider authUrl={AUTH_URL}>
-      <AuthenticatedApp />
-    </AuthProvider>
-  );
+  return <LoginPage />;
 }
 
 export default App;
