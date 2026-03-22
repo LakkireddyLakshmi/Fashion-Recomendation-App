@@ -3487,6 +3487,103 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
 }
 
 
+// ── Shared search engine (used by AIChat + inline bottom bar) ──
+function _parseSearchIntent(t) {
+  t = t.toLowerCase().trim();
+  const result = { cat: null, color: null, gender: null, size: null, style: null, occasion: null, maxPrice: null, minPrice: null, sortBy: null, pattern: null, material: null, fit: null, label: "picks", isGeneral: false };
+  const catMap = [
+    { keys: [/\bt-?shirts?\b/, /\btees?\b/], cat: "t-shirt", label: "t-shirts" },
+    { keys: [/\bdress(es)?\b/, /\bgowns?\b/, /\bfrocks?\b/, /\bmaxi\b/, /\bmidi\b/], cat: "dress", label: "dresses" },
+    { keys: [/\bjumpsuits?\b/, /\brompers?\b/], cat: "jumpsuit", label: "jumpsuits" },
+    { keys: [/\bshirts?\b/, /\bbutton.?downs?\b/], cat: "shirt", label: "shirts" },
+    { keys: [/\bjeans?\b/, /\bdenims?\b/], cat: "jeans", label: "jeans" },
+    { keys: [/\btrousers?\b/, /\bpants?\b/, /\bchinos?\b/], cat: "trousers", label: "trousers" },
+    { keys: [/\bblazers?\b/, /\bjackets?\b/, /\bcoats?\b/, /\bbombers?\b/], cat: "blazer", label: "blazers & jackets" },
+    { keys: [/\bjoggers?\b/, /\btrack\s?pants?\b/], cat: "joggers", label: "joggers" },
+    { keys: [/\bcargo\b/], cat: "cargo", label: "cargo pants" },
+    { keys: [/\bhoodi(e|es)\b/, /\bsweaters?\b/, /\bsweatshirts?\b/, /\bpullovers?\b/, /\bcardigans?\b/], cat: "winterwear", label: "winterwear" },
+    { keys: [/\btops?\b/, /\bblous(e|es)\b/, /\bcrop\s?tops?\b/], cat: "top", label: "tops" },
+    { keys: [/\bkurtas?\b/, /\bkurtis?\b/, /\bethnic\b/], cat: "kurta", label: "ethnic wear" },
+    { keys: [/\bshorts?\b/], cat: "shorts", label: "shorts" },
+    { keys: [/\bskirts?\b/], cat: "skirt", label: "skirts" },
+    { keys: [/\bsare(e|es|i)?\b/], cat: "saree", label: "sarees" },
+    { keys: [/\bleggings?\b/], cat: "leggings", label: "leggings" },
+  ];
+  for (const m of catMap) { if (m.keys.some(re => re.test(t))) { result.cat = m.cat; result.label = m.label; break; } }
+  const colorRules = [
+    [/\bblack\b/, "black"], [/\bwhite\b/, "white"], [/\bred\b/, "red"], [/\bblue\b/, "blue"],
+    [/\bgreen\b/, "green"], [/\bpink\b/, "pink"], [/\byellow\b|\bmustard\b/, "yellow"],
+    [/\borange\b/, "orange"], [/\bpurple\b|\bviolet\b/, "purple"], [/\bbrown\b/, "brown"],
+    [/\bbeige\b/, "beige"], [/\bnavy\b|\bindigo\b/, "navy"], [/\bgre(y|ay)\b|\bcharcoal\b/, "grey"],
+    [/\bmaroon\b|\bburgundy\b/, "maroon"], [/\bteal\b|\bcyan\b|\baqua\b/, "teal"],
+    [/\bcream\b|\bivory\b/, "cream"], [/\bcoral\b/, "coral"], [/\bgold(en)?\b/, "gold"],
+    [/\bsilver\b/, "silver"], [/\blavender\b|\blilac\b/, "lavender"], [/\bolive\b|\bmint\b/, "olive"],
+    [/\brust\b/, "rust"], [/\bwine\b/, "wine"], [/\bpeach\b|\brose\b/, "peach"],
+    [/\bturquoise\b/, "turquoise"], [/\bkhaki\b|\btan\b/, "khaki"],
+    [/\bmagenta\b|\bfuchsia\b/, "pink"],
+  ];
+  for (const [re, c] of colorRules) { if (re.test(t)) { result.color = c; break; } }
+  const sizeRules = [[/\bxxs\b/, "XXS"], [/\bxs\b/, "XS"], [/\bsmall\b/, "S"], [/\bmedium\b/, "M"], [/\blarge\b/, "L"], [/\bxl\b/, "XL"], [/\bxxl\b|\b2xl\b/, "XXL"], [/\bxxxl\b|\b3xl\b/, "XXXL"], [/\b4xl\b/, "4XL"]];
+  for (const [re, s] of sizeRules) { if (re.test(t)) { result.size = s; break; } }
+  if (/\b(women|woman|ladies|lady|girl|girls|female|her|she|women'?s|womens)\b/.test(t)) result.gender = "women";
+  else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|men'?s|mens)\b/.test(t)) result.gender = "men";
+  if (/\bcasual\b|\beveryday\b|\bcomfy\b|\bcomfortable\b|\brelaxed\b/.test(t)) result.occasion = "casual";
+  else if (/\bformal\b|\boffice\b|\bwork\b|\bbusiness\b|\binterview\b/.test(t)) result.occasion = "formal";
+  else if (/\bparty\b|\bevening\b|\bnight\b|\bclub\b|\bcocktail\b/.test(t)) result.occasion = "party";
+  else if (/\bwedding\b|\bfestiv(e|al)\b|\bcelebration\b/.test(t)) result.occasion = "wedding";
+  else if (/\bgym\b|\bworkout\b|\bsport(s|y)?\b|\bathlet(ic)?\b|\brunning\b|\byoga\b/.test(t)) result.occasion = "sporty";
+  else if (/\bstreet\s?wear\b|\burban\b/.test(t)) result.occasion = "streetwear";
+  else if (/\bbeach\b|\bvacation\b|\btravel\b/.test(t)) result.occasion = "vacation";
+  else if (/\bdate\b|\bromantic\b|\bdinne?r\b/.test(t)) result.occasion = "date";
+  if (/\bstripe[ds]?\b/.test(t)) result.pattern = "stripe";
+  else if (/\bcheck(ed|s)?\b|\bplaid\b/.test(t)) result.pattern = "check";
+  else if (/\bfloral\b|\bflower\b/.test(t)) result.pattern = "floral";
+  else if (/\bprint(ed|s)?\b|\bgraphic\b/.test(t)) result.pattern = "print";
+  else if (/\bsolid\b|\bplain\b/.test(t)) result.pattern = "solid";
+  else if (/\bpolka\b|\bdotted\b/.test(t)) result.pattern = "polka";
+  if (/\bcotton\b/.test(t)) result.material = "cotton";
+  else if (/\bsilk\b|\bsatin\b/.test(t)) result.material = "silk";
+  else if (/\bdenim\b/.test(t)) result.material = "denim";
+  else if (/\bleather\b/.test(t)) result.material = "leather";
+  else if (/\blinen\b/.test(t)) result.material = "linen";
+  else if (/\bwool\b|\bknit\b/.test(t)) result.material = "wool";
+  else if (/\bchiffon\b|\bgeorgette\b/.test(t)) result.material = "chiffon";
+  else if (/\bvelvet\b/.test(t)) result.material = "velvet";
+  if (/\bslim\b|\bfitted\b|\btight\b|\bbodycon\b|\bskinny\b/.test(t)) result.fit = "slim";
+  else if (/\bloose\b|\bbaggy\b|\brelaxed\s?fit\b/.test(t)) result.fit = "loose";
+  else if (/\boversized?\b|\bboxy\b|\bdrop\s?shoulder\b/.test(t)) result.fit = "oversized";
+  const underMatch = t.match(/\b(?:under|below|less\s?than|max|upto|up\s?to)\s*\$?\s*(\d+)/);
+  const aboveMatch = t.match(/\b(?:above|over|more\s?than|min|atleast|at\s?least)\s*\$?\s*(\d+)/);
+  const rangeMatch = t.match(/\$?\s*(\d+)\s*(?:to|-)\s*\$?\s*(\d+)/);
+  if (rangeMatch) { result.minPrice = parseInt(rangeMatch[1]); result.maxPrice = parseInt(rangeMatch[2]); }
+  else if (underMatch) result.maxPrice = parseInt(underMatch[1]);
+  else if (aboveMatch) result.minPrice = parseInt(aboveMatch[1]);
+  if (/\bcheap\b|\baffordable\b|\bbudget\b|\blow\s?price\b/.test(t)) result.sortBy = "price_asc";
+  if (/\bexpensive\b|\bpremium\b|\bluxury\b|\bhigh\s?end\b|\bcostly\b|\bpricey\b/.test(t)) result.sortBy = "price_desc";
+  if (/\bpopular\b|\bbest\s?sell\b|\btop\s?rated\b|\bmost\s?liked\b|\bhighest\s?rated\b|\bfamous\b|\bhit\b/.test(t)) result.sortBy = "popular";
+  if (/\bnew(est)?\b|\blatest\b|\bnew\s?arrival\b|\brecent\b|\bfresh\b|\bjust\s?(arrived|in)\b/.test(t)) result.sortBy = "newest";
+  if (/\btrending\b|\bwhat'?s?\s?hot\b|\bshow\s?me\s?(everything|all)\b|\bsurprise\b|\brecommend\b|\bsuggest\b/.test(t) && !result.cat) {
+    result.isGeneral = true; result.label = "trending picks";
+  }
+  return result;
+}
+
+function _applyFilters(items, intent) {
+  let f = [...items];
+  if (intent.size) f = f.filter(i => (i.available_sizes || []).some(s => s.toUpperCase() === intent.size.toUpperCase()));
+  if (intent.maxPrice) f = f.filter(i => { const p = resolvePrice(i) || 0; return p > 0 && p <= intent.maxPrice; });
+  if (intent.minPrice) f = f.filter(i => { const p = resolvePrice(i) || 0; return p >= intent.minPrice; });
+  if (intent.pattern) f = f.filter(i => ((i.style_tags || []).join(" ") + " " + (i.name || "")).toLowerCase().includes(intent.pattern));
+  if (intent.material) f = f.filter(i => ((i.style_tags || []).join(" ") + " " + (i.name || "") + " " + (i.description || "")).toLowerCase().includes(intent.material));
+  if (intent.fit) f = f.filter(i => ((i.style_tags || []).join(" ") + " " + (i.name || "")).toLowerCase().includes(intent.fit));
+  const oKw = { casual: ["casual","everyday","relaxed","basic"], formal: ["formal","office","business","classic","slim-fit"], party: ["party","evening","sequin","glitter"], wedding: ["wedding","festive","ethnic","embroidered"], sporty: ["sport","athletic","gym","jogger","track"], streetwear: ["street","urban","oversized","graphic"], vacation: ["beach","resort","floral","tropical"] };
+  if (intent.occasion && oKw[intent.occasion]) { const kws = oKw[intent.occasion]; const of2 = f.filter(i => { const s = ((i.style_tags||[]).join(" ")+" "+(i.name||"")+" "+(i.category||"")).toLowerCase(); return kws.some(k => s.includes(k)); }); if (of2.length > 0) f = of2; }
+  if (intent.sortBy === "price_asc") f.sort((a, b) => (resolvePrice(a) || 9999) - (resolvePrice(b) || 9999));
+  else if (intent.sortBy === "price_desc") f.sort((a, b) => (resolvePrice(b) || 0) - (resolvePrice(a) || 0));
+  else if (intent.sortBy === "popular") f.sort((a, b) => ((b.variants||[]).reduce((s,v)=>s+(v.stock_quantity||0),0)) - ((a.variants||[]).reduce((s,v)=>s+(v.stock_quantity||0),0)));
+  return f;
+}
+
 function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onSelectItem }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
@@ -3510,7 +3607,8 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
     };
     return () => { delete window.__aiChatAutoSend; };
   }, []);
-  const parseIntent = (t) => {
+  // Old parseIntent kept for reference but unused — using shared _parseSearchIntent instead
+  const _unusedOldParseIntent = (t) => {
     t = t.toLowerCase().trim();
     const result = { cat: null, color: null, gender: null, size: null, style: null, occasion: null, maxPrice: null, minPrice: null, sortBy: null, pattern: null, material: null, fit: null, label: "picks", isGeneral: false };
 
@@ -3710,6 +3808,11 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
     // Sort
     if (sortBy === "price_asc") filtered.sort((a, b) => (resolvePrice(a) || 9999) - (resolvePrice(b) || 9999));
     else if (sortBy === "price_desc") filtered.sort((a, b) => (resolvePrice(b) || 0) - (resolvePrice(a) || 0));
+    else if (sortBy === "popular") filtered.sort((a, b) => {
+      const stockA = (a.variants || []).reduce((s, v) => s + (v.stock_quantity || 0), 0);
+      const stockB = (b.variants || []).reduce((s, v) => s + (v.stock_quantity || 0), 0);
+      return stockB - stockA;
+    });
 
     return filtered;
   };
@@ -3721,7 +3824,7 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
     setResults(null);
     setMsgs((m) => [...m, { role: "user", text: txt }]);
     setLoading(true);
-    const intent = parseIntent(txt);
+    const intent = _parseSearchIntent(txt);
     const { cat, color, gender, label, isGeneral, sortBy } = intent;
     setMsgs((m) => [
       ...m,
@@ -3746,7 +3849,7 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
       }
 
       // Apply advanced client-side filters
-      if (items.length > 0) items = _filterItems(items, intent);
+      if (items.length > 0) items = _applyFilters(items, intent);
 
       // Fallback: filter from cached baseRecs
       if (!items.length) {
@@ -3754,14 +3857,14 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
         if (cat) fallback = fallback.filter(i => ((i.category || "") + " " + (i.name || "")).toLowerCase().includes(cat));
         if (color) fallback = fallback.filter(i => ((i.available_colors || []).join(" ") + " " + (i.name || "")).toLowerCase().includes(color));
         if (gender) fallback = fallback.filter(i => (i.gender || "").toLowerCase().includes(gender));
-        fallback = _filterItems(fallback, intent);
+        fallback = _applyFilters(fallback, intent);
         items = fallback.slice(0, 20);
       }
 
       // Final fallback: trending
       if (!items.length) {
         const r2 = await fetch(`${API}/api/recommendations/trending?limit=20`, { signal: AbortSignal.timeout(90000) });
-        if (r2.ok) { const d = await r2.json(); items = _filterItems(d.recommendations || d.items || [], intent); }
+        if (r2.ok) { const d = await r2.json(); items = _applyFilters(d.recommendations || d.items || [], intent); }
       }
 
       items = items.slice(0, 16);
@@ -3770,6 +3873,8 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
       const descParts = [];
       if (intent.sortBy === "price_desc") descParts.push("premium");
       if (intent.sortBy === "price_asc") descParts.push("affordable");
+      if (intent.sortBy === "popular") descParts.push("most popular");
+      if (intent.sortBy === "newest") descParts.push("newest");
       if (intent.occasion) descParts.push(intent.occasion);
       if (color) descParts.push(color);
       if (intent.size) descParts.push(`size ${intent.size}`);
@@ -4588,37 +4693,12 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
                 setChatMsg("");
                 e.target.elements.chatInput.value = "";
 
-                // Parse intent
-                const t = q.toLowerCase();
-                const catMap = [
-                  { keys: ["t-shirt","tshirt","tee"], cat: "t-shirt" },
-                  { keys: ["dress","gown","frock","maxi"], cat: "dress" },
-                  { keys: ["jumpsuit","romper"], cat: "jumpsuit" },
-                  { keys: ["shirt"], cat: "shirt" },
-                  { keys: ["jeans","jean","denim"], cat: "jeans" },
-                  { keys: ["trouser","pant","chino"], cat: "trousers" },
-                  { keys: ["blazer","jacket","coat"], cat: "blazer" },
-                  { keys: ["jogger","track"], cat: "joggers" },
-                  { keys: ["cargo"], cat: "cargo" },
-                  { keys: ["hoodie","sweater","winter"], cat: "winterwear" },
-                  { keys: ["top","blouse","crop"], cat: "top" },
-                  { keys: ["kurta","kurti"], cat: "kurta" },
-                  { keys: ["shorts"], cat: "shorts" },
-                  { keys: ["skirt"], cat: "skirt" },
-                ];
-                let cat = null;
-                for (const m of catMap) { if (m.keys.some(k => t.includes(k))) { cat = m.cat; break; } }
-
-                const colorWords = ["black","white","red","blue","green","pink","yellow","orange","purple","brown","beige","navy","grey","gray","maroon","teal","cream","coral","gold","olive","wine","rust","khaki"];
-                let color = null;
-                for (const c of colorWords) { if (t.includes(c)) { color = c === "gray" ? "grey" : c; break; } }
-
-                let gender = null;
-                if (/\b(women|woman|ladies|lady|girl|girls|female|her|she|feminine)\b/.test(t)) gender = "women";
-                else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|gentleman|masculine|men'?s|mens)\b/.test(t)) gender = "men";
+                // Use advanced parseIntent
+                const intent = _parseSearchIntent(q);
+                const { cat, color, gender, label, sortBy } = intent;
 
                 try {
-                  const params = new URLSearchParams({ limit: "20" });
+                  const params = new URLSearchParams({ limit: "50" });
                   if (cat) params.set("category", cat);
                   if (color) params.set("color", color);
                   if (gender) params.set("gender", gender);
@@ -4627,16 +4707,32 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
                   let items = [];
                   if (r.ok) { const d = await r.json(); items = d.recommendations || d.items || []; }
 
+                  // Apply advanced filters
+                  if (items.length > 0) items = _applyFilters(items, intent);
+
+                  // Fallback
                   if (!items.length) {
-                    items = recs.filter(i => {
-                      const s = ((i.category||"")+" "+(i.name||"")+" "+((i.available_colors||[]).join(" "))).toLowerCase();
-                      return (cat ? s.includes(cat) : true) && (color ? s.includes(color) : true);
-                    }).slice(0, 12);
+                    let fb = recs;
+                    if (cat) fb = fb.filter(i => ((i.category||"")+" "+(i.name||"")).toLowerCase().includes(cat));
+                    if (color) fb = fb.filter(i => ((i.available_colors||[]).join(" ")+" "+(i.name||"")).toLowerCase().includes(color));
+                    if (gender) fb = fb.filter(i => (i.gender||"").toLowerCase().includes(gender));
+                    items = _applyFilters(fb, intent);
                   }
 
-                  items = items.slice(0, 12);
-                  const desc = [color, cat || "picks"].filter(Boolean).join(" ");
-                  setChatMsg(items.length ? `Here are ${items.length} ${desc} curated for you` : `No ${desc} found`);
+                  items = items.slice(0, 16);
+                  const descParts = [];
+                  if (sortBy === "price_desc") descParts.push("premium");
+                  if (sortBy === "price_asc") descParts.push("affordable");
+                  if (sortBy === "popular") descParts.push("most popular");
+                  if (intent.occasion) descParts.push(intent.occasion);
+                  if (color) descParts.push(color);
+                  if (intent.size) descParts.push(`size ${intent.size}`);
+                  if (intent.pattern) descParts.push(intent.pattern);
+                  if (intent.material) descParts.push(intent.material);
+                  descParts.push(label);
+                  const desc = descParts.join(" ");
+
+                  setChatMsg(items.length ? `Here are ${items.length} ${desc} curated for you ✦` : `No ${desc} found. Try "blue dress" or "casual shirts".`);
                   setChatResults(items);
                 } catch (err) {
                   setChatMsg("Something went wrong. Please try again.");
