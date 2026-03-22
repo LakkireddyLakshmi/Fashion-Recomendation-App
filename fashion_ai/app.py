@@ -2555,7 +2555,7 @@ async def health():
     return info
 
 
-# ── Wishlist, Cart, Ratings (per-user, in-memory + Boss API logging) ──
+# ── Wishlist, Cart, Ratings (per-user, in-memory + Boss API persistence) ──
 
 # In-memory stores keyed by email
 _user_wishlists: Dict[str, Set[str]] = {}    # email -> set of catalog_item_ids
@@ -2563,30 +2563,71 @@ _user_carts: Dict[str, List[Dict]] = {}      # email -> list of {item_id, size, 
 _user_ratings: Dict[str, Dict[str, int]] = {} # email -> {item_id: stars}
 
 
+async def _boss_log_interaction(user_id: int, catalog_item_id: str, event_type: str, event_value: dict = None):
+    """Log interaction to Boss API for permanent PostgreSQL storage."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.post(f"{BOSS_URL}/api/interactions", json={
+                "user_id": user_id,
+                "catalog_item_id": catalog_item_id,
+                "event_type": event_type,
+                "event_value": event_value or {},
+            })
+    except Exception as e:
+        log.warning("Boss interaction log failed: %s", e)
+
+
+async def _boss_get_interactions(user_id: int, event_type: str, limit: int = 200) -> List[Dict]:
+    """Get interactions from Boss API."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{BOSS_URL}/api/interactions/{user_id}/interactions",
+                          params={"event_type": event_type, "limit": limit})
+            if r.status_code == 200:
+                return r.json() if isinstance(r.json(), list) else []
+    except Exception as e:
+        log.warning("Boss interaction get failed: %s", e)
+    return []
+
+
+def _get_user_id(email: str) -> int:
+    """Get numeric user_id from email (simple hash for Boss API)."""
+    u = _mem_users.get(email)
+    if u and u.get("boss_user_id"):
+        return u["boss_user_id"]
+    return abs(hash(email)) % 1000000
+
+
 @app.get("/api/user/{email}/wishlist", tags=["User Data"])
 async def get_wishlist(email: str):
-    items = list(_user_wishlists.get(email, set()))
-    return {"email": email, "items": items, "count": len(items)}
+    # Try in-memory first
+    if email in _user_wishlists:
+        items = list(_user_wishlists[email])
+        return {"email": email, "items": items, "count": len(items)}
+    # Load from Boss API
+    uid = _get_user_id(email)
+    interactions = await _boss_get_interactions(uid, "like")
+    item_ids = list({i["catalog_item_id"] for i in interactions if i.get("catalog_item_id")})
+    _user_wishlists[email] = set(item_ids)
+    return {"email": email, "items": item_ids, "count": len(item_ids)}
 
 
 @app.post("/api/user/{email}/wishlist", tags=["User Data"])
 async def update_wishlist(email: str, body: dict = Body(...)):
     item_id = body.get("item_id", "")
-    action = body.get("action", "toggle")  # add, remove, toggle
+    action = body.get("action", "toggle")
     if not item_id:
         raise HTTPException(400, "item_id required")
     if email not in _user_wishlists:
         _user_wishlists[email] = set()
     wl = _user_wishlists[email]
-    if action == "add":
+    uid = _get_user_id(email)
+    if action == "add" or (action == "toggle" and item_id not in wl):
         wl.add(item_id)
-    elif action == "remove":
+        asyncio.create_task(_boss_log_interaction(uid, item_id, "like"))
+    elif action == "remove" or (action == "toggle" and item_id in wl):
         wl.discard(item_id)
-    else:  # toggle
-        if item_id in wl:
-            wl.discard(item_id)
-        else:
-            wl.add(item_id)
+        # Boss API doesn't support unlike — we track it locally
     return {"email": email, "items": list(wl), "count": len(wl)}
 
 
@@ -2599,20 +2640,21 @@ async def get_cart(email: str):
 @app.post("/api/user/{email}/cart", tags=["User Data"])
 async def update_cart(email: str, body: dict = Body(...)):
     item_id = body.get("item_id", "")
-    action = body.get("action", "add")  # add, remove, clear
+    action = body.get("action", "add")
     size = body.get("size", "")
     color = body.get("color", "")
     qty = body.get("qty", 1)
     if email not in _user_carts:
         _user_carts[email] = []
     cart = _user_carts[email]
+    uid = _get_user_id(email)
     if action == "add":
-        # Check if item already in cart
         existing = next((c for c in cart if c["item_id"] == item_id and c.get("size") == size and c.get("color") == color), None)
         if existing:
             existing["qty"] = existing.get("qty", 1) + qty
         else:
             cart.append({"item_id": item_id, "size": size, "color": color, "qty": qty})
+        asyncio.create_task(_boss_log_interaction(uid, item_id, "click", {"action": "add_to_cart", "size": size, "color": color}))
     elif action == "remove":
         cart[:] = [c for c in cart if c["item_id"] != item_id]
     elif action == "clear":
@@ -2637,6 +2679,8 @@ async def update_rating(email: str, body: dict = Body(...)):
     if email not in _user_ratings:
         _user_ratings[email] = {}
     _user_ratings[email][item_id] = stars
+    uid = _get_user_id(email)
+    asyncio.create_task(_boss_log_interaction(uid, item_id, "click", {"action": "rating", "stars": stars}))
     return {"email": email, "item_id": item_id, "stars": stars}
 
 
