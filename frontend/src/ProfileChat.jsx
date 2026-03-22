@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { TextGenerateEffect } from "./components/ui/text-generate-effect";
+import { AIVoiceInput } from "./components/ui/ai-voice-input";
 
 const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "";
 const CHAT_KEY = import.meta.env.VITE_CHAT_API_KEY || "";
@@ -16,6 +17,7 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
   const [conversationId, setConversationId] = useState(undefined);
   const [saving, setSaving] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [showVoiceOverlay, setShowVoiceOverlay] = useState(false);
   const recognitionRef = useRef(null);
 
   useEffect(() => {
@@ -308,24 +310,19 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
           }}
         />
         {/* Mic button */}
-        <button onClick={toggleVoice} disabled={loading || saving}
+        <button onClick={() => setShowVoiceOverlay(true)} disabled={loading || saving}
           style={{
             width: 36, height: 36, borderRadius: "50%", border: "none",
-            background: isListening ? "#ef4444" : "transparent",
-            color: isListening ? "#fff" : "#888",
+            background: "transparent",
+            color: "#888",
             fontSize: 17, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "all 0.2s ease",
             flexShrink: 0,
-            animation: isListening ? "micPulse 1.5s ease-in-out infinite" : "none",
           }}
-          title={isListening ? "Stop listening" : "Speak your answer"}
+          title="Speak your answer"
         >
-          {isListening ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-          )}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
         {/* Send button */}
         <button onClick={handleSend} disabled={loading || saving || !input.trim()}
@@ -452,6 +449,38 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
         </>
       )}
 
+      {/* Voice Overlay */}
+      {showVoiceOverlay && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 50,
+          background: "rgba(0,0,0,0.92)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexDirection: "column",
+        }}>
+          <button
+            onClick={() => setShowVoiceOverlay(false)}
+            style={{
+              position: "absolute", top: 24, right: 24,
+              background: "none", border: "none", color: "rgba(255,255,255,0.5)",
+              fontSize: 28, cursor: "pointer",
+            }}
+          >
+            ×
+          </button>
+          <AIVoiceInput
+            onStart={() => setIsListening(true)}
+            onStop={() => setIsListening(false)}
+            onTranscript={(text) => {
+              if (text) {
+                setInput(text);
+                setShowVoiceOverlay(false);
+              }
+            }}
+            visualizerBars={48}
+          />
+        </div>
+      )}
+
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 0.3; }
@@ -460,10 +489,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
-        }
-        @keyframes micPulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-          50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
         }
       `}</style>
     </div>

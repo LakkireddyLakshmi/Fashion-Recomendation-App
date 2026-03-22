@@ -3493,21 +3493,106 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const bottomRef = useRef(null);
+  const sendRef = useRef(null);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, results]);
+
+  // Allow bottom bar to auto-send a query
+  useEffect(() => {
+    window.__aiChatAutoSend = (query) => {
+      setInput(query);
+      // Trigger send after state update
+      setTimeout(() => {
+        const btn = document.querySelector("[data-ai-send]");
+        if (btn) btn.click();
+      }, 100);
+    };
+    return () => { delete window.__aiChatAutoSend; };
+  }, []);
   const parseIntent = (t) => {
-    t = t.toLowerCase();
-    if (t.includes("dress")) return { cat: "dress", label: "dresses" };
-    if (t.includes("jacket") || t.includes("coat"))
-      return { cat: "outerwear", label: "jackets" };
-    if (t.includes("shirt") || t.includes("top"))
-      return { cat: "top", label: "tops" };
-    if (t.includes("pant") || t.includes("jean"))
-      return { cat: "bottom", label: "bottoms" };
-    if (t.includes("shoe")) return { cat: "shoes", label: "shoes" };
-    return { cat: null, label: "picks" };
+    t = t.toLowerCase().trim();
+
+    // ── Category detection (order matters: check specific before generic) ──
+    const catMap = [
+      { keys: ["t-shirt", "tshirt", "tee"], cat: "t-shirt", label: "t-shirts" },
+      { keys: ["dress", "gown", "frock", "maxi", "midi", "mini dress"], cat: "dress", label: "dresses" },
+      { keys: ["jumpsuit", "romper", "playsuit"], cat: "jumpsuit", label: "jumpsuits" },
+      { keys: ["shirt", "button down", "button-down"], cat: "shirt", label: "shirts" },
+      { keys: ["jeans", "jean", "denim"], cat: "jeans", label: "jeans" },
+      { keys: ["trouser", "pant", "chino", "formal pant"], cat: "trousers", label: "trousers" },
+      { keys: ["blazer", "jacket", "coat", "overcoat", "bomber"], cat: "blazer", label: "blazers & jackets" },
+      { keys: ["jogger", "track pant", "sweatpant"], cat: "joggers", label: "joggers" },
+      { keys: ["cargo", "cargo pant"], cat: "cargo", label: "cargo pants" },
+      { keys: ["hoodie", "sweater", "sweatshirt", "pullover", "winter", "cardigan"], cat: "winterwear", label: "winterwear" },
+      { keys: ["top", "blouse", "crop top", "tank", "cami"], cat: "top", label: "tops" },
+      { keys: ["kurta", "kurti", "ethnic"], cat: "kurta", label: "ethnic wear" },
+      { keys: ["shorts", "bermuda"], cat: "shorts", label: "shorts" },
+      { keys: ["skirt"], cat: "skirt", label: "skirts" },
+      { keys: ["bottom", "bottomwear", "lower"], cat: "bottomwear", label: "bottomwear" },
+    ];
+    let cat = null, label = "picks";
+    for (const m of catMap) {
+      if (m.keys.some(k => t.includes(k))) { cat = m.cat; label = m.label; break; }
+    }
+
+    // ── Color detection (multiple colors supported) ──
+    const colorMap = {
+      "black": "black", "white": "white", "red": "red", "blue": "blue",
+      "green": "green", "pink": "pink", "yellow": "yellow", "orange": "orange",
+      "purple": "purple", "brown": "brown", "beige": "beige", "navy": "navy",
+      "grey": "grey", "gray": "grey", "maroon": "maroon", "teal": "teal",
+      "cream": "cream", "coral": "coral", "gold": "gold", "silver": "silver",
+      "lavender": "lavender", "olive": "olive", "rust": "rust", "wine": "wine",
+      "peach": "peach", "turquoise": "turquoise", "ivory": "ivory", "khaki": "khaki",
+      // Natural language
+      "dark": "black", "light": "white", "bright": "red",
+    };
+    let color = null;
+    for (const [word, mapped] of Object.entries(colorMap)) {
+      if (t.includes(word)) { color = mapped; break; }
+    }
+
+    // ── Size detection ──
+    let size = null;
+    const sizeMap = {
+      "xxs": "XXS", "xs": "XS", "extra small": "XS",
+      "small": "S", " s ": "S",
+      "medium": "M", " m ": "M",
+      "large": "L", " l ": "L",
+      "xl": "XL", "extra large": "XL",
+      "xxl": "XXL", "2xl": "XXL",
+      "xxxl": "XXXL", "3xl": "XXXL",
+      "free size": "Free Size",
+    };
+    for (const [word, mapped] of Object.entries(sizeMap)) {
+      if ((" " + t + " ").includes(word)) { size = mapped; break; }
+    }
+
+    // ── Gender detection ──
+    let gender = null;
+    if (t.includes("women") || t.includes("woman") || t.includes("ladies") || t.includes("girl") || t.includes("female") || t.includes("her")) gender = "women";
+    else if (t.includes("men's") || t.includes("mens") || t.includes("man") || t.includes("boy") || t.includes("male") || t.includes("guys") || t.includes("him")) gender = "men";
+
+    // ── Style/occasion detection ──
+    let style = null;
+    if (t.includes("casual")) style = "casual";
+    else if (t.includes("formal") || t.includes("office") || t.includes("work")) style = "formal";
+    else if (t.includes("party") || t.includes("evening") || t.includes("night out")) style = "party";
+    else if (t.includes("sporty") || t.includes("gym") || t.includes("athletic")) style = "sporty";
+    else if (t.includes("street") || t.includes("urban")) style = "streetwear";
+
+    // ── Price detection ──
+    let maxPrice = null;
+    const priceMatch = t.match(/under\s*\$?(\d+)|below\s*\$?(\d+)|less than\s*\$?(\d+)|budget\s*\$?(\d+)|cheap/);
+    if (priceMatch) {
+      maxPrice = parseInt(priceMatch[1] || priceMatch[2] || priceMatch[3] || priceMatch[4] || "100");
+    }
+    if (t.includes("cheap") || t.includes("affordable") || t.includes("budget")) maxPrice = maxPrice || 100;
+
+    return { cat, color, gender, size, style, maxPrice, label };
   };
+
   const send = async () => {
     if (!input.trim() || loading) return;
     const txt = input.trim();
@@ -3515,53 +3600,89 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
     setResults(null);
     setMsgs((m) => [...m, { role: "user", text: txt }]);
     setLoading(true);
-    const { cat, label } = parseIntent(txt);
+    const { cat, color, gender, size, style, maxPrice, label } = parseIntent(txt);
     setMsgs((m) => [
       ...m,
-      { role: "ai", text: "Preparing Your Recommendations . . .", id: "prep" },
+      { role: "ai", text: "Searching our catalog . . .", id: "prep" },
     ]);
     try {
       let items = [];
-      const email = encodeURIComponent(profile.email || "demo@hueiq.com");
-      const token = sessionStorage.getItem("hueiq_token");
-      const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-      if (cat) {
-        const r = await fetch(
-          `${API}/api/recommendations/${email}?category=${cat}&limit=8`,
-          { headers: authHeaders, signal: AbortSignal.timeout(90000) },
-        );
-        if (r.ok) {
-          const d = await r.json();
-          items = d.recommendations || d.items || [];
+      // Build query params for API
+      const params = new URLSearchParams({ limit: "20" });
+      if (cat) params.set("category", cat);
+      if (color) params.set("color", color);
+      if (gender) params.set("gender", gender);
+
+      // Fetch from API
+      const r = await fetch(`${API}/api/recommendations/trending?${params}`, {
+        signal: AbortSignal.timeout(90000),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        items = d.recommendations || d.items || [];
+      }
+
+      // Client-side filtering for size, price, style (API doesn't support these)
+      if (items.length > 0) {
+        if (size) {
+          items = items.filter(i => {
+            const sizes = (i.available_sizes || []).map(s => s.toUpperCase());
+            return sizes.includes(size.toUpperCase());
+          });
+        }
+        if (maxPrice) {
+          items = items.filter(i => {
+            const p = resolvePrice(i) || 0;
+            return p > 0 && p <= maxPrice;
+          });
+        }
+        if (style) {
+          items = items.filter(i => {
+            const tags = ((i.style_tags || []).join(" ") + " " + (i.name || "") + " " + (i.category || "")).toLowerCase();
+            return tags.includes(style);
+          });
         }
       }
-      if (!items.length)
-        items = (
-          cat
-            ? baseRecs.filter((i) =>
-                (i.category || "").toLowerCase().includes(cat),
-              )
-            : baseRecs
-        ).slice(0, 8);
+
+      // Fallback: filter from cached baseRecs
       if (!items.length) {
-        const r = await fetch(`${API}/api/recommendations/trending?limit=8`, {
+        items = baseRecs.filter((i) => {
+          const icat = ((i.category || "") + " " + (i.name || "")).toLowerCase();
+          const icolors = ((i.available_colors || []).join(" ") + " " + (i.name || "")).toLowerCase();
+          const isizes = (i.available_sizes || []).map(s => s.toUpperCase());
+          let match = true;
+          if (cat) match = match && icat.includes(cat);
+          if (color) match = match && icolors.includes(color);
+          if (size) match = match && isizes.includes(size.toUpperCase());
+          if (gender) match = match && ((i.gender || "").toLowerCase().includes(gender));
+          if (maxPrice) { const p = resolvePrice(i) || 0; match = match && p > 0 && p <= maxPrice; }
+          return match;
+        }).slice(0, 12);
+      }
+
+      // Final fallback: just trending
+      if (!items.length) {
+        const r2 = await fetch(`${API}/api/recommendations/trending?limit=12`, {
           signal: AbortSignal.timeout(90000),
         });
-        if (r.ok) {
-          const d = await r.json();
+        if (r2.ok) {
+          const d = await r2.json();
           items = d.recommendations || d.items || [];
         }
       }
-      // Filter to $50–$500 range (same as main recommendations)
-      items = items.filter(i => { const p = resolvePrice(i)||0; return p >= 50 && p <= 500; });
+
+      // Limit results
+      items = items.slice(0, 12);
+
+      // Build natural response
+      const parts = [color, size, label].filter(Boolean);
+      const desc = parts.join(" ") || "fashion picks";
       setMsgs((m) => m.filter((x) => x.id !== "prep"));
-      setMsgs((m) => [
-        ...m,
-        {
-          role: "ai",
-          text: `Here are ${items.length} ${label} curated for you ✦`,
-        },
-      ]);
+      if (items.length) {
+        setMsgs((m) => [...m, { role: "ai", text: `Here are ${items.length} ${desc} curated for you ✦` }]);
+      } else {
+        setMsgs((m) => [...m, { role: "ai", text: `Sorry, I couldn't find any ${desc} right now. Try something like "blue dress" or "casual shirts".` }]);
+      }
       setResults(items);
     } catch {
       setMsgs((m) => m.filter((x) => x.id !== "prep"));
@@ -3838,6 +3959,10 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
   const [wishlist, setWishlist] = useState(new Set());
   const [likedOpen, setLikedOpen] = useState(false);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
+  const [chatQuery, setChatQuery] = useState("");
+  const [chatResults, setChatResults] = useState(null);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatMsg, setChatMsg] = useState("");
 
   const toggleWishlist = (item) => {
     const id = item?.catalog_item_id||item?.id;
@@ -4113,59 +4238,166 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
         </div>
       )}
       {step === 3 && (
-        <div style={{
-          position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          zIndex: 100,
-          background: "linear-gradient(180deg, rgba(10,0,20,0) 0%, rgba(10,0,20,0.95) 30%, rgba(10,0,20,1) 100%)",
-          padding: "24px 28px 20px",
-        }}>
-          <div
-            onClick={() => setView("ai")}
-            style={{
-              maxWidth: 900,
-              margin: "0 auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 16,
-              padding: "14px 20px",
-              cursor: "pointer",
-              backdropFilter: "blur(20px)",
-              transition: "border-color 0.2s, background 0.2s",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(124,58,237,0.5)"; e.currentTarget.style.background = "rgba(255,255,255,0.12)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-          >
+        <>
+          {/* Inline chat results panel */}
+          {(chatResults || chatLoading) && (
             <div style={{
-              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
-              borderRadius: 10,
-              padding: "6px 10px",
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: 14,
-              fontFamily: "'League Spartan',sans-serif",
+              position: "fixed", inset: 0, zIndex: 99,
+              background: "rgba(10,0,20,0.95)",
+              backdropFilter: "blur(10px)",
+              overflowY: "auto",
+              padding: "80px 24px 120px",
             }}>
-              ✦
+              <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                  <div>
+                    {chatMsg && <p style={{ color: "rgba(255,255,255,0.8)", fontSize: 18, fontFamily: "'League Spartan',sans-serif", margin: 0 }}>{chatMsg}</p>}
+                    {chatQuery && <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginTop: 4 }}>Searched: "{chatQuery}"</p>}
+                  </div>
+                  <button onClick={() => { setChatResults(null); setChatMsg(""); setChatQuery(""); }} style={{
+                    background: "rgba(255,255,255,0.1)", border: "none", color: "#fff",
+                    borderRadius: 10, padding: "8px 16px", cursor: "pointer", fontSize: 14,
+                    fontFamily: "'League Spartan',sans-serif",
+                  }}>Close</button>
+                </div>
+                {chatLoading ? (
+                  <div style={{ textAlign: "center", padding: 60 }}>
+                    <div style={{ width: 40, height: 40, border: "3px solid rgba(255,255,255,0.1)", borderTopColor: "#a855f7", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Searching...</p>
+                  </div>
+                ) : chatResults && chatResults.length > 0 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 20 }}>
+                    {chatResults.map((item, i) => {
+                      const img = item.primary_image_url || (item.images?.[0]?.image_url) || "";
+                      const p = resolvePrice(item);
+                      return (
+                        <div key={item.catalog_item_id || i} onClick={() => { setSelItem(item); setView("detail"); setChatResults(null); }}
+                          style={{
+                            background: "rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden",
+                            cursor: "pointer", border: "1px solid rgba(255,255,255,0.08)",
+                            transition: "transform 0.2s, border-color 0.2s",
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.borderColor = "rgba(124,58,237,0.4)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
+                        >
+                          <div style={{ aspectRatio: "3/4", overflow: "hidden", background: "#1a1a2e" }}>
+                            {img && <img src={img} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />}
+                          </div>
+                          <div style={{ padding: "12px 14px" }}>
+                            <p style={{ color: "#fff", fontSize: 13, fontWeight: 500, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</p>
+                            <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "4px 0 0" }}>{item.category}</p>
+                            {p > 0 && <p style={{ color: "#a855f7", fontSize: 14, fontWeight: 600, margin: "6px 0 0" }}>${p}</p>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: 60 }}>
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 16 }}>No results found. Try something like "blue dress" or "casual shirts".</p>
+                  </div>
+                )}
+              </div>
             </div>
-            <span style={{
-              color: "rgba(255,255,255,0.4)",
-              fontSize: 16,
-              fontFamily: "'League Spartan',sans-serif",
-              fontWeight: 300,
-              flex: 1,
-            }}>
-              Ask me anything about fashion...
-            </span>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 2L11 13" /><path d="M22 2L15 22L11 13L2 9L22 2Z" />
-            </svg>
+          )}
+
+          {/* Bottom search bar */}
+          <div style={{
+            position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
+            background: "linear-gradient(180deg, rgba(10,0,20,0) 0%, rgba(10,0,20,0.95) 30%, rgba(10,0,20,1) 100%)",
+            padding: "24px 28px 20px",
+          }}>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const q = e.target.elements.chatInput.value.trim();
+                if (!q || chatLoading) return;
+                setChatQuery(q);
+                setChatLoading(true);
+                setChatResults(null);
+                setChatMsg("");
+                e.target.elements.chatInput.value = "";
+
+                // Parse intent
+                const t = q.toLowerCase();
+                const catMap = [
+                  { keys: ["t-shirt","tshirt","tee"], cat: "t-shirt" },
+                  { keys: ["dress","gown","frock","maxi"], cat: "dress" },
+                  { keys: ["jumpsuit","romper"], cat: "jumpsuit" },
+                  { keys: ["shirt"], cat: "shirt" },
+                  { keys: ["jeans","jean","denim"], cat: "jeans" },
+                  { keys: ["trouser","pant","chino"], cat: "trousers" },
+                  { keys: ["blazer","jacket","coat"], cat: "blazer" },
+                  { keys: ["jogger","track"], cat: "joggers" },
+                  { keys: ["cargo"], cat: "cargo" },
+                  { keys: ["hoodie","sweater","winter"], cat: "winterwear" },
+                  { keys: ["top","blouse","crop"], cat: "top" },
+                  { keys: ["kurta","kurti"], cat: "kurta" },
+                  { keys: ["shorts"], cat: "shorts" },
+                  { keys: ["skirt"], cat: "skirt" },
+                ];
+                let cat = null;
+                for (const m of catMap) { if (m.keys.some(k => t.includes(k))) { cat = m.cat; break; } }
+
+                const colorWords = ["black","white","red","blue","green","pink","yellow","orange","purple","brown","beige","navy","grey","gray","maroon","teal","cream","coral","gold","olive","wine","rust","khaki"];
+                let color = null;
+                for (const c of colorWords) { if (t.includes(c)) { color = c === "gray" ? "grey" : c; break; } }
+
+                let gender = null;
+                if (t.includes("women") || t.includes("ladies") || t.includes("girl")) gender = "women";
+                else if (t.includes("men") || t.includes("boy") || t.includes("guys")) gender = "men";
+
+                try {
+                  const params = new URLSearchParams({ limit: "20" });
+                  if (cat) params.set("category", cat);
+                  if (color) params.set("color", color);
+                  if (gender) params.set("gender", gender);
+
+                  const r = await fetch(`${API}/api/recommendations/trending?${params}`, { signal: AbortSignal.timeout(90000) });
+                  let items = [];
+                  if (r.ok) { const d = await r.json(); items = d.recommendations || d.items || []; }
+
+                  if (!items.length) {
+                    items = recs.filter(i => {
+                      const s = ((i.category||"")+" "+(i.name||"")+" "+((i.available_colors||[]).join(" "))).toLowerCase();
+                      return (cat ? s.includes(cat) : true) && (color ? s.includes(color) : true);
+                    }).slice(0, 12);
+                  }
+
+                  items = items.slice(0, 12);
+                  const desc = [color, cat || "picks"].filter(Boolean).join(" ");
+                  setChatMsg(items.length ? `Here are ${items.length} ${desc} curated for you` : `No ${desc} found`);
+                  setChatResults(items);
+                } catch (err) {
+                  setChatMsg("Something went wrong. Please try again.");
+                  setChatResults([]);
+                } finally {
+                  setChatLoading(false);
+                }
+              }}
+              style={{
+                maxWidth: 900, margin: "0 auto",
+                display: "flex", alignItems: "center", gap: 12,
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 16, padding: "6px 8px 6px 20px",
+                backdropFilter: "blur(20px)",
+              }}
+            >
+              <div style={{ background: "linear-gradient(135deg, #7c3aed, #a855f7)", borderRadius: 10, padding: "6px 10px", color: "#fff", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>✦</div>
+              <input name="chatInput" type="text" placeholder="Search — e.g. blue dress, white shirt, casual jeans..."
+                style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "rgba(255,255,255,0.9)", fontSize: 15, fontFamily: "'League Spartan',sans-serif", fontWeight: 300, padding: "10px 0" }}
+              />
+              <button type="submit" disabled={chatLoading} style={{
+                background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 12, padding: "10px 12px", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 2L11 13" /><path d="M22 2L15 22L11 13L2 9L22 2Z" />
+                </svg>
+              </button>
+            </form>
           </div>
-        </div>
+        </>
       )}
       {view === "detail" && selItem ? (
         <ProductDetail item={selItem} onBack={() => setView("wizard")} allRecs={recs} onAddToCart={handleAddToCart} wishlist={wishlist} onToggleWishlist={toggleWishlist} userProfile={profile} />
