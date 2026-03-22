@@ -1,10 +1,6 @@
-import { lazy, Suspense } from "react";
+import { useState, lazy, Suspense } from "react";
 
 const AUTH_URL = import.meta.env.VITE_AUTH_URL || "https://952380306.propelauthtest.com";
-
-// Check URL params for post-login redirect from PropelAuth
-const urlParams = new URLSearchParams(window.location.search);
-const isReturningFromAuth = document.cookie.includes("__pa") || urlParams.has("state");
 
 function LoginPage() {
   return (
@@ -20,20 +16,28 @@ function LoginPage() {
         <p style={{ color: "#888", fontSize: 15, lineHeight: 1.6, margin: "0 0 32px" }}>
           AI-powered fashion recommendations, personalized for you.
         </p>
-        <a href={AUTH_URL + "/en/signup"} style={{
-          display: "block", padding: "14px 0", borderRadius: 12,
-          background: "#111", color: "#fff",
-          fontSize: 15, fontWeight: 600, marginBottom: 12,
-          textDecoration: "none", textAlign: "center",
-        }}>
+        <a
+          href={AUTH_URL + "/en/signup"}
+          onClick={() => localStorage.setItem("hueiq_auth_pending", "1")}
+          style={{
+            display: "block", padding: "14px 0", borderRadius: 12,
+            background: "#111", color: "#fff",
+            fontSize: 15, fontWeight: 600, marginBottom: 12,
+            textDecoration: "none", textAlign: "center",
+          }}
+        >
           Get Started
         </a>
-        <a href={AUTH_URL + "/en/login"} style={{
-          display: "block", padding: "14px 0", borderRadius: 12,
-          background: "#fff", color: "#111", border: "1px solid #e0e0e0",
-          fontSize: 15, fontWeight: 600,
-          textDecoration: "none", textAlign: "center",
-        }}>
+        <a
+          href={AUTH_URL + "/en/login"}
+          onClick={() => localStorage.setItem("hueiq_auth_pending", "1")}
+          style={{
+            display: "block", padding: "14px 0", borderRadius: 12,
+            background: "#fff", color: "#111", border: "1px solid #e0e0e0",
+            fontSize: 15, fontWeight: 600,
+            textDecoration: "none", textAlign: "center",
+          }}
+        >
           I already have an account
         </a>
       </div>
@@ -41,11 +45,14 @@ function LoginPage() {
   );
 }
 
-// Only load PropelAuth when returning from auth
 const PropelAuthApp = lazy(() => import("./PropelAuthApp"));
 
 function App() {
-  if (isReturningFromAuth) {
+  const [showAuth, setShowAuth] = useState(
+    () => localStorage.getItem("hueiq_auth_pending") === "1"
+  );
+
+  if (showAuth) {
     return (
       <Suspense fallback={
         <div style={{
@@ -60,7 +67,10 @@ function App() {
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       }>
-        <PropelAuthApp />
+        <PropelAuthApp onLogout={() => {
+          localStorage.removeItem("hueiq_auth_pending");
+          setShowAuth(false);
+        }} />
       </Suspense>
     );
   }
