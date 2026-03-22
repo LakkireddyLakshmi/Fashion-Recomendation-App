@@ -4197,17 +4197,45 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMsg, setChatMsg] = useState("");
 
+  // Load wishlist + cart from backend on mount
+  useEffect(() => {
+    const email = profile?.email;
+    if (!email) return;
+    const e = encodeURIComponent(email);
+    fetch(`${API}/api/user/${e}/wishlist`).then(r => r.json()).then(d => {
+      if (d.items?.length) setWishlist(new Set(d.items));
+    }).catch(() => {});
+    fetch(`${API}/api/user/${e}/cart`).then(r => r.json()).then(d => {
+      if (d.items?.length) {
+        // Enrich cart items with product data from recs
+        const enriched = d.items.map(ci => {
+          const product = recs.find(r => (r.catalog_item_id || r.id) === ci.item_id);
+          return product ? { ...product, qty: ci.qty || 1 } : ci;
+        }).filter(x => x.name || x.item_id);
+        if (enriched.length) setCart(enriched);
+      }
+    }).catch(() => {});
+  }, [profile?.email]);
+
   const toggleWishlist = (item) => {
     const id = item?.catalog_item_id||item?.id;
     setWishlist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+    // Sync with backend
+    const email = profile?.email;
+    if (email && id) {
+      fetch(`${API}/api/user/${encodeURIComponent(email)}/wishlist`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: id, action: "toggle" }),
+      }).catch(() => {});
+    }
   };
   const addRecentlyViewed = (item) => {
     setRecentlyViewed(prev => { const id = item?.catalog_item_id||item?.id; const filtered = prev.filter(x=>(x.catalog_item_id||x.id)!==id); return [item, ...filtered].slice(0,10); });
   };
 
   const handleAddToCart = (item) => {
+    const id = item.catalog_item_id || item.id;
     setCart(prev => {
-      const id = item.catalog_item_id || item.id;
       const exists = prev.find(x => (x.catalog_item_id || x.id) === id);
       return exists ? prev.map(x => (x.catalog_item_id || x.id) === id ? { ...x, qty: (x.qty || 1) + 1 } : x)
                     : [...prev, { ...item, qty: 1 }];
@@ -4215,6 +4243,14 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
     setCartFlash(true);
     setTimeout(() => setCartFlash(false), 600);
     setCartOpen(true);
+    // Sync with backend
+    const email = profile?.email;
+    if (email && id) {
+      fetch(`${API}/api/user/${encodeURIComponent(email)}/cart`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: id, action: "add", size: item.selectedSize || "", color: item.selectedColor || "" }),
+      }).catch(() => {});
+    }
   };
   const [profile, setProfile] = useState(initialProfile ? {
     email: initialProfile.email || "",

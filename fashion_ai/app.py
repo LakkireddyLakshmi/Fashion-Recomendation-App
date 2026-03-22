@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Path, Query, Request, Depends
+from fastapi import FastAPI, HTTPException, Path, Query, Request, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -2553,6 +2553,91 @@ async def health():
     info["catalog_loading"] = _catalog_loading
     info["tfidf_cache_entries"] = len(_tfidf_cache)
     return info
+
+
+# ── Wishlist, Cart, Ratings (per-user, in-memory + Boss API logging) ──
+
+# In-memory stores keyed by email
+_user_wishlists: Dict[str, Set[str]] = {}    # email -> set of catalog_item_ids
+_user_carts: Dict[str, List[Dict]] = {}      # email -> list of {item_id, size, color, qty}
+_user_ratings: Dict[str, Dict[str, int]] = {} # email -> {item_id: stars}
+
+
+@app.get("/api/user/{email}/wishlist", tags=["User Data"])
+async def get_wishlist(email: str):
+    items = list(_user_wishlists.get(email, set()))
+    return {"email": email, "items": items, "count": len(items)}
+
+
+@app.post("/api/user/{email}/wishlist", tags=["User Data"])
+async def update_wishlist(email: str, body: dict = Body(...)):
+    item_id = body.get("item_id", "")
+    action = body.get("action", "toggle")  # add, remove, toggle
+    if not item_id:
+        raise HTTPException(400, "item_id required")
+    if email not in _user_wishlists:
+        _user_wishlists[email] = set()
+    wl = _user_wishlists[email]
+    if action == "add":
+        wl.add(item_id)
+    elif action == "remove":
+        wl.discard(item_id)
+    else:  # toggle
+        if item_id in wl:
+            wl.discard(item_id)
+        else:
+            wl.add(item_id)
+    return {"email": email, "items": list(wl), "count": len(wl)}
+
+
+@app.get("/api/user/{email}/cart", tags=["User Data"])
+async def get_cart(email: str):
+    items = _user_carts.get(email, [])
+    return {"email": email, "items": items, "count": len(items)}
+
+
+@app.post("/api/user/{email}/cart", tags=["User Data"])
+async def update_cart(email: str, body: dict = Body(...)):
+    item_id = body.get("item_id", "")
+    action = body.get("action", "add")  # add, remove, clear
+    size = body.get("size", "")
+    color = body.get("color", "")
+    qty = body.get("qty", 1)
+    if email not in _user_carts:
+        _user_carts[email] = []
+    cart = _user_carts[email]
+    if action == "add":
+        # Check if item already in cart
+        existing = next((c for c in cart if c["item_id"] == item_id and c.get("size") == size and c.get("color") == color), None)
+        if existing:
+            existing["qty"] = existing.get("qty", 1) + qty
+        else:
+            cart.append({"item_id": item_id, "size": size, "color": color, "qty": qty})
+    elif action == "remove":
+        cart[:] = [c for c in cart if c["item_id"] != item_id]
+    elif action == "clear":
+        cart.clear()
+    return {"email": email, "items": cart, "count": len(cart)}
+
+
+@app.get("/api/user/{email}/ratings", tags=["User Data"])
+async def get_ratings(email: str):
+    ratings = _user_ratings.get(email, {})
+    return {"email": email, "ratings": ratings, "count": len(ratings)}
+
+
+@app.post("/api/user/{email}/ratings", tags=["User Data"])
+async def update_rating(email: str, body: dict = Body(...)):
+    item_id = body.get("item_id", "")
+    stars = body.get("stars", 0)
+    if not item_id:
+        raise HTTPException(400, "item_id required")
+    if not 1 <= stars <= 5:
+        raise HTTPException(400, "stars must be 1-5")
+    if email not in _user_ratings:
+        _user_ratings[email] = {}
+    _user_ratings[email][item_id] = stars
+    return {"email": email, "item_id": item_id, "stars": stars}
 
 
 # ── Startup / shutdown ────────────────────────────────────────────
