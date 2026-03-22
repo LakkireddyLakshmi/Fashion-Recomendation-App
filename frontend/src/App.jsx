@@ -1,5 +1,5 @@
 import { useState } from "react";
-import AuthScreen from "./AuthScreen";
+import { SignInPage } from "./components/ui/sign-in-flow";
 import ProfileChat from "./ProfileChat";
 import Fashionai from "./Fashionai";
 
@@ -10,7 +10,7 @@ function App() {
   const [recs, setRecs] = useState([]);
 
   if (!authData) {
-    return <AuthScreen onAuth={(data) => setAuthData(data)} />;
+    return <SignInPage onAuth={(data) => setAuthData(data)} />;
   }
 
   if (!profileDone) {
