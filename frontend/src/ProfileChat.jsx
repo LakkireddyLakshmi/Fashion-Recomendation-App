@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { TextGenerateEffect } from "./components/ui/text-generate-effect";
 import { AIVoiceInput } from "./components/ui/ai-voice-input";
 
 const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "";
@@ -348,7 +347,7 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
       display: "flex", flexDirection: "column",
       fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     }}>
-      {/* Centered layout when no messages (like ChatGPT) */}
+      {/* Centered layout when no messages */}
       {!hasMessages && !saving ? (
         <div style={{
           flex: 1, display: "flex", flexDirection: "column",
@@ -357,17 +356,12 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
           gap: 32,
         }}>
           <div style={{ textAlign: "center", maxWidth: 520 }}>
-            <TextGenerateEffect
-              words="Tell me about yourself — your age, gender, style preferences, favorite colors, and body type — so I can find your perfect fashion matches."
-              className="text-lg"
-              duration={0.4}
-              filter={true}
-            />
+            <p style={{ color: "#888", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+              Tell me about yourself — your age, gender, style preferences, favorite colors, and body type — so I can find your perfect fashion matches.
+            </p>
           </div>
 
-          {/* Centered input */}
           {inputBar}
-
         </div>
       ) : (
         <>

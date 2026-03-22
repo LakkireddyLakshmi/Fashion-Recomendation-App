@@ -338,13 +338,27 @@ export const SignInPage = ({ className, onAuth }) => {
 
       {/* Content */}
       <div className="relative z-10 flex flex-col flex-1 items-center justify-center min-h-screen">
-        {/* Centered container */}
-        <div className="w-full max-w-100 px-6">
+        {/* Glass card container */}
+        <div style={{
+          width: "100%", maxWidth: 460, padding: "48px 40px 40px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.06)",
+          borderRadius: 28,
+          backdropFilter: "blur(40px)",
+          boxShadow: "0 0 80px rgba(124,58,237,0.06), 0 0 0 1px rgba(255,255,255,0.04) inset",
+          margin: "0 24px",
+        }}>
           {/* Logo */}
-          <div className="flex items-center justify-center mb-12">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-black font-bold text-base">H</div>
-              <span className="text-white font-semibold text-xl tracking-tight">HueIQ</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 32 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 14,
+                background: "linear-gradient(135deg, #fff, #e5e5e5)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#000", fontWeight: 800, fontSize: 18,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+              }}>H</div>
+              <span style={{ color: "#fff", fontWeight: 600, fontSize: 22, letterSpacing: -0.5 }}>HueIQ</span>
             </div>
           </div>
             <AnimatePresence mode="wait">
@@ -357,57 +371,82 @@ export const SignInPage = ({ className, onAuth }) => {
                   transition={{ duration: 0.4, ease: "easeOut" }}
                   className="text-center"
                 >
-                  <div className="mb-14">
+                  {/* Title */}
+                  <div style={{ marginBottom: 44, textAlign: "center" }}>
                     <TextGenerateEffect
                       words={isLogin ? "Welcome back" : "Get started"}
-                      className="text-5xl tracking-tight"
+                      className="text-4xl tracking-tight"
                       duration={0.6}
                     />
-                    <p className="text-lg text-white/50 font-light mt-4">Your AI fashion stylist</p>
+                    <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 15, fontWeight: 300, marginTop: 10, letterSpacing: 0.3 }}>Your AI fashion stylist</p>
                   </div>
 
-                  <div>
-                    {/* Google Sign-In */}
-                    <div ref={googleBtnRef} className="flex justify-center [&_iframe]:!w-full [&>div]:!w-full" />
+                  {/* Google Sign-In */}
+                  <div ref={googleBtnRef} style={{ marginBottom: 32, display: "flex", justifyContent: "center" }} />
 
-                    <div className="flex items-center gap-4 my-10">
-                      <div className="h-px bg-white/10 flex-1" />
-                      <span className="text-white/40 text-sm">or</span>
-                      <div className="h-px bg-white/10 flex-1" />
+                  {/* Divider */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 32 }}>
+                    <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.1))" }} />
+                    <span style={{ color: "rgba(255,255,255,0.2)", fontSize: 10, textTransform: "uppercase", letterSpacing: 3, fontWeight: 500 }}>or</span>
+                    <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(255,255,255,0.1), transparent)" }} />
+                  </div>
+
+                  {/* Email input */}
+                  <form onSubmit={handleEmailSubmit} style={{ marginBottom: 36 }}>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type="email"
+                        placeholder="Enter your email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        style={{
+                          width: "100%", padding: "18px 60px 18px 24px",
+                          borderRadius: 14, border: "1px solid rgba(255,255,255,0.08)",
+                          background: "rgba(255,255,255,0.04)", color: "#fff",
+                          fontSize: 15, outline: "none",
+                          fontFamily: "inherit", boxSizing: "border-box",
+                          transition: "border-color 0.2s, background 0.2s",
+                        }}
+                        onFocus={(e) => { e.target.style.borderColor = "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.06)"; }}
+                        onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,0.08)"; e.target.style.background = "rgba(255,255,255,0.04)"; }}
+                        required
+                      />
+                      <button
+                        type="submit"
+                        style={{
+                          position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                          width: 44, height: 44, borderRadius: 10, border: "none",
+                          background: "linear-gradient(135deg, #7c3aed, #a855f7)", color: "#fff",
+                          fontSize: 16, cursor: "pointer", display: "flex",
+                          alignItems: "center", justifyContent: "center",
+                          transition: "opacity 0.2s",
+                          boxShadow: "0 4px 12px rgba(124,58,237,0.3)",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
+                        onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                      >→</button>
                     </div>
+                  </form>
 
-                    <form onSubmit={handleEmailSubmit}>
-                      <div className="relative">
-                        <input
-                          type="email"
-                          placeholder="you@example.com"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-5 px-8 pr-16 focus:outline-none focus:border-white/30 text-center bg-transparent text-lg"
-                          required
-                        />
-                        <button
-                          type="submit"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-white w-12 h-12 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors group overflow-hidden text-lg"
-                        >
-                          <span className="relative w-full h-full block overflow-hidden">
-                            <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">→</span>
-                            <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 -translate-x-full group-hover:translate-x-0">→</span>
-                          </span>
-                        </button>
-                      </div>
-                    </form>
+                  {/* Switch login/signup */}
+                  <div style={{ textAlign: "center" }}>
+                    <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, margin: 0 }}>
+                      {isLogin ? "Don't have an account? " : "Already have an account? "}
+                      <button
+                        onClick={() => { setIsLogin(!isLogin); setError(""); }}
+                        style={{
+                          background: "none", border: "none", color: "#a855f7",
+                          fontSize: 13, fontWeight: 600, cursor: "pointer",
+                          textDecoration: "none", fontFamily: "inherit",
+                          transition: "color 0.2s",
+                        }}
+                        onMouseEnter={(e) => e.target.style.color = "#c084fc"}
+                        onMouseLeave={(e) => e.target.style.color = "#a855f7"}
+                      >
+                        {isLogin ? "Sign up" : "Sign in"}
+                      </button>
+                    </p>
                   </div>
-
-                  <p className="text-sm text-white/40 mt-12">
-                    {isLogin ? "Don't have an account? " : "Already have an account? "}
-                    <button
-                      onClick={() => { setIsLogin(!isLogin); setError(""); }}
-                      className="underline text-white/60 hover:text-white transition-colors bg-transparent border-none cursor-pointer font-medium"
-                    >
-                      {isLogin ? "Sign up" : "Sign in"}
-                    </button>
-                  </p>
                 </motion.div>
               ) : step === "password" ? (
                 <motion.div
@@ -416,23 +455,30 @@ export const SignInPage = ({ className, onAuth }) => {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 100 }}
                   transition={{ duration: 0.4, ease: "easeOut" }}
-                  className="space-y-6 text-center"
+                  style={{ textAlign: "center" }}
                 >
-                  <div className="space-y-1">
-                    <h1 className="text-4xl font-bold tracking-tight text-white">
+                  <div style={{ marginBottom: 32 }}>
+                    <h1 style={{ fontSize: 32, fontWeight: 700, color: "#fff", margin: 0, letterSpacing: -0.5 }}>
                       {isLogin ? "Enter password" : "Create account"}
                     </h1>
-                    <p className="text-lg text-white/50 font-light">{email}</p>
+                    <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, marginTop: 8 }}>{email}</p>
                   </div>
 
-                  <form onSubmit={handlePasswordSubmit} className="space-y-4">
+                  <form onSubmit={handlePasswordSubmit}>
                     {!isLogin && (
                       <input
                         type="text"
                         placeholder="Your name"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-3 px-5 focus:outline-none focus:border-white/30 text-center bg-transparent"
+                        style={{
+                          width: "100%", padding: "18px 24px", borderRadius: 14,
+                          border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)",
+                          color: "#fff", fontSize: 15, outline: "none", fontFamily: "inherit",
+                          boxSizing: "border-box", marginBottom: 16, transition: "border-color 0.2s",
+                        }}
+                        onFocus={(e) => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
+                        onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.08)"}
                       />
                     )}
                     <input
@@ -440,22 +486,37 @@ export const SignInPage = ({ className, onAuth }) => {
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-3 px-5 focus:outline-none focus:border-white/30 text-center bg-transparent"
                       autoFocus
                       required
+                      style={{
+                        width: "100%", padding: "18px 24px", borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)",
+                        color: "#fff", fontSize: 15, outline: "none", fontFamily: "inherit",
+                        boxSizing: "border-box", marginBottom: 16, transition: "border-color 0.2s",
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
+                      onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.08)"}
                     />
 
                     {error && (
-                      <div className="text-red-400 text-sm bg-red-400/10 border border-red-400/20 rounded-xl px-4 py-2">
+                      <div style={{
+                        color: "#f87171", fontSize: 13, background: "rgba(248,113,113,0.1)",
+                        border: "1px solid rgba(248,113,113,0.2)", borderRadius: 12,
+                        padding: "10px 16px", marginBottom: 16, textAlign: "left",
+                      }}>
                         {error}
                       </div>
                     )}
 
-                    <div className="flex w-full gap-3">
+                    <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
                       <motion.button
                         type="button"
                         onClick={() => { setStep("email"); setPassword(""); setError(""); }}
-                        className="rounded-full bg-white text-black font-medium px-8 py-3 hover:bg-white/90 transition-colors w-[30%]"
+                        style={{
+                          padding: "16px 0", borderRadius: 14, border: "1px solid rgba(255,255,255,0.1)",
+                          background: "transparent", color: "#fff", fontWeight: 500,
+                          fontSize: 14, cursor: "pointer", fontFamily: "inherit", width: "35%",
+                        }}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                       >
@@ -464,12 +525,14 @@ export const SignInPage = ({ className, onAuth }) => {
                       <motion.button
                         type="submit"
                         disabled={loading || !password.trim()}
-                        className={cn(
-                          "flex-1 rounded-full font-medium py-3 border transition-all duration-300",
-                          password.trim() && !loading
-                            ? "bg-white text-black border-transparent hover:bg-white/90 cursor-pointer"
-                            : "bg-[#111] text-white/50 border-white/10 cursor-not-allowed"
-                        )}
+                        style={{
+                          flex: 1, padding: "16px 0", borderRadius: 14, border: "none",
+                          background: password.trim() && !loading ? "linear-gradient(135deg, #7c3aed, #a855f7)" : "rgba(255,255,255,0.06)",
+                          color: password.trim() && !loading ? "#fff" : "rgba(255,255,255,0.3)",
+                          fontWeight: 600, fontSize: 14, cursor: loading ? "wait" : "pointer",
+                          fontFamily: "inherit", transition: "all 0.2s",
+                          boxShadow: password.trim() && !loading ? "0 4px 16px rgba(124,58,237,0.3)" : "none",
+                        }}
                         whileHover={password.trim() ? { scale: 1.02 } : {}}
                         whileTap={password.trim() ? { scale: 0.98 } : {}}
                       >

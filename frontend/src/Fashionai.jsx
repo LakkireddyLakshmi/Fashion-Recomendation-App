@@ -4197,26 +4197,6 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMsg, setChatMsg] = useState("");
 
-  // Load wishlist + cart from backend on mount
-  useEffect(() => {
-    const email = profile?.email;
-    if (!email) return;
-    const e = encodeURIComponent(email);
-    fetch(`${API}/api/user/${e}/wishlist`).then(r => r.json()).then(d => {
-      if (d.items?.length) setWishlist(new Set(d.items));
-    }).catch(() => {});
-    fetch(`${API}/api/user/${e}/cart`).then(r => r.json()).then(d => {
-      if (d.items?.length) {
-        // Enrich cart items with product data from recs
-        const enriched = d.items.map(ci => {
-          const product = recs.find(r => (r.catalog_item_id || r.id) === ci.item_id);
-          return product ? { ...product, qty: ci.qty || 1 } : ci;
-        }).filter(x => x.name || x.item_id);
-        if (enriched.length) setCart(enriched);
-      }
-    }).catch(() => {});
-  }, [profile?.email]);
-
   const toggleWishlist = (item) => {
     const id = item?.catalog_item_id||item?.id;
     setWishlist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
@@ -4289,6 +4269,25 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
     bodyType: "",
     notes: "",
   });
+
+  // Load wishlist + cart from backend on mount
+  useEffect(() => {
+    const email = profile?.email;
+    if (!email) return;
+    const e = encodeURIComponent(email);
+    fetch(`${API}/api/user/${e}/wishlist`).then(r => r.json()).then(d => {
+      if (d.items?.length) setWishlist(new Set(d.items));
+    }).catch(() => {});
+    fetch(`${API}/api/user/${e}/cart`).then(r => r.json()).then(d => {
+      if (d.items?.length) {
+        const enriched = d.items.map(ci => {
+          const product = recs.find(r => (r.catalog_item_id || r.id) === ci.item_id);
+          return product ? { ...product, qty: ci.qty || 1 } : ci;
+        }).filter(x => x.name || x.item_id);
+        if (enriched.length) setCart(enriched);
+      }
+    }).catch(() => {});
+  }, [profile?.email]);
 
   // Derive a stable password from email — no password field needed in the wizard.
   // Existing users are matched by email and their profile is updated.
