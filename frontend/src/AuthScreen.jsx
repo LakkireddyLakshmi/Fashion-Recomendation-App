@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "555798614243-ih8m4mqnrfu6maei14fqcok7030f9neh.apps.googleusercontent.com";
 
 export default function AuthScreen({ onAuth }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -10,8 +11,76 @@ export default function AuthScreen({ onAuth }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [mounted, setMounted] = useState(false);
+  const googleBtnRef = useRef(null);
 
   useEffect(() => { setMounted(true); }, []);
+
+  // Load Google Identity Services
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = () => {
+      if (window.google && googleBtnRef.current) {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleGoogleResponse,
+        });
+        window.google.accounts.id.renderButton(googleBtnRef.current, {
+          theme: "outline",
+          size: "large",
+          width: "100%",
+          text: "continue_with",
+          shape: "rectangular",
+          logo_alignment: "center",
+        });
+      }
+    };
+    document.body.appendChild(script);
+    return () => { try { document.body.removeChild(script); } catch(e) { /* ignore */ } };
+  }, []);
+
+  const handleGoogleResponse = async (response) => {
+    setLoading(true);
+    setError("");
+    try {
+      // Decode the JWT to get user info
+      const payload = JSON.parse(atob(response.credential.split(".")[1]));
+      const googleEmail = payload.email;
+      const googleName = payload.name || payload.given_name || googleEmail.split("@")[0];
+
+      // Try to register/login with the backend
+      try {
+        const r = await fetch(`${API}/api/auth/register`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: googleEmail, password: response.credential.slice(0, 32), name: googleName }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const data = await r.json();
+        if (data.token) sessionStorage.setItem("hueiq_token", data.token);
+        onAuth({ email: googleEmail, name: googleName, token: data.token, isNewUser: true });
+      } catch (regErr) {
+        // If register fails (user exists), try login
+        const r = await fetch(`${API}/api/auth/login`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: googleEmail, password: response.credential.slice(0, 32) }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          if (data.token) sessionStorage.setItem("hueiq_token", data.token);
+          onAuth({ email: googleEmail, name: googleName, token: data.token, isNewUser: false });
+        } else {
+          // Backend doesn't have this user — just proceed without backend auth
+          onAuth({ email: googleEmail, name: googleName, token: null, isNewUser: true });
+        }
+      }
+    } catch (err) {
+      setError("Google sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -128,6 +197,17 @@ export default function AuthScreen({ onAuth }) {
           <p style={{ fontSize: 14, color: "#999", margin: "0 0 32px" }}>
             {isLogin ? "Sign in to your account" : "Create a new account"}
           </p>
+
+          {/* Google Sign-In */}
+          <div ref={googleBtnRef} style={{ marginBottom: 20 }} />
+
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12, marginBottom: 20,
+          }}>
+            <div style={{ flex: 1, height: 1, background: "#e5e5e5" }} />
+            <span style={{ fontSize: 12, color: "#aaa", fontWeight: 500 }}>OR</span>
+            <div style={{ flex: 1, height: 1, background: "#e5e5e5" }} />
+          </div>
 
           <form onSubmit={handleSubmit}>
             {!isLogin && (
