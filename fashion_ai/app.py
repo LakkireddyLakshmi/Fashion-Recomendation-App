@@ -702,15 +702,9 @@ def _filter_real_items(items: List[Dict]) -> List[Dict]:
         if not name and not category and not has_img:
             continue
 
-        # Discard auto-generated placeholder items:
-        # They have UUID-style names (e.g. "T-Shirt 00003aeb") AND no price AND no description
-        # Note: [A-Za-z0-9\s\-] needed to match names with hyphens like "T-Shirt"
-        import re as _re
-        is_uuid_name = bool(name and _re.match(r'^[A-Za-z0-9\s\-]+ [0-9a-f]{8}$', name))
-        has_price = float(item.get("base_price") or 0) > 0
-        has_desc  = bool(item.get("description") and item.get("description") != "string")
-        if is_uuid_name and not has_price and not has_desc:
-            continue
+        # Only discard items named exactly "string" (test data)
+        # Boss API items with UUID-style names (e.g. "Dress 009b3c31") are real products
+        # with images from Azure blob storage — keep them
 
         # Discard obvious test/template seed rows (name="string", desc="string")
         if name == "string":
