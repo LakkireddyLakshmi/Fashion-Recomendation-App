@@ -3565,6 +3565,17 @@ function _parseSearchIntent(t) {
   if (/\btrending\b|\bwhat'?s?\s?hot\b|\bshow\s?me\s?(everything|all)\b|\bsurprise\b|\brecommend\b|\bsuggest\b/.test(t) && !result.cat) {
     result.isGeneral = true; result.label = "trending picks";
   }
+  // Detect greetings / non-product queries
+  if (/^(hi|hey|hello|hii+|yo|sup|hola|howdy|good\s?(morning|evening|afternoon|night)|what'?s?\s?up)\s*[!?.]*$/i.test(t)) {
+    result.isGreeting = true;
+  }
+  if (/\b(thank|thanks|thx|ty|great|awesome|cool|nice|ok|okay|got it|sure)\b/i.test(t) && !result.cat && !result.color) {
+    result.isGreeting = true;
+  }
+  // Help queries
+  if (/\b(help|how|what can you|what do you)\b/i.test(t) && !result.cat) {
+    result.isHelp = true;
+  }
   return result;
 }
 
@@ -3826,6 +3837,19 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
     setLoading(true);
     const intent = _parseSearchIntent(txt);
     const { cat, color, gender, label, isGeneral, sortBy } = intent;
+
+    // Handle greetings
+    if (intent.isGreeting) {
+      setMsgs((m) => [...m, { role: "ai", text: "Hey! Tell me what you're looking for — like \"blue dress\", \"casual shirts\", or \"popular jeans\" and I'll find it for you ✦" }]);
+      setLoading(false);
+      return;
+    }
+    if (intent.isHelp) {
+      setMsgs((m) => [...m, { role: "ai", text: "I can help you find fashion! Try:\n• \"Show me black dresses\"\n• \"Cheap cotton shirts for men\"\n• \"Popular party wear\"\n• \"Floral tops under $50\"\n• \"Expensive leather jacket\"" }]);
+      setLoading(false);
+      return;
+    }
+
     setMsgs((m) => [
       ...m,
       { role: "ai", text: "Searching our catalog . . .", id: "prep" },
@@ -4696,6 +4720,20 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
                 // Use advanced parseIntent
                 const intent = _parseSearchIntent(q);
                 const { cat, color, gender, label, sortBy } = intent;
+
+                // Handle greetings / help
+                if (intent.isGreeting) {
+                  setChatMsg("Hey! Tell me what you're looking for — like \"blue dress\", \"casual shirts\", or \"popular jeans\" ✦");
+                  setChatResults([]);
+                  setChatLoading(false);
+                  return;
+                }
+                if (intent.isHelp) {
+                  setChatMsg("I can help you find fashion! Try asking:\n• \"Show me black dresses\"\n• \"Cheap cotton shirts for men\"\n• \"Popular party wear\"\n• \"Floral tops under $50\"");
+                  setChatResults([]);
+                  setChatLoading(false);
+                  return;
+                }
 
                 try {
                   const params = new URLSearchParams({ limit: "50" });
