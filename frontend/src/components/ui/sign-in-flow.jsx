@@ -336,18 +336,16 @@ export const SignInPage = ({ className, onAuth }) => {
       </div>
 
       {/* Content */}
-      <div className="relative z-10 flex flex-col flex-1">
-        {/* Logo */}
-        <div className="flex items-center justify-center pt-12">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-black font-bold text-sm">H</div>
-            <span className="text-white font-semibold text-lg tracking-tight">HueIQ</span>
+      <div className="relative z-10 flex flex-col flex-1 items-center justify-center min-h-screen">
+        {/* Centered container */}
+        <div className="w-full max-w-100 px-6">
+          {/* Logo */}
+          <div className="flex items-center justify-center mb-12">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-black font-bold text-base">H</div>
+              <span className="text-white font-semibold text-xl tracking-tight">HueIQ</span>
+            </div>
           </div>
-        </div>
-
-        {/* Form */}
-        <div className="flex-1 flex flex-col justify-center items-center px-6">
-          <div className="w-full max-w-sm">
             <AnimatePresence mode="wait">
               {step === "email" ? (
                 <motion.div
@@ -356,38 +354,38 @@ export const SignInPage = ({ className, onAuth }) => {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -100 }}
                   transition={{ duration: 0.4, ease: "easeOut" }}
-                  className="space-y-6 text-center"
+                  className="text-center"
                 >
-                  <div className="space-y-1">
-                    <h1 className="text-4xl font-bold tracking-tight text-white">
+                  <div className="mb-10">
+                    <h1 className="text-5xl font-bold tracking-tight text-white mb-4">
                       {isLogin ? "Welcome back" : "Get started"}
                     </h1>
-                    <p className="text-xl text-white/50 font-light">Your AI fashion stylist</p>
+                    <p className="text-lg text-white/50 font-light">Your AI fashion stylist</p>
                   </div>
 
-                  <div className="space-y-4">
+                  <div>
                     {/* Google Sign-In */}
-                    <div ref={googleBtnRef} className="flex justify-center" />
+                    <div ref={googleBtnRef} className="flex justify-center [&_iframe]:!w-full [&>div]:!w-full mb-8" />
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 mb-8">
                       <div className="h-px bg-white/10 flex-1" />
                       <span className="text-white/40 text-sm">or</span>
                       <div className="h-px bg-white/10 flex-1" />
                     </div>
 
-                    <form onSubmit={handleEmailSubmit}>
+                    <form onSubmit={handleEmailSubmit} className="mb-8">
                       <div className="relative">
                         <input
                           type="email"
                           placeholder="you@example.com"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
-                          className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-3 px-5 focus:outline-none focus:border-white/30 text-center bg-transparent"
+                          className="w-full backdrop-blur-sm text-white border border-white/10 rounded-full py-4 px-6 pr-14 focus:outline-none focus:border-white/30 text-center bg-transparent text-base"
                           required
                         />
                         <button
                           type="submit"
-                          className="absolute right-1.5 top-1.5 text-white w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors group overflow-hidden"
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors group overflow-hidden"
                         >
                           <span className="relative w-full h-full block overflow-hidden">
                             <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">→</span>
@@ -398,7 +396,7 @@ export const SignInPage = ({ className, onAuth }) => {
                     </form>
                   </div>
 
-                  <p className="text-sm text-white/40 pt-6">
+                  <p className="text-sm text-white/40">
                     {isLogin ? "Don't have an account? " : "Already have an account? "}
                     <button
                       onClick={() => { setIsLogin(!isLogin); setError(""); }}
@@ -508,6 +506,5 @@ export const SignInPage = ({ className, onAuth }) => {
           </div>
         </div>
       </div>
-    </div>
   );
 };
