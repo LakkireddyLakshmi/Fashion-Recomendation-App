@@ -91,6 +91,7 @@ const CSS = `
   ::-webkit-scrollbar{width:3px;}
   ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.2);border-radius:2px;}
   @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes slideUp{from{transform:translateY(100%);opacity:0;}to{transform:translateY(0);opacity:1;}}
   @keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
   @keyframes gradientShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
   @keyframes chipIn{from{opacity:0;transform:translateY(-6px) scale(0.92);}to{opacity:1;transform:translateY(0) scale(1);}}
@@ -4507,20 +4508,26 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
       )}
       {step === 3 && (
         <>
-          {/* Inline chat results panel */}
+          {/* Inline chat results panel — slides up from bottom */}
           {(chatResults || chatLoading) && (
             <div style={{
-              position: "fixed", inset: 0, zIndex: 99,
-              background: "linear-gradient(135deg, rgba(10,0,30,0.97) 0%, rgba(20,5,40,0.98) 50%, rgba(10,0,25,0.97) 100%)",
+              position: "fixed", left: 0, right: 0, bottom: 80, zIndex: 99,
+              maxHeight: "70vh",
+              background: "rgba(10,0,25,0.97)",
               backdropFilter: "blur(24px)",
+              borderTop: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: "24px 24px 0 0",
               overflowY: "auto",
-              padding: "0 0 120px",
+              padding: "0 0 20px",
+              boxShadow: "0 -20px 60px rgba(0,0,0,0.5)",
+              animation: "slideUp 0.3s ease-out",
             }}>
               {/* Header */}
               <div style={{
                 position: "sticky", top: 0, zIndex: 10,
-                background: "linear-gradient(180deg, rgba(10,0,30,1) 0%, rgba(10,0,30,0.95) 80%, transparent 100%)",
-                padding: "28px 32px 20px",
+                background: "rgba(10,0,25,0.98)",
+                borderRadius: "24px 24px 0 0",
+                padding: "20px 28px 16px",
               }}>
                 <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
@@ -4578,7 +4585,7 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
                     </p>
                     <div style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
                       gap: 24,
                     }}>
                       {chatResults.map((item, i) => {
