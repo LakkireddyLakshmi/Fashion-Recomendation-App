@@ -1,5 +1,5 @@
-import { Mic } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { Mic, MicOff } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "../../lib/utils";
 
 export function AIVoiceInput({
@@ -35,22 +35,30 @@ export function AIVoiceInput({
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const stopListening = () => {
+  // Use ref to track listening state (avoids stale closure in onend)
+  const isListeningRef = useRef(false);
+  const transcriptRef = useRef("");
+
+  const stopListening = useCallback(() => {
+    isListeningRef.current = false;
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try { recognitionRef.current.stop(); } catch (_) { /* ignore */ }
       recognitionRef.current = null;
     }
     setSubmitted(false);
-    // Send final transcript
-    if (transcript) {
-      onTranscript?.(transcript);
-    }
-  };
+  }, []);
 
-  const startListening = () => {
+  const startListening = useCallback(() => {
+    // Check HTTPS (Web Speech API requires secure context)
+    const isSecure = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      alert("Speech recognition not supported in this browser.");
+      alert("Speech recognition is not supported in this browser. Please use Chrome.");
+      return;
+    }
+    if (!isSecure) {
+      alert("Voice input requires HTTPS. Please use the deployed site.");
       return;
     }
 
@@ -60,6 +68,7 @@ export function AIVoiceInput({
     recognition.continuous = true;
     recognition.maxAlternatives = 1;
     recognitionRef.current = recognition;
+    isListeningRef.current = true;
 
     recognition.onresult = (event) => {
       let finalText = "", interim = "";
@@ -69,23 +78,29 @@ export function AIVoiceInput({
         else interim += t;
       }
       const text = finalText || interim;
+      transcriptRef.current = text;
       setTranscript(text);
       onTranscript?.(text);
     };
 
     recognition.onerror = (e) => {
       console.warn("Speech error:", e.error);
-      setSubmitted(false);
+      isListeningRef.current = false;
       recognitionRef.current = null;
+      setSubmitted(false);
       if (e.error === "not-allowed") {
         alert("Microphone access denied. Please allow it in browser settings.");
+      } else if (e.error === "network") {
+        alert("Speech recognition requires HTTPS. Please use the deployed site.");
       }
     };
 
     recognition.onend = () => {
-      // If continuous mode ends unexpectedly, restart
-      if (submitted && recognitionRef.current) {
+      // Auto-restart if still listening (continuous mode can stop unexpectedly)
+      if (isListeningRef.current && recognitionRef.current) {
         try { recognition.start(); } catch (_) { /* ignore */ }
+      } else {
+        setSubmitted(false);
       }
     };
 
@@ -93,18 +108,20 @@ export function AIVoiceInput({
       recognition.start();
       setSubmitted(true);
       setTranscript("");
+      transcriptRef.current = "";
     } catch (err) {
-      console.error("Speech failed:", err);
+      console.error("Speech start failed:", err);
+      isListeningRef.current = false;
     }
-  };
+  }, [onTranscript]);
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     if (submitted) {
       stopListening();
     } else {
       startListening();
     }
-  };
+  }, [submitted, stopListening, startListening]);
 
   // Cleanup on unmount
   useEffect(() => {

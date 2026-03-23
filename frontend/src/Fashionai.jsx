@@ -2769,7 +2769,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("match");
   const [searchQ, setSearchQ] = useState("");
-  const [priceFilter, setPriceFilter] = useState("500to5k");
+  const [priceFilter, setPriceFilter] = useState("all");
   const PER = 12;
 
   // Derive unique category chips from recommendations
@@ -2787,7 +2787,11 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
     let list = recommendations;
     if (activeFilter !== "All") {
       const af = activeFilter.toLowerCase();
-      list = list.filter(item => (item.category || "").toLowerCase().includes(af));
+      list = list.filter(item => {
+        const cat = (item.category || "").toLowerCase();
+        const name = (item.name || "").toLowerCase();
+        return cat.includes(af) || cat === af || name.includes(af);
+      });
     }
     if (searchQ.trim()) {
       const q = searchQ.trim().toLowerCase();

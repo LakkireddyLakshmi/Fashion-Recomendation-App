@@ -17,7 +17,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
   const [saving, setSaving] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [showVoiceOverlay, setShowVoiceOverlay] = useState(false);
-  const recognitionRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -165,107 +164,6 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
     if (!input.trim()) return;
     sendMessage(input);
     setInput("");
-  };
-
-  const toggleVoice = async () => {
-    if (isListening) {
-      if (recognitionRef.current?.stop) recognitionRef.current.stop();
-      setIsListening(false);
-      return;
-    }
-
-    // Try Web Speech API first (works on Chrome HTTPS)
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.lang = "en-US";
-      recognition.interimResults = true;
-      recognition.continuous = false;
-      recognitionRef.current = recognition;
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (event) => {
-        let interim = "", finalText = "";
-        for (let i = 0; i < event.results.length; i++) {
-          const t = event.results[i][0].transcript;
-          if (event.results[i].isFinal) finalText += t;
-          else interim += t;
-        }
-        setInput(finalText || interim);
-      };
-      recognition.onerror = (e) => {
-        console.warn("Web Speech error:", e.error, "- falling back to mic recording");
-        setIsListening(false);
-        if (e.error === "not-allowed") {
-          alert("Microphone access denied. Please allow it in browser settings.");
-          return;
-        }
-        // Fall back to MediaRecorder for network/other errors
-        startMicRecording();
-      };
-      recognition.onend = () => setIsListening(false);
-
-      try { recognition.start(); return; }
-      catch (e) { console.warn("Web Speech failed, using fallback"); }
-    }
-
-    // Fallback: record with MediaRecorder and send to Xpectrum
-    startMicRecording();
-  };
-
-  const startMicRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/mp4")
-        ? "audio/mp4"
-        : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType });
-      const chunks = [];
-      recognitionRef.current = { stop: () => recorder.stop() };
-
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-      recorder.onstart = () => setIsListening(true);
-      recorder.onstop = async () => {
-        setIsListening(false);
-        stream.getTracks().forEach(t => t.stop());
-        const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-        const blob = new Blob(chunks, { type: mimeType });
-        if (blob.size < 1000) { console.warn("Recording too short"); return; }
-
-        // Send to Xpectrum audio-to-text
-        if (CHAT_BASE && CHAT_KEY) {
-          try {
-            setInput("Transcribing...");
-            const fd = new FormData();
-            fd.append("file", blob, `recording.${ext}`);
-            fd.append("user", email || "user");
-            const res = await fetch(`${CHAT_BASE}/audio-to-text`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${CHAT_KEY}` },
-              body: fd,
-            });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.text) { setInput(data.text); return; }
-            }
-          } catch (err) { console.warn("Xpectrum STT failed:", err); }
-        }
-        setInput("");
-        alert("Voice transcription is not available. Please type your answer.");
-      };
-
-      recorder.start();
-      // Auto-stop after 8 seconds
-      setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 8000);
-    } catch (err) {
-      setIsListening(false);
-      if (err.name === "NotAllowedError") {
-        alert("Microphone access denied. Please allow it in browser settings.");
-      } else {
-        alert("Could not access microphone. Please check your device settings.");
-      }
-    }
   };
 
   const cleanText = (text) => {
@@ -463,12 +361,15 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
           </button>
           <AIVoiceInput
             onStart={() => setIsListening(true)}
-            onStop={() => setIsListening(false)}
-            onTranscript={(text) => {
-              if (text) {
-                setInput(text);
-                setShowVoiceOverlay(false);
+            onStop={(duration) => {
+              setIsListening(false);
+              // Only close after user stops — transcript already set via onTranscript
+              if (duration > 0) {
+                setTimeout(() => setShowVoiceOverlay(false), 300);
               }
+            }}
+            onTranscript={(text) => {
+              if (text) setInput(text);
             }}
             visualizerBars={48}
           />
