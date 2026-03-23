@@ -2772,18 +2772,26 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
   const [priceFilter, setPriceFilter] = useState("all");
   const PER = 12;
 
-  // Derive unique category chips from recommendations
+  // Derive unique category chips from recommendations (only show categories with 2+ items)
   const categoryChips = useMemo(() => {
-    const cats = new Set();
+    const cats = {};
     recommendations.forEach(item => {
-      const c = (item.category || "").toLowerCase().trim();
-      if (c) cats.add(c.charAt(0).toUpperCase() + c.slice(1));
+      const c = (item.category || "").trim();
+      if (c) {
+        const key = c.charAt(0).toUpperCase() + c.slice(1).toLowerCase();
+        cats[key] = (cats[key] || 0) + 1;
+      }
     });
-    return ["All", ...Array.from(cats).slice(0, 8)];
+    const sorted = Object.entries(cats)
+      .filter(([_, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name)
+      .slice(0, 8);
+    return ["All", ...sorted];
   }, [recommendations]);
 
   // Filter + sort
-  const filtered = useMemo(() => {
+  const filteredData = useMemo(() => {
     let list = recommendations;
     if (activeFilter !== "All") {
       const af = activeFilter.toLowerCase();
@@ -2812,9 +2820,17 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
     if (sortBy === "price_desc") sorted.sort((a, b) => (resolvePrice(b)||0) - (resolvePrice(a)||0));
     if (sortBy === "discount")   sorted.sort((a, b) => (b.discount_percent||0) - (a.discount_percent||0));
     if (sortBy === "match")      sorted.sort((a, b) => resolveScore(b) - resolveScore(a));
-    return sorted;
+
+    // If no results, show "You might also like" from all recommendations
+    if (sorted.length === 0 && activeFilter !== "All") {
+      const fallback = [...recommendations].sort(() => Math.random() - 0.5).slice(0, PER);
+      return { items: fallback, isFallback: true };
+    }
+    return { items: sorted, isFallback: false };
   }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
 
+  const filtered = filteredData.items;
+  const isFallback = filteredData.isFallback;
   const pages = Math.max(1, Math.ceil(filtered.length / PER));
   const safePageNum = Math.min(page, pages - 1);
   const visible = filtered.slice(safePageNum * PER, safePageNum * PER + PER);
@@ -2903,7 +2919,11 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
 
         {/* ── Results info ── */}
         <div style={{ fontFamily: "'League Spartan'", fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>
-          Showing {safePageNum * PER + 1}–{Math.min((safePageNum + 1) * PER, filtered.length)} of {filtered.length} results
+          {isFallback ? (
+            <><span style={{ color: "#a855f7" }}>You might also like</span> · {filtered.length} suggestions</>
+          ) : (
+            <>Showing {safePageNum * PER + 1}–{Math.min((safePageNum + 1) * PER, filtered.length)} of {filtered.length} results</>
+          )}
           {activeFilter !== "All" && <span style={{ marginLeft: 8, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>· {activeFilter}</span>}
         </div>
 
