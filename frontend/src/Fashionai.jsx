@@ -4498,7 +4498,7 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
   return (
     <>
       {/* ── Floating cart counter ── */}
-      {cartCount >= 0 && step === 3 && (
+      {cartCount >= 0 && step === 3 && !chatResults && !chatLoading && (
         <div style={{ position:"fixed", top:18, right:18, zIndex:200, display:"flex", gap:10 }}>
           {/* Liked button */}
           <button onClick={()=>setLikedOpen(true)} style={{
