@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "441654168539-vn4ht168i2fo4hk2rqggapla75jf4hds.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 export default function AuthScreen({ onAuth }) {
   const [isLogin, setIsLogin] = useState(true);
