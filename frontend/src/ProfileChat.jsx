@@ -78,6 +78,7 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
         signal: AbortSignal.timeout(30000),
         body: JSON.stringify({
           email, name,
+          password: sessionStorage.getItem("hueiq_password") || email + "_hueiq2024",
           gender: profileData.gender,
           age: Number(profileData.age) || null,
           location: profileData.city,

@@ -51,13 +51,15 @@ export default function AuthScreen({ onAuth }) {
 
       // Try to register/login with the backend
       try {
+        const googlePassword = response.credential.slice(0, 32);
         const r = await fetch(`${API}/api/auth/register`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: googleEmail, password: response.credential.slice(0, 32), name: googleName }),
+          body: JSON.stringify({ email: googleEmail, password: googlePassword, name: googleName }),
           signal: AbortSignal.timeout(15000),
         });
         const data = await r.json();
         if (data.token) sessionStorage.setItem("hueiq_token", data.token);
+        sessionStorage.setItem("hueiq_password", googlePassword);
         onAuth({ email: googleEmail, name: googleName, token: data.token, isNewUser: true });
       } catch (regErr) {
         // If register fails (user exists), try login
@@ -98,6 +100,7 @@ export default function AuthScreen({ onAuth }) {
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "Login failed"); }
         const data = await r.json();
         if (data.token) sessionStorage.setItem("hueiq_token", data.token);
+        sessionStorage.setItem("hueiq_password", password);
         onAuth({ email: email.trim(), name: data.name || email.split("@")[0], token: data.token, isNewUser: false });
       } else {
         const r = await fetch(`${API}/api/auth/register`, {
@@ -108,6 +111,7 @@ export default function AuthScreen({ onAuth }) {
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || "Registration failed"); }
         const data = await r.json();
         if (data.token) sessionStorage.setItem("hueiq_token", data.token);
+        sessionStorage.setItem("hueiq_password", password);
         onAuth({ email: email.trim(), name: name.trim(), token: data.token, isNewUser: true });
       }
     } catch (e) { setError(e.message); }
