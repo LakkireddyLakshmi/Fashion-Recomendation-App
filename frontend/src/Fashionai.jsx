@@ -15,6 +15,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import TryOnModal from "./components/TryOnModal";
 import ImageSearchButton from "./components/ImageSearchButton";
+import UserProfile from "./components/UserProfile";
+import SizeRecommendation from "./components/SizeRecommendation";
+import OutfitBuilder from "./components/OutfitBuilder";
+import CheckoutDrawer from "./components/CheckoutDrawer";
 
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
@@ -2721,7 +2725,7 @@ function ProductCard({ item, onClick, compact = false, onAddToCart, wishlisted =
   );
 }
 
-function CartDrawer({ cart, onClose, onUpdateQty, onRemove }) {
+function CartDrawer({ cart, onClose, onUpdateQty, onRemove, onCheckout }) {
   const total = cart.reduce((s, x) => s + (resolvePrice(x) || 999) * (x.qty || 1), 0);
   const gst = total * 0.18;
   return (
@@ -2786,8 +2790,8 @@ function CartDrawer({ cart, onClose, onUpdateQty, onRemove }) {
             <div style={{ display:"flex", justifyContent:"space-between", marginBottom:18, fontSize:17, fontWeight:700, color:"#fff", borderTop:"1px solid rgba(255,255,255,0.1)", paddingTop:10 }}>
               <span>Total</span><span>${(total+gst).toLocaleString("en-US", {maximumFractionDigits:0})}</span>
             </div>
-            <button style={{ width:"100%", background:"linear-gradient(135deg,#7c3aed,#a855f7)", border:"none", borderRadius:14, padding:"14px 0", color:"#fff", fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:"'League Spartan'", letterSpacing:0.5, boxShadow:"0 4px 20px rgba(124,58,237,0.4)" }}>
-              Proceed to Checkout →
+            <button onClick={() => onCheckout && onCheckout()} style={{ width:"100%", background:"linear-gradient(135deg,#7c3aed,#a855f7)", border:"none", borderRadius:14, padding:"14px 0", color:"#fff", fontSize:16, fontWeight:700, cursor:"pointer", fontFamily:"'League Spartan'", letterSpacing:0.5, boxShadow:"0 4px 20px rgba(124,58,237,0.4)" }}>
+              Proceed to Checkout
             </button>
             <button onClick={onClose} style={{ width:"100%", background:"transparent", border:"1px solid rgba(255,255,255,0.15)", borderRadius:14, padding:"11px 0", color:"rgba(255,255,255,0.6)", fontSize:14, cursor:"pointer", fontFamily:"'League Spartan'", marginTop:8 }}>
               Continue Shopping
@@ -3444,6 +3448,11 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
                 </div>
               )}
 
+              {/* Size Recommendation */}
+              {userProfile?.height && userProfile?.weight && (
+                <SizeRecommendation height={userProfile.height} weight={userProfile.weight} bodyType={userProfile.bodyType} />
+              )}
+
               {/* Sizes */}
               {item?.available_sizes?.length > 0 && (
                 <div>
@@ -3475,6 +3484,7 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
               {/* Action buttons */}
               <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
                 <button
+                  onClick={() => onAddToCart && onAddToCart({ ...item, selectedSize: selSize })}
                   style={{
                     flex: 1,
                     background: "linear-gradient(135deg,#a855f7,#6366f1)",
@@ -3544,10 +3554,24 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
       {/* ── You May Also Like ── */}
       {(() => {
         const thisCat = (item?.category || "").toLowerCase();
-        const similar = allRecs
-          .filter(r => (r.catalog_item_id || r.id) !== (item?.catalog_item_id || item?.id)
-                    && (r.category || "").toLowerCase() === thisCat)
-          .slice(0, 4);
+        const thisId = item?.catalog_item_id || item?.id;
+        const thisColors = (item?.available_colors || []).map(c => c.toLowerCase());
+        const thisTags = (item?.style_tags || []).map(t => t.toLowerCase());
+        // Score each candidate by category match + color overlap + tag overlap
+        const scored = allRecs
+          .filter(r => (r.catalog_item_id || r.id) !== thisId)
+          .map(r => {
+            let score = 0;
+            if ((r.category || "").toLowerCase() === thisCat) score += 3;
+            const rColors = (r.available_colors || []).map(c => c.toLowerCase());
+            const rTags = (r.style_tags || []).map(t => t.toLowerCase());
+            if (rColors.some(c => thisColors.includes(c))) score += 2;
+            if (rTags.some(t => thisTags.includes(t))) score += 1;
+            return { ...r, _simScore: score };
+          })
+          .filter(r => r._simScore > 0)
+          .sort((a, b) => b._simScore - a._simScore);
+        const similar = scored.slice(0, 4);
         if (!similar.length) return null;
         return (
           <div style={{ width: "100%", maxWidth: 1100, marginTop: 32, paddingBottom: 32 }}>
@@ -4260,7 +4284,7 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
   );
 }
 
-export default function App({ initialProfile, initialRecs, skipWizard, onLogout }) {
+export default function App({ initialProfile, initialRecs, skipWizard, onLogout, onProfileUpdate }) {
   const [step, setStep] = useState(skipWizard ? 3 : 0);
   const [view, setView] = useState("wizard");
   const [selItem, setSelItem] = useState(null);
@@ -4277,6 +4301,9 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout 
   const [chatResults, setChatResults] = useState(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMsg, setChatMsg] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [outfitBuilderOpen, setOutfitBuilderOpen] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   const toggleWishlist = (item) => {
     const id = item?.catalog_item_id||item?.id;
@@ -4556,6 +4583,33 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout 
       {/* ── Floating cart counter ── */}
       {cartCount >= 0 && step === 3 && !chatResults && !chatLoading && (
         <div className="floating-nav" style={{ position:"fixed", top:18, right:18, zIndex:200, display:"flex", gap:10 }}>
+          {/* Profile button */}
+          <button onClick={()=>setProfileOpen(true)} style={{
+            background: "rgba(255,255,255,0.12)",
+            color: "rgba(255,255,255,0.65)",
+            borderRadius:50, padding:"8px 14px", border: "1px solid rgba(255,255,255,0.18)",
+            display:"flex", alignItems:"center", gap:6,
+            fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:15,
+            cursor:"pointer", transition:"all 0.3s",
+          }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+          </button>
+          {/* Outfit Builder button */}
+          <button onClick={()=>setOutfitBuilderOpen(true)} style={{
+            background: "rgba(255,255,255,0.12)",
+            color: "rgba(255,255,255,0.65)",
+            borderRadius:50, padding:"8px 14px", border: "1px solid rgba(255,255,255,0.18)",
+            display:"flex", alignItems:"center", gap:6,
+            fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:13,
+            cursor:"pointer", transition:"all 0.3s",
+          }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+            </svg>
+            Outfit
+          </button>
           {/* Liked button */}
           <button onClick={()=>setLikedOpen(true)} style={{
             background: wishlist.size > 0 ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.12)",
@@ -5018,6 +5072,32 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout 
             }
           }}
           onRemove={(item) => setCart(prev => prev.filter(x => (x.catalog_item_id||x.id) !== (item.catalog_item_id||item.id)))}
+          onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }}
+        />
+      )}
+      {profileOpen && (
+        <UserProfile
+          profile={profile}
+          onUpdate={(updatedProfile) => {
+            setProfile(updatedProfile);
+            onProfileUpdate && onProfileUpdate(updatedProfile);
+          }}
+          onClose={() => setProfileOpen(false)}
+        />
+      )}
+      {outfitBuilderOpen && (
+        <OutfitBuilder
+          allItems={recs}
+          onClose={() => setOutfitBuilderOpen(false)}
+          userEmail={profile?.email}
+        />
+      )}
+      {checkoutOpen && cart.length > 0 && (
+        <CheckoutDrawer
+          cart={cart}
+          profile={profile}
+          onClose={() => setCheckoutOpen(false)}
+          onOrderPlaced={() => { setCart([]); setCheckoutOpen(false); }}
         />
       )}
     </>

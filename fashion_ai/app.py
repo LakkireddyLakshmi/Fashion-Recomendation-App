@@ -2744,6 +2744,60 @@ async def virtual_tryon(request: Request):
         raise HTTPException(503, f"Try-on service unavailable: {str(e)}")
 
 
+# ── Orders ────────────────────────────────────────────────────────
+_orders_store: Dict[str, List[Dict]] = {}   # in-memory; keyed by email
+
+class OrderItem(BaseModel):
+    catalog_item_id: str
+    name: str = ""
+    price: float = 0
+    qty: int = 1
+    size: str = ""
+    image: str = ""
+
+class OrderCustomer(BaseModel):
+    name: str
+    phone: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    zip: str = ""
+
+class CreateOrderIn(BaseModel):
+    email: str
+    customer: OrderCustomer
+    items: List[OrderItem]
+    subtotal: float = 0
+    gst: float = 0
+    total: float = 0
+
+@app.post("/api/orders", tags=["Orders"],
+          summary="Place a new order")
+async def create_order(data: CreateOrderIn):
+    order_id = f"ORD-{uuid.uuid4().hex[:8].upper()}"
+    order = {
+        "order_id": order_id,
+        "email": data.email,
+        "customer": data.customer.model_dump(),
+        "items": [i.model_dump() for i in data.items],
+        "subtotal": data.subtotal,
+        "gst": data.gst,
+        "total": data.total,
+        "status": "confirmed",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _orders_store.setdefault(data.email, []).append(order)
+    log.info("Order %s placed for %s — %d items, total $%.0f",
+             order_id, data.email, len(data.items), data.total)
+    return {"order_id": order_id, "status": "confirmed", "order": order}
+
+@app.get("/api/orders/{email}", tags=["Orders"],
+         summary="Get orders for a user")
+async def get_orders(email: str):
+    orders = _orders_store.get(email, [])
+    return {"orders": orders, "total": len(orders)}
+
+
 # ── Startup / shutdown ────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():

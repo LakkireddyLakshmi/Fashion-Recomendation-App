@@ -11,6 +11,13 @@ const profileSlice = createSlice({
       state.data = action.payload;
       state.isComplete = true;
     },
+    updateProfile(state, action) {
+      if (state.data) {
+        state.data = { ...state.data, ...action.payload };
+      } else {
+        state.data = action.payload;
+      }
+    },
     clearProfile(state) {
       state.data = null;
       state.isComplete = false;
@@ -18,5 +25,5 @@ const profileSlice = createSlice({
   },
 });
 
-export const { setProfile, clearProfile } = profileSlice.actions;
+export const { setProfile, updateProfile, clearProfile } = profileSlice.actions;
 export default profileSlice.reducer;

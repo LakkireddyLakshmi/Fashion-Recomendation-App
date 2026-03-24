@@ -1,6 +1,6 @@
 import { useSelector, useDispatch } from "react-redux";
 import { login, logout } from "./store/authSlice";
-import { clearProfile } from "./store/profileSlice";
+import { clearProfile, updateProfile } from "./store/profileSlice";
 import { persistor } from "./store";
 import { setProfile } from "./store/profileSlice";
 import { setRecommendations } from "./store/recommendationsSlice";
@@ -60,6 +60,7 @@ function App() {
         dispatch(clearProfile());
         persistor.purge();
       }}
+      onProfileUpdate={(data) => dispatch(updateProfile(data))}
     />
   );
 }
