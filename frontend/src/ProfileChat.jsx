@@ -116,10 +116,13 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
       onProfileComplete(profileData, recs);
     } catch (e) {
       console.error("Save profile error:", e);
-      setMessages(prev => [...prev, {
-        id: `err-${Date.now()}`, role: "assistant",
-        text: "There was an issue saving your profile. Please try again.",
-      }]);
+      // Still proceed even if backend save fails — profile is in Redux
+      let recs = [];
+      try {
+        const rr = await fetch(`${API}/api/recommendations/trending?limit=20`, { signal: AbortSignal.timeout(30000) });
+        if (rr.ok) { const rd = await rr.json(); recs = rd.recommendations || rd.items || []; }
+      } catch {}
+      onProfileComplete(profileData, recs);
     } finally { setSaving(false); }
   };
 
