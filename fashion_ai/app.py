@@ -2561,6 +2561,8 @@ async def health():
 _user_wishlists: Dict[str, Set[str]] = {}    # email -> set of catalog_item_ids
 _user_carts: Dict[str, List[Dict]] = {}      # email -> list of {item_id, size, color, qty}
 _user_ratings: Dict[str, Dict[str, int]] = {} # email -> {item_id: stars}
+_user_outfits: Dict[str, List[Dict]] = {}    # email -> list of outfit dicts
+_user_orders: Dict[str, List[Dict]] = {}     # email -> list of order dicts
 
 
 async def _boss_log_interaction(user_id: int, catalog_item_id: str, event_type: str, event_value: dict = None):
@@ -2683,6 +2685,37 @@ async def update_rating(email: str, body: dict = Body(...)):
     asyncio.create_task(_boss_log_interaction(uid, item_id, "click", {"action": "rating", "stars": stars}))
     return {"email": email, "item_id": item_id, "stars": stars}
 
+
+# ── Outfits ───────────────────────────────────────────────────────
+
+@app.get("/api/user/{email}/outfits", tags=["User Data"])
+async def get_outfits(email: str):
+    return {"email": email, "outfits": _user_outfits.get(email, []), "count": len(_user_outfits.get(email, []))}
+
+@app.post("/api/user/{email}/outfits", tags=["User Data"])
+async def save_outfit(email: str, body: dict = Body(...)):
+    import uuid
+    items = body.get("items", [])
+    name = body.get("name", "My Outfit")
+    if not items:
+        raise HTTPException(400, "items required")
+    outfit = {"id": str(uuid.uuid4()), "name": name, "items": items, "created_at": str(datetime.utcnow())}
+    if email not in _user_outfits:
+        _user_outfits[email] = []
+    _user_outfits[email].append(outfit)
+    return {"email": email, "outfit": outfit}
+
+@app.delete("/api/user/{email}/outfits/{outfit_id}", tags=["User Data"])
+async def delete_outfit(email: str, outfit_id: str):
+    if email in _user_outfits:
+        _user_outfits[email] = [o for o in _user_outfits[email] if o["id"] != outfit_id]
+    return {"email": email, "deleted": outfit_id}
+
+# ── Orders ────────────────────────────────────────────────────────
+
+@app.get("/api/orders/{email}", tags=["Orders"])
+async def get_orders(email: str):
+    return {"email": email, "orders": _user_orders.get(email, []), "count": len(_user_orders.get(email, []))}
 
 # ── Image Search & Virtual Try-On ─────────────────────────────────
 
