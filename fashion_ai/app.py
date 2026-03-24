@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Path, Query, Request, Depends, Body
+from fastapi import FastAPI, HTTPException, Path, Query, Request, Depends, Body, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -2682,6 +2682,66 @@ async def update_rating(email: str, body: dict = Body(...)):
     uid = _get_user_id(email)
     asyncio.create_task(_boss_log_interaction(uid, item_id, "click", {"action": "rating", "stars": stars}))
     return {"email": email, "item_id": item_id, "stars": stars}
+
+
+# ── Image Search & Virtual Try-On ─────────────────────────────────
+
+@app.post("/api/image-search", tags=["Search"])
+async def image_search(file: UploadFile = File(...), limit: int = Query(12, ge=1, le=50)):
+    """Upload an image to find visually similar products."""
+    contents = await file.read()
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            # Try Boss API catalog search
+            r = await c.post(
+                f"{BOSS_URL}/api/catalog/search",
+                files={"file": (file.filename, contents, file.content_type)},
+                data={"limit": str(limit)},
+            )
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("results", data.get("items", []))
+                return {"items": items, "total": len(items)}
+
+            # Fallback: try vector search
+            import base64
+            b64 = base64.b64encode(contents).decode()
+            r2 = await c.post(
+                f"{BOSS_URL}/api/stores/1/recommendations/vector-search",
+                json={"image": b64, "limit": limit},
+            )
+            if r2.status_code == 200:
+                data = r2.json()
+                items = data if isinstance(data, list) else data.get("results", data.get("items", data.get("recommendations", [])))
+                return {"items": items, "total": len(items)}
+
+    except Exception as e:
+        log.warning("Image search failed: %s", e)
+
+    # Final fallback: return trending items
+    items = await fetch_catalog()
+    import random
+    sample = random.sample(items, min(limit, len(items))) if items else []
+    return {"items": sample, "total": len(sample), "fallback": True}
+
+
+@app.post("/api/tryon", tags=["Try-On"])
+async def virtual_tryon(request: Request):
+    """Proxy virtual try-on request to Boss API."""
+    body = await request.json()
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(
+                f"{BOSS_URL}/api/tryon/generate",
+                json=body,
+            )
+            if r.status_code == 200:
+                return r.json()
+            else:
+                return {"error": f"Try-on service returned {r.status_code}", "detail": r.text[:500]}
+    except Exception as e:
+        log.warning("Try-on failed: %s", e)
+        raise HTTPException(503, f"Try-on service unavailable: {str(e)}")
 
 
 # ── Startup / shutdown ────────────────────────────────────────────

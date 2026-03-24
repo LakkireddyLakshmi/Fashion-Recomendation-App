@@ -1,5 +1,7 @@
 import { useSelector, useDispatch } from "react-redux";
 import { login, logout } from "./store/authSlice";
+import { clearProfile } from "./store/profileSlice";
+import { persistor } from "./store";
 import { setProfile } from "./store/profileSlice";
 import { setRecommendations } from "./store/recommendationsSlice";
 import { SignInPage } from "./components/ui/sign-in-flow";
@@ -55,6 +57,8 @@ function App() {
       skipWizard={true}
       onLogout={() => {
         dispatch(logout());
+        dispatch(clearProfile());
+        persistor.purge();
       }}
     />
   );

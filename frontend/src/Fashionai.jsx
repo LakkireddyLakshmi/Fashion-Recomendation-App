@@ -13,6 +13,8 @@
  * Checkmark SVG: exact Brutalist shapes 152+153+Frame4
  */
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import TryOnModal from "./components/TryOnModal";
+import ImageSearchButton from "./components/ImageSearchButton";
 
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
@@ -134,6 +136,17 @@ const CSS = `
     .gender-row{flex-direction:column !important;gap:10px !important;}
     .gender-row button{width:100% !important;}
     .detail-main-img{height:280px !important;}
+  }
+  @media(max-width:768px){
+    .floating-nav{gap:6px !important;top:10px !important;right:10px !important;flex-wrap:wrap !important;justify-content:flex-end !important;}
+    .floating-nav button{padding:6px 12px !important;font-size:12px !important;}
+    .price-chips{flex-wrap:wrap !important;gap:6px !important;}
+    .price-chips button{padding:4px 10px !important;font-size:11px !important;}
+    .cat-chips{flex-wrap:wrap !important;gap:6px !important;}
+    .cat-chips button{padding:5px 12px !important;font-size:12px !important;}
+    .bottom-search-bar{padding:12px 14px 14px !important;}
+    .bottom-search-form{padding:4px 6px 4px 14px !important;border-radius:12px !important;}
+    .bottom-search-form input{font-size:13px !important;}
   }
 `;
 
@@ -2434,6 +2447,28 @@ function LikedDrawer({ items, wishlist, onClose, onSelectItem, onAddToCart, onTo
   );
 }
 
+function SkeletonCard() {
+  const shimmer = {
+    backgroundImage: "linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.04) 75%)",
+    backgroundSize: "200% 100%",
+    animation: "shimmer 1.5s ease-in-out infinite",
+    borderRadius: 8,
+  };
+  return (
+    <div style={{ width: "100%", background: "rgba(255,255,255,0.05)", borderRadius: 16, overflow: "hidden" }}>
+      <div style={{ ...shimmer, width: "100%", paddingBottom: "128%", borderRadius: "16px 16px 0 0" }} />
+      <div style={{ padding: "14px 14px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ ...shimmer, height: 14, width: "75%" }} />
+        <div style={{ ...shimmer, height: 12, width: "50%" }} />
+        <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+          {[1,2,3].map(i => <div key={i} style={{ ...shimmer, width: 14, height: 14, borderRadius: "50%" }} />)}
+        </div>
+        <div style={{ ...shimmer, height: 18, width: "35%", marginTop: 4 }} />
+      </div>
+    </div>
+  );
+}
+
 function ProductCard({ item, onClick, compact = false, onAddToCart, wishlisted = false, onToggleWishlist }) {
   const [err, setErr] = useState(false);
   const [liked, setLiked] = useState(false);
@@ -2935,9 +2970,8 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
             <div style={{ fontSize:14, opacity:0.6 }}>Try a different keyword or clear filters</div>
           </div>
         ) : visible.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.35)" }}>
-            <Spinner />
-            <div style={{ marginTop: 12, fontSize: 16 }}>Loading…</div>
+          <div className="rec-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 20 }}>
+            {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
           </div>
         ) : (
           <div className="rec-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 20 }}>
@@ -3045,6 +3079,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
 }
 
 function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new Set(), onToggleWishlist, userProfile }) {
+  const [tryOnOpen, setTryOnOpen] = useState(false);
   const fb =
     "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&fit=crop";
   const fallbackImg = item?.primary_image_url || fb;
@@ -3462,6 +3497,26 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
                   Add to Bag
                 </button>
                 <button
+                  onClick={() => setTryOnOpen(true)}
+                  style={{
+                    height: 60, borderRadius: 16,
+                    background: "linear-gradient(135deg, #ec4899, #f43f5e)",
+                    border: "none", color: "#fff",
+                    padding: "0 20px", fontSize: 14, fontWeight: 700,
+                    fontFamily: "'League Spartan',sans-serif",
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                    boxShadow: "0 8px 28px rgba(236,72,153,0.3)",
+                    transition: "all 0.2s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  </svg>
+                  Try On
+                </button>
+                <button
                   onClick={toggleLiked}
                   style={{
                     width: 60, height: 60,
@@ -3507,6 +3562,7 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
           </div>
         );
       })()}
+      {tryOnOpen && <TryOnModal item={item} onClose={() => setTryOnOpen(false)} />}
     </Screen>
   );
 }
@@ -4204,7 +4260,7 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
   );
 }
 
-export default function App({ initialProfile, initialRecs, skipWizard }) {
+export default function App({ initialProfile, initialRecs, skipWizard, onLogout }) {
   const [step, setStep] = useState(skipWizard ? 3 : 0);
   const [view, setView] = useState("wizard");
   const [selItem, setSelItem] = useState(null);
@@ -4499,7 +4555,7 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
     <>
       {/* ── Floating cart counter ── */}
       {cartCount >= 0 && step === 3 && !chatResults && !chatLoading && (
-        <div style={{ position:"fixed", top:18, right:18, zIndex:200, display:"flex", gap:10 }}>
+        <div className="floating-nav" style={{ position:"fixed", top:18, right:18, zIndex:200, display:"flex", gap:10 }}>
           {/* Liked button */}
           <button onClick={()=>setLikedOpen(true)} style={{
             background: wishlist.size > 0 ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.12)",
@@ -4528,6 +4584,19 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
           }}>
             🛍 {cartCount > 0 ? `Bag · ${cartCount}` : "Bag"}
           </button>
+          {onLogout && (
+            <button onClick={onLogout} style={{
+              background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)",
+              borderRadius: 50, padding: "8px 14px", border: "1px solid rgba(255,255,255,0.1)",
+              display: "flex", alignItems: "center", gap: 6,
+              fontFamily: "'League Spartan',sans-serif", fontWeight: 600, fontSize: 13,
+              cursor: "pointer", transition: "all 0.3s",
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
+          )}
         </div>
       )}
       {step === 3 && (
@@ -4852,6 +4921,14 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
               <div style={{ background: "linear-gradient(135deg, #7c3aed, #a855f7)", borderRadius: 10, padding: "6px 10px", color: "#fff", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>✦</div>
               <input name="chatInput" type="text" placeholder="Search — e.g. blue dress, white shirt, casual jeans..."
                 style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "rgba(255,255,255,0.9)", fontSize: 15, fontFamily: "'League Spartan',sans-serif", fontWeight: 300, padding: "10px 0" }}
+              />
+              <ImageSearchButton
+                onResults={(items) => {
+                  setChatResults(items);
+                  setChatMsg(`Found ${items.length} similar items`);
+                  setChatQuery("Image search");
+                }}
+                onLoading={(v) => { if (v) { setChatLoading(true); setChatResults(null); setChatMsg(""); setChatQuery(""); } else setChatLoading(false); }}
               />
               <button type="submit" disabled={chatLoading} style={{
                 background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 12, padding: "10px 12px", cursor: "pointer",
