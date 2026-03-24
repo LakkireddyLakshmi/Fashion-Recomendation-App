@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { AIVoiceInput } from "./components/ui/ai-voice-input";
 
 const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "";
 const CHAT_KEY = import.meta.env.VITE_CHAT_API_KEY || "";
@@ -16,7 +15,37 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
   const [conversationId, setConversationId] = useState(undefined);
   const [saving, setSaving] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [showVoiceOverlay, setShowVoiceOverlay] = useState(false);
+  const recognitionRef = useRef(null);
+
+  const toggleMic = () => {
+    if (isListening) {
+      if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
+      setIsListening(false);
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert("Speech recognition not supported. Use Chrome."); return; }
+    const isSecure = location.protocol === "https:" || location.hostname === "localhost";
+    if (!isSecure) { alert("Voice requires HTTPS. Use the deployed site."); return; }
+    const rec = new SR();
+    rec.lang = "en-US"; rec.interimResults = true; rec.continuous = true;
+    recognitionRef.current = rec;
+    rec.onresult = (e) => {
+      let final = "", interim = "";
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      setInput(final || interim);
+    };
+    rec.onerror = (e) => {
+      setIsListening(false); recognitionRef.current = null;
+      if (e.error === "not-allowed") alert("Microphone access denied.");
+      else if (e.error === "network") alert("Voice requires HTTPS.");
+    };
+    rec.onend = () => { if (isListening && recognitionRef.current) try { rec.start(); } catch(_){} };
+    try { rec.start(); setIsListening(true); } catch(_) {}
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -191,7 +220,7 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
           }}
-          placeholder={isListening ? "Listening..." : saving ? "Saving..." : "Message HueIQ..."}
+          placeholder={isListening ? "\uD83C\uDF99 Listening..." : saving ? "Saving..." : "Message HueIQ..."}
           disabled={loading || saving}
           rows={1}
           style={{
@@ -206,20 +235,22 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
             e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
           }}
         />
-        {/* Mic button */}
-        <button onClick={() => setShowVoiceOverlay(true)} disabled={loading || saving}
+        {/* Mic button — inline, glows when listening */}
+        <button onClick={toggleMic} disabled={loading || saving}
           style={{
-            width: 36, height: 36, borderRadius: "50%", border: "none",
-            background: "transparent",
-            color: "#888",
+            width: 40, height: 40, borderRadius: "50%", border: "none",
+            background: isListening ? "rgba(99,102,241,0.15)" : "transparent",
+            color: isListening ? "#6366f1" : "#999",
             fontSize: 17, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "all 0.2s ease",
             flexShrink: 0,
+            boxShadow: isListening ? "0 0 0 4px rgba(99,102,241,0.2)" : "none",
+            animation: isListening ? "micPulse 2s ease-in-out infinite" : "none",
           }}
-          title="Speak your answer"
+          title={isListening ? "Stop listening" : "Speak"}
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill={isListening ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
         {/* Send button */}
         <button onClick={handleSend} disabled={loading || saving || !input.trim()}
@@ -341,42 +372,11 @@ export default function ProfileChat({ email, name, onProfileComplete }) {
         </>
       )}
 
-      {/* Voice Overlay */}
-      {showVoiceOverlay && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 50,
-          background: "rgba(0,0,0,0.92)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          flexDirection: "column",
-        }}>
-          <button
-            onClick={() => setShowVoiceOverlay(false)}
-            style={{
-              position: "absolute", top: 24, right: 24,
-              background: "none", border: "none", color: "rgba(255,255,255,0.5)",
-              fontSize: 28, cursor: "pointer",
-            }}
-          >
-            ×
-          </button>
-          <AIVoiceInput
-            onStart={() => setIsListening(true)}
-            onStop={(duration) => {
-              setIsListening(false);
-              // Only close after user stops — transcript already set via onTranscript
-              if (duration > 0) {
-                setTimeout(() => setShowVoiceOverlay(false), 300);
-              }
-            }}
-            onTranscript={(text) => {
-              if (text) setInput(text);
-            }}
-            visualizerBars={48}
-          />
-        </div>
-      )}
-
       <style>{`
+        @keyframes micPulse {
+          0%, 100% { box-shadow: 0 0 0 4px rgba(99,102,241,0.2); }
+          50% { box-shadow: 0 0 0 8px rgba(99,102,241,0.1); }
+        }
         @keyframes pulse {
           0%, 100% { opacity: 0.3; }
           50% { opacity: 1; }
