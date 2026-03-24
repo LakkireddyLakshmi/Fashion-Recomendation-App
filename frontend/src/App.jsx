@@ -1,37 +1,46 @@
-import { useState } from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { login, logout } from "./store/authSlice";
+import { setProfile } from "./store/profileSlice";
+import { setRecommendations } from "./store/recommendationsSlice";
 import { SignInPage } from "./components/ui/sign-in-flow";
 import ProfileChat from "./ProfileChat";
 import Fashionai from "./Fashionai";
 
 function App() {
-  const [authData, setAuthData] = useState(null);
-  const [profileDone, setProfileDone] = useState(false);
-  const [profileData, setProfileData] = useState(null);
-  const [recs, setRecs] = useState([]);
+  const dispatch = useDispatch();
+  const { user, isLoggedIn } = useSelector((s) => s.auth);
+  const { data: profileData, isComplete } = useSelector((s) => s.profile);
+  const recs = useSelector((s) => s.recommendations.items);
 
-  if (!authData) {
-    return <SignInPage onAuth={(data) => setAuthData(data)} />;
+  // Step 1: Not logged in → Sign in
+  if (!isLoggedIn || !user) {
+    return (
+      <SignInPage
+        onAuth={(data) => dispatch(login(data))}
+      />
+    );
   }
 
-  if (!profileDone) {
+  // Step 2: Profile not complete → Profile chat
+  if (!isComplete) {
     return (
       <ProfileChat
-        email={authData.email}
-        name={authData.name}
+        email={user.email}
+        name={user.name}
         onProfileComplete={(profile, recommendations) => {
-          setProfileData(profile);
-          setRecs(recommendations);
-          setProfileDone(true);
+          dispatch(setProfile(profile));
+          if (recommendations?.length) dispatch(setRecommendations(recommendations));
         }}
       />
     );
   }
 
+  // Step 3: Recommendations
   return (
     <Fashionai
       initialProfile={{
-        email: authData.email,
-        name: authData.name,
+        email: user.email,
+        name: user.name,
         gender: profileData?.gender || "",
         age: profileData?.age || "",
         city: profileData?.city || "",
@@ -44,6 +53,9 @@ function App() {
       }}
       initialRecs={recs}
       skipWizard={true}
+      onLogout={() => {
+        dispatch(logout());
+      }}
     />
   );
 }
