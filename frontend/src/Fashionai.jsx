@@ -4532,18 +4532,14 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
       )}
       {step === 3 && (
         <>
-          {/* Inline chat results panel — slides up from bottom */}
+          {/* Fullscreen chat results panel */}
           {(chatResults || chatLoading) && (
             <div style={{
-              position: "fixed", left: 0, right: 0, bottom: 80, zIndex: 99,
-              maxHeight: "70vh",
-              background: "rgba(10,0,25,0.97)",
+              position: "fixed", inset: 0, zIndex: 99,
+              background: "linear-gradient(135deg, rgba(10,0,30,0.98) 0%, rgba(20,5,40,0.99) 50%, rgba(10,0,25,0.98) 100%)",
               backdropFilter: "blur(24px)",
-              borderTop: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: "24px 24px 0 0",
               overflowY: "auto",
-              padding: "0 0 20px",
-              boxShadow: "0 -20px 60px rgba(0,0,0,0.5)",
+              padding: "0 0 100px",
               animation: "slideUp 0.3s ease-out",
             }}>
               {/* Header */}
@@ -4609,7 +4605,7 @@ export default function App({ initialProfile, initialRecs, skipWizard }) {
                     </p>
                     <div style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
                       gap: 24,
                     }}>
                       {chatResults.map((item, i) => {
