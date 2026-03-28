@@ -4821,7 +4821,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       }
     }
     try {
-      const r = await fetch(`${API}/api/recommendations/trending?limit=100`, {
+      const r = await fetch(`${API}/api/recommendations/trending?limit=500`, {
         signal: AbortSignal.timeout(180000),
       });
       if (r.ok) {

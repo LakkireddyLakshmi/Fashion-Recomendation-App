@@ -18,11 +18,12 @@ function getCatGroup(cat) {
 
 function getComplementaryGroups(group) {
   switch (group) {
-    case "top": return ["bottom"];
-    case "bottom": return ["top"];
-    case "dress": return ["top", "bottom"];
-    case "shoes": return ["top", "bottom"];
-    default: return ["top", "bottom"];
+    case "top": return ["bottom", "dress", "accessory"];
+    case "bottom": return ["top", "dress"];
+    case "dress": return ["top", "accessory", "bottom"];
+    case "shoes": return ["top", "bottom", "dress"];
+    case "accessory": return ["top", "dress", "bottom"];
+    default: return ["top", "bottom", "dress", "accessory"];
   }
 }
 
@@ -126,6 +127,7 @@ function generateOutfits(currentItem, allItems, count = 3) {
     const outfit = { id: i, items: [currentItem] };
     let isDifferent = false;
     for (const g of neededGroups) {
+      if (outfit.items.length >= 3) break; // Max 3 items per outfit (current + 2)
       const pool = grouped[g];
       if (pool.length === 0) continue;
       // Find an unused item first, then fall back to round-robin
