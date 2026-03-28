@@ -9,6 +9,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState(null);
+  const [results, setResults] = useState(null); // Store analysis results
   const fileRef = useRef(null);
   const videoRef = useRef(null);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -86,11 +87,8 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
       console.log("Claude Vision result:", attributes);
 
       setProgress("Done!");
-
-      // Step 5: Pass to parent
-      setTimeout(() => {
-        onAnalysisComplete(attributes);
-      }, 500);
+      setResults(attributes);
+      setAnalyzing(false);
 
     } catch (err) {
       console.error("Analysis error:", err);
@@ -99,10 +97,104 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
     }
   };
 
+  // ── RESULTS VIEW ──
+  if (results) {
+    const fields = [
+      { label: "Gender", value: results.gender },
+      { label: "Age", value: results.estimated_age },
+      { label: "Skin Tone", value: results.skin_tone },
+      { label: "Body Type", value: results.body_type },
+      { label: "Style", value: results.current_style },
+      { label: "Hair", value: results.hair_color },
+      { label: "Fit", value: results.recommended_fit },
+      { label: "Occasion", value: results.occasion_fit },
+      { label: "Season", value: results.season_fit },
+      { label: "Score", value: results.fashion_score ? `${results.fashion_score}/10` : null },
+    ].filter(f => f.value);
+    const colors = results.color_palette || results.preferred_colors || [];
+    const clothing = results.clothing_detected || [];
+    const keywords = results.style_keywords || [];
+
+    return (
+      <div style={{ minHeight: "100vh", background: "#fff", fontFamily: "'League Spartan', system-ui, sans-serif", padding: "32px 20px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        {/* Photo + Title */}
+        <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 32, maxWidth: 500, width: "100%" }}>
+          {preview && (
+            <img src={preview} alt="" style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", border: "3px solid #1a1a1a" }} />
+          )}
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#1a1a1a", margin: "0 0 4px" }}>Your Style Profile</h1>
+            <p style={{ fontSize: 13, color: "#999", margin: 0 }}>AI-detected from your photo</p>
+          </div>
+        </div>
+
+        {/* Attributes Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, maxWidth: 500, width: "100%", marginBottom: 20 }}>
+          {fields.map((f, i) => (
+            <div key={i} style={{ background: "#f8f9fa", borderRadius: 10, padding: "12px 14px", border: "1px solid #f0f0f0" }}>
+              <div style={{ fontSize: 10, color: "#999", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>{f.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#1a1a1a", textTransform: "capitalize" }}>{String(f.value).replace(/_/g, " ")}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Colors */}
+        {colors.length > 0 && (
+          <div style={{ maxWidth: 500, width: "100%", marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#999", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Recommended Colors</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {colors.map((c, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, background: "#f8f9fa", borderRadius: 16, padding: "4px 10px", border: "1px solid #f0f0f0", fontSize: 12, color: "#555" }}>
+                  <div style={{ width: 12, height: 12, borderRadius: "50%", background: c.toLowerCase().replace(/\s/g, ""), border: "1px solid #ddd" }} />
+                  {c}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Clothing Detected */}
+        {clothing.length > 0 && (
+          <div style={{ maxWidth: 500, width: "100%", marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#999", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Detected Clothing</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {clothing.map((c, i) => (
+                <span key={i} style={{ background: "#1a1a1a", color: "#fff", borderRadius: 16, padding: "5px 12px", fontSize: 12, fontWeight: 600 }}>{c}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Style Keywords */}
+        {keywords.length > 0 && (
+          <div style={{ maxWidth: 500, width: "100%", marginBottom: 32 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#999", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Style Keywords</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {keywords.map((k, i) => (
+                <span key={i} style={{ background: "#f3f0ff", color: "#7c3aed", borderRadius: 16, padding: "5px 12px", fontSize: 12, fontWeight: 500, border: "1px solid #e9e0ff" }}>{k}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Continue Button */}
+        <button onClick={() => onAnalysisComplete(results)} style={{
+          width: "100%", maxWidth: 500, padding: "16px 0",
+          background: "#1a1a1a", color: "#fff", border: "none",
+          borderRadius: 12, fontSize: 16, fontWeight: 700,
+          cursor: "pointer", fontFamily: "'League Spartan'",
+        }}>
+          Find My Perfect Matches
+        </button>
+      </div>
+    );
+  }
+
+  // ── UPLOAD VIEW ──
   return (
     <div style={{
       minHeight: "100vh",
-      background: "#000",
+      background: "#fff",
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
@@ -114,14 +206,14 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
       <div style={{ textAlign: "center", marginBottom: 40 }}>
         <div style={{
           width: 48, height: 48, borderRadius: 12,
-          background: "#7c3aed", display: "flex", alignItems: "center",
+          background: "#1a1a1a", display: "flex", alignItems: "center",
           justifyContent: "center", margin: "0 auto 16px",
           fontSize: 20, fontWeight: 800, color: "#fff",
         }}>H</div>
-        <h1 style={{ color: "#fff", fontSize: 32, fontWeight: 700, margin: 0 }}>
+        <h1 style={{ color: "#1a1a1a", fontSize: 32, fontWeight: 700, margin: 0 }}>
           {analyzing ? progress : "Let's analyze your style"}
         </h1>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 16, marginTop: 8 }}>
+        <p style={{ color: "#999", fontSize: 16, marginTop: 8 }}>
           {analyzing ? "This takes a few seconds..." : "Upload or capture a photo for personalized recommendations"}
         </p>
       </div>
@@ -136,9 +228,9 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
               style={{
                 padding: "12px 32px",
                 borderRadius: 30,
-                border: gender === g.toLowerCase() ? "2px solid #7c3aed" : "2px solid rgba(255,255,255,0.15)",
-                background: gender === g.toLowerCase() ? "rgba(124,58,237,0.2)" : "rgba(255,255,255,0.05)",
-                color: gender === g.toLowerCase() ? "#a78bfa" : "rgba(255,255,255,0.6)",
+                border: gender === g.toLowerCase() ? "2px solid #1a1a1a" : "2px solid #e5e7eb",
+                background: gender === g.toLowerCase() ? "#1a1a1a" : "#fff",
+                color: gender === g.toLowerCase() ? "#fff" : "#555",
                 fontSize: 15,
                 fontWeight: 600,
                 cursor: "pointer",
@@ -160,8 +252,8 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
           aspectRatio: "3/4",
           borderRadius: 20,
           overflow: "hidden",
-          border: "2px dashed rgba(255,255,255,0.15)",
-          background: "rgba(255,255,255,0.03)",
+          border: "2px dashed #e5e7eb",
+          background: "#f8f9fa",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -188,7 +280,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
                   style={{
                     width: 64, height: 64, borderRadius: "50%",
                     border: "4px solid #fff",
-                    background: "rgba(124,58,237,0.8)",
+                    background: "#1a1a1a",
                     cursor: "pointer",
                   }}
                 />
@@ -197,7 +289,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
                   style={{
                     width: 48, height: 48, borderRadius: "50%",
                     border: "none",
-                    background: "rgba(255,255,255,0.2)",
+                    background: "rgba(0,0,0,0.4)",
                     color: "#fff",
                     fontSize: 20,
                     cursor: "pointer",
@@ -232,10 +324,10 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
             </>
           ) : (
             <div style={{ textAlign: "center", padding: 40 }}>
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" style={{ marginBottom: 16 }}>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" strokeWidth="1.5" style={{ marginBottom: 16 }}>
                 <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, margin: 0 }}>
+              <p style={{ color: "#999", fontSize: 14, margin: 0 }}>
                 Upload a photo or take a selfie
               </p>
             </div>
@@ -263,7 +355,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
                 height: 200,
                 borderRadius: "50%",
                 objectFit: "cover",
-                border: "4px solid #7c3aed",
+                border: "4px solid #1a1a1a",
                 animation: "pulse 2s ease-in-out infinite",
               }}
             />
@@ -277,7 +369,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
               <div key={i} style={{
                 width: 10, height: 10,
                 borderRadius: "50%",
-                background: "#7c3aed",
+                background: "#1a1a1a",
                 animation: `bounce 1.4s ease-in-out ${i * 0.2}s infinite`,
               }} />
             ))}
@@ -305,9 +397,9 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
               flex: 1,
               padding: "14px 0",
               borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.15)",
-              background: "rgba(255,255,255,0.05)",
-              color: "#fff",
+              border: "1px solid #e5e7eb",
+              background: "#fff",
+              color: "#1a1a1a",
               fontSize: 15,
               fontWeight: 600,
               cursor: "pointer",
@@ -329,9 +421,9 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
               flex: 1,
               padding: "14px 0",
               borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.15)",
-              background: "rgba(255,255,255,0.05)",
-              color: "#fff",
+              border: "1px solid #e5e7eb",
+              background: "#fff",
+              color: "#1a1a1a",
               fontSize: 15,
               fontWeight: 600,
               cursor: "pointer",
@@ -361,7 +453,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
             padding: "16px 0",
             borderRadius: 12,
             border: "none",
-            background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+            background: "#1a1a1a",
             color: "#fff",
             fontSize: 17,
             fontWeight: 700,
