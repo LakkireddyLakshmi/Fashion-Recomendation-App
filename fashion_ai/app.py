@@ -2790,6 +2790,54 @@ Return ONLY the JSON, no markdown, no explanation."""}
         "color_palette": color_map.get(gender, color_map["female"]), "fashion_score": 7,
     }
 
+# ── AI Search: Natural Language → Filters ─────────────────────────
+
+@app.post("/api/ai-search", tags=["Search"])
+async def ai_search(request: Request):
+    """Use Claude to parse natural language into search filters."""
+    body = await request.json()
+    query = body.get("query", "")
+    if not query.strip():
+        return {"filters": {}, "message": "Please describe what you're looking for"}
+
+    if not CLAUDE_API_KEY:
+        # Fallback: basic parsing without AI
+        return {"filters": {}, "message": "AI search unavailable", "fallback": True}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": CLAUDE_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 300,
+                    "messages": [{"role": "user", "content": f"""Parse this fashion search query into filters. Return ONLY JSON, no other text.
+
+Query: "{query}"
+
+Return this exact format:
+{{"gender": "men/women/null", "category": "shirt/t-shirt/jeans/dress/blazer/top/trousers/joggers/cargo/kurta/jumpsuit/shorts/sweater/null", "color": "black/white/blue/red/green/pink/yellow/navy/grey/brown/beige/purple/orange/maroon/teal/null", "occasion": "formal/casual/party/sporty/wedding/beach/office/date/null", "fit": "slim/regular/loose/oversized/null", "pattern": "striped/floral/printed/solid/checked/null", "price_sort": "asc/desc/null", "max_price": null, "style_keywords": [], "message": "brief friendly response about what you found"}}
+
+Be smart: "something for a wedding" → category:dress or kurta, occasion:wedding. "date night outfit" → occasion:date, category:dress or blazer. "comfortable work from home" → category:joggers or t-shirt, occasion:casual. "going to beach" → occasion:beach, category:shorts or dress."""}]
+                },
+            )
+            if r.status_code == 200:
+                text = r.json().get("content", [{}])[0].get("text", "")
+                match = __import__("re").search(r"\{[\s\S]*\}", text)
+                if match:
+                    import json as _json
+                    filters = _json.loads(match.group())
+                    return {"filters": filters, "message": filters.get("message", "")}
+    except Exception as e:
+        log.warning("AI search failed: %s", e)
+
+    return {"filters": {}, "message": "Could not understand query", "fallback": True}
+
 # ── Image Search & Virtual Try-On ─────────────────────────────────
 
 @app.post("/api/image-search", tags=["Search"])

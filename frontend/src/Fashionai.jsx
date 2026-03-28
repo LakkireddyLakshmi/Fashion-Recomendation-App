@@ -2836,10 +2836,62 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   const fullRecs = allRecommendations || recommendations;
   const [barQuery, setBarQuery] = useState("");
 
+  const [aiMessage, setAiMessage] = useState("");
+
   const doBarSearch = async (query) => {
     try {
       const q = query.toLowerCase().trim();
       const params = new URLSearchParams({ limit: "50" });
+
+      // ── Try AI-powered search first ──
+      try {
+        const aiRes = await fetch(`${API}/api/ai-search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (aiRes.ok) {
+          const ai = await aiRes.json();
+          if (ai.filters && !ai.fallback) {
+            const f = ai.filters;
+            if (f.gender) params.set("gender", f.gender);
+            if (f.category) params.set("category", f.category);
+            if (f.color) params.set("color", f.color);
+            if (f.message) setAiMessage(f.message);
+            // Fetch with AI filters
+            const r = await fetch(`${API}/api/recommendations/trending?${params}`);
+            if (r.ok) {
+              const d = await r.json();
+              let items = d.items || [];
+              // Apply AI style filters client-side
+              if (f.pattern) {
+                const patternItems = items.filter(i => ((i.name||"")+" "+(i.style_tags||[]).join(" ")).toLowerCase().includes(f.pattern));
+                if (patternItems.length > 0) items = patternItems;
+              }
+              if (f.fit) {
+                const fitItems = items.filter(i => ((i.name||"")+" "+(i.style_tags||[]).join(" ")).toLowerCase().includes(f.fit));
+                if (fitItems.length > 0) items = fitItems;
+              }
+              if (f.price_sort === "asc") items.sort((a, b) => (a.base_price||0) - (b.base_price||0));
+              if (f.price_sort === "desc") items.sort((a, b) => (b.base_price||0) - (a.base_price||0));
+              if (f.max_price) {
+                const priced = items.filter(i => ((i.base_price||i.price||0)/10) <= f.max_price);
+                if (priced.length > 0) items = priced;
+              }
+              if (items.length > 0 && onUpdateRecs) {
+                onUpdateRecs(items, true);
+                setBarQuery("");
+                return;
+              }
+            }
+          }
+        }
+      } catch (aiErr) {
+        console.warn("AI search failed, falling back:", aiErr.message);
+      }
+
+      // ── Fallback: local parsing ──
 
       // ── Gender detection ──
       if (/\b(women|woman|female|girl|girls|ladies|lady|her|she|women'?s|womens)\b/.test(q)) params.set("gender", "women");
@@ -3188,6 +3240,21 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
           onAddToCart={onAddToCart}
         />
       </div>
+
+      {/* AI Message */}
+      {aiMessage && (
+        <div style={{
+          position: "fixed", bottom: 64, left: "50%", transform: "translateX(-50%)",
+          background: "#1a1a1a", color: "#fff", padding: "8px 20px",
+          borderRadius: 20, fontSize: 13, fontFamily: "'League Spartan'",
+          zIndex: 101, boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          maxWidth: 500, textAlign: "center",
+          animation: "fadeUp 0.3s ease",
+        }}>
+          {aiMessage}
+          <button onClick={() => setAiMessage("")} style={{ background: "none", border: "none", color: "#999", marginLeft: 8, cursor: "pointer", fontSize: 14 }}>x</button>
+        </div>
+      )}
 
       {/* Bottom sticky bar */}
       <div style={{
