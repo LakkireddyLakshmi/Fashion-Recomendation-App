@@ -2882,8 +2882,17 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       return topKeywords.some(k => cat.includes(k) || name.includes(k)) ||
              bottomKeywords.some(k => cat.includes(k) || name.includes(k));
     });
-    // If we have enough tops+bottoms, use them. Otherwise fall back to all items
-    return topsAndBottoms.length >= 2 ? topsAndBottoms : items;
+    // If we have tops+bottoms for this gender, use them. Otherwise show all items
+    if (topsAndBottoms.length >= 2) return topsAndBottoms;
+    // Try without gender filter
+    const allTopsBottoms = filtered.filter(i => {
+      const cat = (i.category || "").toLowerCase();
+      const name = (i.name || "").toLowerCase();
+      return topKeywords.some(k => cat.includes(k) || name.includes(k)) ||
+             bottomKeywords.some(k => cat.includes(k) || name.includes(k));
+    });
+    if (allTopsBottoms.length >= 2) return allTopsBottoms;
+    return items;
   }, [filtered, profile]);
 
   const currentItem = profileFiltered[page] || profileFiltered[0];
