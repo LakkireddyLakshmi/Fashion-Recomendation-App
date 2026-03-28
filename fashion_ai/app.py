@@ -2717,6 +2717,79 @@ async def delete_outfit(email: str, outfit_id: str):
 async def get_orders(email: str):
     return {"email": email, "orders": _user_orders.get(email, []), "count": len(_user_orders.get(email, []))}
 
+# ── Claude Vision: Analyze Fashion Image ──────────────────────────
+
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+
+@app.post("/api/analyze-image", tags=["Vision"])
+async def analyze_image(file: UploadFile = File(...), gender: str = Query("female")):
+    """Analyze a fashion image using Claude Vision to extract style attributes."""
+    import base64
+    contents = await file.read()
+    b64 = base64.b64encode(contents).decode()
+    media_type = file.content_type or "image/jpeg"
+
+    if not CLAUDE_API_KEY:
+        # Return smart defaults if no API key
+        color_map = {"male": ["Navy","Black","Grey","White","Blue"], "female": ["Black","Pink","White","Red","Blue"]}
+        cat_map = {"male": ["Shirts","T-shirts","Jeans","Trousers"], "female": ["Dresses","Tops","Jeans","Shirts"]}
+        return {
+            "image_analysis": True, "gender": gender, "estimated_age": 25,
+            "skin_tone": "neutral", "body_type": "average", "current_style": "casual",
+            "preferred_colors": color_map.get(gender, color_map["female"]),
+            "clothing_detected": cat_map.get(gender, cat_map["female"]),
+            "occasion_fit": "casual", "season_fit": "all_season",
+            "style_keywords": ["modern","casual"], "recommended_fit": "regular",
+            "color_palette": color_map.get(gender, color_map["female"]), "fashion_score": 7,
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": CLAUDE_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1024,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                            {"type": "text", "text": f"""Analyze the clothing and fashion in this image of a {gender} person. Return ONLY a JSON object with these fields:
+{{"image_analysis": true, "gender": "{gender}", "estimated_age": 25, "skin_tone": "warm/cool/neutral", "body_type": "slim/athletic/average/plus_size", "current_style": "casual/formal/streetwear/ethnic", "hair_color": "black/brown/blonde", "preferred_colors": ["color1", "color2"], "clothing_detected": ["item1", "item2"], "occasion_fit": "casual/office/party/outdoor", "season_fit": "summer/winter/all_season", "style_keywords": ["keyword1", "keyword2"], "recommended_fit": "slim/regular/loose", "color_palette": ["color1", "color2", "color3"], "fashion_score": 7}}
+Return ONLY the JSON, no markdown, no explanation."""}
+                        ]
+                    }]
+                },
+            )
+            if r.status_code == 200:
+                data = r.json()
+                text = data.get("content", [{}])[0].get("text", "")
+                import json as _json
+                match = __import__("re").search(r"\{[\s\S]*\}", text)
+                if match:
+                    return _json.loads(match.group())
+            log.warning("Claude Vision returned %s: %s", r.status_code, r.text[:200])
+    except Exception as e:
+        log.warning("Claude Vision failed: %s", e)
+
+    # Fallback
+    color_map = {"male": ["Navy","Black","Grey","White","Blue"], "female": ["Black","Pink","White","Red","Blue"]}
+    cat_map = {"male": ["Shirts","T-shirts","Jeans","Trousers"], "female": ["Dresses","Tops","Jeans","Shirts"]}
+    return {
+        "image_analysis": True, "gender": gender, "estimated_age": 25,
+        "skin_tone": "neutral", "body_type": "average", "current_style": "casual",
+        "preferred_colors": color_map.get(gender, color_map["female"]),
+        "clothing_detected": cat_map.get(gender, cat_map["female"]),
+        "occasion_fit": "casual", "season_fit": "all_season",
+        "style_keywords": ["modern","casual"], "recommended_fit": "regular",
+        "color_palette": color_map.get(gender, color_map["female"]), "fashion_score": 7,
+    }
+
 # ── Image Search & Virtual Try-On ─────────────────────────────────
 
 @app.post("/api/image-search", tags=["Search"])

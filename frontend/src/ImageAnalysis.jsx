@@ -1,10 +1,8 @@
 import { useState, useRef } from "react";
 
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
-const CHAT_BASE = import.meta.env.VITE_CHAT_BASE_URL || "https://cloud.xpectrum.co/api/v1";
-const CHAT_KEY = import.meta.env.VITE_CHAT_API_KEY || "";
 
-export default function ImageAnalysis({ userEmail, onAnalysisComplete }) {
+export default function ImageAnalysis({ onAnalysisComplete }) {
   const [image, setImage] = useState(null);
   const [preview, setPreview] = useState(null);
   const [gender, setGender] = useState(null);
@@ -70,110 +68,22 @@ export default function ImageAnalysis({ userEmail, onAnalysisComplete }) {
     setProgress("Uploading image...");
 
     try {
-      // Step 1: Upload image to Xpectrum
+      // Send image to backend for Claude Vision analysis
       const formData = new FormData();
       formData.append("file", image);
-      formData.append("user", userEmail || "user");
 
-      const uploadRes = await fetch(`${CHAT_BASE}/files/upload`, {
+      setProgress("Analyzing your style with AI...");
+
+      const res = await fetch(`${API}/api/analyze-image?gender=${gender}`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${CHAT_KEY}` },
         body: formData,
       });
 
-      if (!uploadRes.ok) throw new Error("Image upload failed");
-      const uploadData = await uploadRes.json();
-      const fileId = uploadData.id;
-
-      setProgress("Analyzing your style...");
-
-      // Step 2: Send to Xpectrum agent with the image
-      const chatRes = await fetch(`${CHAT_BASE}/chat-messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${CHAT_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputs: {},
-          query: `Analyze this image of a ${gender} person. Extract their fashion attributes and return ONLY a JSON block with these fields: gender, estimated_age, skin_tone (warm/cool/neutral), body_type (slim/athletic/average/plus_size), current_style (casual/formal/streetwear/ethnic), hair_color, preferred_colors (array), clothing_detected (array), occasion_fit (casual/office/party/outdoor), season_fit (summer/winter/all_season), style_keywords (array), recommended_fit (slim/regular/loose), color_palette (array of recommended colors), fashion_score (1-10). Return ONLY the JSON, no other text.`,
-          response_mode: "streaming",
-          user: userEmail || "user",
-          files: [{
-            type: "image",
-            transfer_method: "local_file",
-            upload_file_id: fileId,
-          }],
-        }),
-      });
-
-      if (!chatRes.ok) throw new Error("Analysis failed");
-
-      // Step 3: Parse streaming response
-      const reader = chatRes.body.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.event === "agent_message" || data.event === "message") {
-                fullText += data.answer || "";
-                setProgress("Extracting style attributes...");
-              }
-            } catch {}
-          }
-        }
-      }
-
-      // Step 4: Parse JSON from response
-      console.log("Xpectrum raw response:", fullText);
-      let attributes;
-      const jsonMatch = fullText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          attributes = JSON.parse(jsonMatch[0]);
-        } catch (e) {
-          console.warn("JSON parse failed, using fallback:", e);
-        }
-      }
-
-      // Fallback: generate attributes from text + gender
-      if (!attributes) {
-        console.log("Using fallback attributes based on gender:", gender);
-        const colorMap = {
-          male: ["Navy", "Black", "Grey", "White", "Blue"],
-          female: ["Black", "Pink", "White", "Red", "Blue"],
-        };
-        const catMap = {
-          male: ["Shirts", "T-shirts", "Jeans", "Trousers", "Blazers"],
-          female: ["Dresses", "Tops", "Jeans", "Shirts", "T-shirts"],
-        };
-        attributes = {
-          estimated_age: 25,
-          skin_tone: "neutral",
-          body_type: "average",
-          current_style: "casual",
-          hair_color: "black",
-          preferred_colors: colorMap[gender] || colorMap.male,
-          clothing_detected: catMap[gender] || catMap.male,
-          occasion_fit: "casual",
-          season_fit: "all_season",
-          style_keywords: ["modern", "casual"],
-          recommended_fit: "regular",
-          color_palette: colorMap[gender] || colorMap.male,
-          fashion_score: 7,
-        };
-      }
-
+      if (!res.ok) throw new Error("Analysis failed");
+      const attributes = await res.json();
       attributes.gender = gender;
       attributes.image_analysis = true;
+      console.log("Claude Vision result:", attributes);
 
       setProgress("Done!");
 
