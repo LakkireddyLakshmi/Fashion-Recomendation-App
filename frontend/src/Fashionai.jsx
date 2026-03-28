@@ -2838,33 +2838,118 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
 
   const doBarSearch = async (query) => {
     try {
-      const params = new URLSearchParams({ limit: "20" });
-      const q = query.toLowerCase();
-      if (/\b(men|man|male|boy|guys)\b/.test(q)) params.set("gender", "men");
-      else if (/\b(women|woman|female|girl|ladies)\b/.test(q)) params.set("gender", "women");
+      const q = query.toLowerCase().trim();
+      const params = new URLSearchParams({ limit: "50" });
+
+      // ── Gender detection ──
+      if (/\b(women|woman|female|girl|girls|ladies|lady|her|she|women'?s|womens)\b/.test(q)) params.set("gender", "women");
+      else if (/\b(men|man|male|boy|boys|guys|guy|him|he|gents|gentleman|men'?s|mens)\b/.test(q)) params.set("gender", "men");
+
+      // ── Category detection (broad) ──
       const catMap = [
-        { re: /\bt-?shirts?\b|\btees?\b/, cat: "t-shirt" },
-        { re: /\bshirts?\b/, cat: "shirt" },
+        { re: /\bt-?shirts?\b|\btees?\b|\btee\b/, cat: "t-shirt" },
+        { re: /\bshirts?\b|\bbutton.?down\b/, cat: "shirt" },
         { re: /\bjeans?\b|\bdenims?\b/, cat: "jeans" },
-        { re: /\bdress(es)?\b/, cat: "dress" },
-        { re: /\bblazers?\b|\bjackets?\b/, cat: "blazer" },
-        { re: /\btops?\b/, cat: "top" },
-        { re: /\bjoggers?\b/, cat: "joggers" },
-        { re: /\btrousers?\b|\bpants?\b/, cat: "trousers" },
+        { re: /\bdress(es)?\b|\bgowns?\b|\bmaxi\b|\bmidi\b/, cat: "dress" },
+        { re: /\bblazers?\b|\bjackets?\b|\bcoats?\b/, cat: "blazer" },
+        { re: /\btops?\b|\bblouses?\b|\bcrop.?tops?\b|\btank.?tops?\b/, cat: "top" },
+        { re: /\bjoggers?\b|\bsweatpants?\b/, cat: "joggers" },
+        { re: /\btrousers?\b|\bpants?\b|\bchinos?\b|\bslacks?\b/, cat: "trousers" },
         { re: /\bcargo\b/, cat: "cargo" },
-        { re: /\bkurtas?\b/, cat: "kurta" },
+        { re: /\bkurtas?\b|\bethnic\b|\banarkali\b/, cat: "kurta" },
+        { re: /\bjumpsuits?\b|\bplaysuit\b/, cat: "jumpsuit" },
+        { re: /\bskirts?\b/, cat: "skirt" },
+        { re: /\bshorts?\b|\bbermuda\b/, cat: "shorts" },
+        { re: /\bsweaters?\b|\bpullovers?\b|\bcardigans?\b|\bhoodie\b|\bhoodies\b/, cat: "sweater" },
+        { re: /\bleggings?\b|\btights?\b/, cat: "leggings" },
+        { re: /\bpolo\b/, cat: "polo" },
       ];
       for (const { re, cat } of catMap) { if (re.test(q)) { params.set("category", cat); break; } }
-      const colors = ["black","white","blue","red","green","pink","yellow","navy","grey","brown","beige","purple","orange","maroon"];
-      for (const c of colors) { if (q.includes(c)) { params.set("color", c); break; } }
-      const r = await fetch(`${API}/api/recommendations/trending?${params}`);
-      if (r.ok) {
-        const d = await r.json();
-        const items = d.items || d.recommendations || [];
-        if (items.length > 0 && onUpdateRecs) {
-          onUpdateRecs(items, true);
-          setBarQuery("");
+
+      // ── Occasion to category mapping ──
+      if (!params.has("category")) {
+        const occasionMap = [
+          { re: /\bformal\b|\boffice\b|\bwork\b|\bbusiness\b|\bprofessional\b|\bmeeting\b|\binterview\b/, cats: ["shirt","blazer","trousers"] },
+          { re: /\bcasual\b|\beveryday\b|\bweekend\b|\brelaxed\b|\bcomfy\b|\bcomfortable\b/, cats: ["t-shirt","jeans","joggers"] },
+          { re: /\bparty\b|\bnight.?out\b|\bclub\b|\beverning\b|\bcocktail\b|\bdate\b/, cats: ["dress","blazer","top"] },
+          { re: /\bsporty\b|\bgym\b|\bworkout\b|\bathleisure\b|\bactive\b|\bexercise\b/, cats: ["t-shirt","joggers","shorts"] },
+          { re: /\bstreet\b|\bstreet.?wear\b|\burban\b|\bhip.?hop\b/, cats: ["t-shirt","joggers","cargo"] },
+          { re: /\bwedding\b|\bfestival\b|\bfestive\b|\bcelebration\b/, cats: ["dress","kurta","blazer"] },
+          { re: /\bsummer\b|\bbeach\b|\bvacation\b|\bholiday\b/, cats: ["t-shirt","shorts","dress"] },
+          { re: /\bwinter\b|\bcold\b|\bwarm\b/, cats: ["sweater","blazer","jeans"] },
+        ];
+        for (const { re, cats } of occasionMap) {
+          if (re.test(q)) { params.set("category", cats[0]); break; }
         }
+      }
+
+      // ── Color detection ──
+      const colorMap = [
+        { re: /\bblack\b/, color: "black" }, { re: /\bwhite\b/, color: "white" },
+        { re: /\bblue\b|\bcobalt\b|\bindigo\b/, color: "blue" }, { re: /\bnavy\b/, color: "navy" },
+        { re: /\bred\b|\bcrimson\b|\bscarlet\b/, color: "red" }, { re: /\bgreen\b|\bolive\b|\bkhaki\b/, color: "green" },
+        { re: /\bpink\b|\brose\b|\bblush\b|\bfuchsia\b/, color: "pink" }, { re: /\byellow\b|\bgold\b|\bmustard\b/, color: "yellow" },
+        { re: /\bgrey\b|\bgray\b|\bcharcoal\b|\bsilver\b/, color: "grey" }, { re: /\bbrown\b|\btan\b|\bchocolate\b|\bcoffee\b/, color: "brown" },
+        { re: /\bbeige\b|\bcream\b|\bivory\b|\boff.?white\b/, color: "beige" }, { re: /\bpurple\b|\bviolet\b|\blavender\b|\bplum\b/, color: "purple" },
+        { re: /\borange\b|\bcoral\b|\bpeach\b|\brust\b/, color: "orange" }, { re: /\bmaroon\b|\bburgundy\b|\bwine\b/, color: "maroon" },
+        { re: /\bteal\b|\bturquoise\b|\bcyan\b|\baqua\b/, color: "teal" },
+        { re: /\bdark\s?colou?rs?\b/, color: "black" }, { re: /\bbright\s?colou?rs?\b/, color: "red" },
+        { re: /\blight\s?colou?rs?\b|\bpastels?\b/, color: "pink" }, { re: /\bneutrals?\b/, color: "beige" },
+        { re: /\bearth\s?tones?\b/, color: "brown" },
+      ];
+      for (const { re, color } of colorMap) { if (re.test(q)) { params.set("color", color); break; } }
+
+      // ── Style/pattern keywords → search in name ──
+      const styleHints = [];
+      if (/\bstriped?\b|\bstripes?\b/.test(q)) styleHints.push("stripe");
+      if (/\bfloral\b|\bflowers?\b/.test(q)) styleHints.push("floral");
+      if (/\bprinted?\b|\bprint\b|\bgraphic\b/.test(q)) styleHints.push("print");
+      if (/\bsolid\b|\bplain\b/.test(q)) styleHints.push("solid");
+      if (/\bchecked?\b|\bcheckered?\b|\bplaid\b/.test(q)) styleHints.push("check");
+      if (/\bslim\b|\bfitted?\b|\bskinny\b/.test(q)) styleHints.push("slim");
+      if (/\boversized?\b|\bbaggy\b|\bloose\b|\brelaxed\b/.test(q)) styleHints.push("oversized");
+
+      // ── Price intent ──
+      let sortByPrice = null;
+      if (/\bcheap\b|\baffordable\b|\bbudget\b|\binexpensive\b|\blow.?price\b|\bunder\b/.test(q)) sortByPrice = "asc";
+      if (/\bexpensive\b|\bpremium\b|\bluxury\b|\bhigh.?end\b|\bdesigner\b/.test(q)) sortByPrice = "desc";
+      if (/\bpopular\b|\btrending\b|\bbest.?sell\b|\bhot\b|\btop.?rated\b/.test(q)) sortByPrice = "popular";
+
+      // ── Specific price extraction ──
+      const priceMatch = q.match(/under\s*\$?(\d+)/);
+      const maxPrice = priceMatch ? parseInt(priceMatch[1]) : null;
+
+      // ── Fetch from API ──
+      const r = await fetch(`${API}/api/recommendations/trending?${params}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      let items = d.items || d.recommendations || [];
+
+      // ── Client-side filtering for style hints ──
+      if (styleHints.length > 0) {
+        const styled = items.filter(i => {
+          const text = ((i.name || "") + " " + (i.style_tags || []).join(" ")).toLowerCase();
+          return styleHints.some(h => text.includes(h));
+        });
+        if (styled.length > 0) items = styled;
+      }
+
+      // ── Client-side price filter ──
+      if (maxPrice) {
+        const priced = items.filter(i => {
+          const p = (i.sale_price > 0 ? i.sale_price : i.base_price || i.price || 0) / 10;
+          return p > 0 && p <= maxPrice;
+        });
+        if (priced.length > 0) items = priced;
+      }
+
+      // ── Client-side sorting ──
+      if (sortByPrice === "asc") items.sort((a, b) => (a.base_price || 0) - (b.base_price || 0));
+      if (sortByPrice === "desc") items.sort((a, b) => (b.base_price || 0) - (a.base_price || 0));
+
+      if (items.length > 0 && onUpdateRecs) {
+        onUpdateRecs(items, true);
+        setBarQuery("");
       }
     } catch (err) {
       console.warn("Search failed:", err);
