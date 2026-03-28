@@ -3,9 +3,8 @@ import { login, logout } from "./store/authSlice";
 import { clearProfile, updateProfile } from "./store/profileSlice";
 import { persistor } from "./store";
 import { setProfile } from "./store/profileSlice";
-import { setRecommendations } from "./store/recommendationsSlice";
 import { SignInPage } from "./components/ui/sign-in-flow";
-import ProfileChat from "./ProfileChat";
+import ImageAnalysis from "./ImageAnalysis";
 import Fashionai from "./Fashionai";
 
 function App() {
@@ -14,7 +13,7 @@ function App() {
   const { data: profileData, isComplete } = useSelector((s) => s.profile);
   const recs = useSelector((s) => s.recommendations.items);
 
-  // Step 1: Not logged in → Sign in
+  // Page 1: Not logged in → Sign in
   if (!isLoggedIn || !user) {
     return (
       <SignInPage
@@ -23,21 +22,36 @@ function App() {
     );
   }
 
-  // Step 2: Profile not complete → Profile chat
+  // Page 2: Profile not complete → Image Upload & Analysis
   if (!isComplete) {
     return (
-      <ProfileChat
-        email={user.email}
-        name={user.name}
-        onProfileComplete={(profile, recommendations) => {
+      <ImageAnalysis
+        userEmail={user.email}
+        onAnalysisComplete={(attributes) => {
+          // Convert image analysis attributes to profile format
+          const profile = {
+            gender: attributes.gender || "",
+            age: attributes.estimated_age || 25,
+            colors: attributes.color_palette || attributes.preferred_colors || [],
+            categories: attributes.clothing_detected || [],
+            fit: attributes.recommended_fit || "Regular",
+            height: 170,
+            weight: 65,
+            bodyType: attributes.body_type || "Average",
+            skinTone: attributes.skin_tone || "",
+            currentStyle: attributes.current_style || "",
+            styleKeywords: attributes.style_keywords || [],
+            fashionScore: attributes.fashion_score || 5,
+            occasionFit: attributes.occasion_fit || "",
+            seasonFit: attributes.season_fit || "",
+          };
           dispatch(setProfile(profile));
-          if (recommendations?.length) dispatch(setRecommendations(recommendations));
         }}
       />
     );
   }
 
-  // Step 3: Recommendations
+  // Page 3: Recommendations
   return (
     <Fashionai
       initialProfile={{
@@ -45,7 +59,7 @@ function App() {
         name: user.name,
         gender: profileData?.gender || "",
         age: profileData?.age || "",
-        city: profileData?.city || "",
+        city: "",
         colors: profileData?.colors || [],
         categories: profileData?.categories || [],
         fit: profileData?.fit || "Regular",
