@@ -26,15 +26,85 @@ function getComplementaryGroups(group) {
   }
 }
 
-function colorScore(colorsA, colorsB) {
-  const a = (colorsA || []).map(c => c.toLowerCase());
-  const b = (colorsB || []).map(c => c.toLowerCase());
-  return a.filter(c => b.includes(c)).length * 2 + (b.some(c => ["black","white","grey","beige","cream","navy"].includes(c)) ? 1 : 0);
+// Style categories for occasion matching
+const FORMAL_TAGS = ["formal","office","business","professional","classic","elegant","corporate","work"];
+const CASUAL_TAGS = ["casual","relaxed","everyday","street","streetwear","weekend","comfort"];
+const PARTY_TAGS = ["party","evening","cocktail","glam","festive","night","club"];
+const SPORTY_TAGS = ["sport","athletic","gym","active","workout","jogger","track"];
+
+function getStyleVibe(item) {
+  const tags = (item.style_tags || []).map(t => t.toLowerCase());
+  const cat = (item.category || "").toLowerCase();
+  const name = (item.name || "").toLowerCase();
+  const all = [...tags, cat, name].join(" ");
+  if (FORMAL_TAGS.some(t => all.includes(t))) return "formal";
+  if (SPORTY_TAGS.some(t => all.includes(t))) return "sporty";
+  if (PARTY_TAGS.some(t => all.includes(t))) return "party";
+  if (CASUAL_TAGS.some(t => all.includes(t))) return "casual";
+  // Infer from category
+  if (/blazer|shirt|trouser|formal/.test(cat)) return "formal";
+  if (/jogger|track|cargo/.test(cat)) return "casual";
+  return "casual";
+}
+
+// Complementary color pairs (dark top → light bottom, etc.)
+const COMPLEMENTARY = {
+  "black": ["white","beige","cream","grey","khaki","light blue"],
+  "navy": ["white","beige","cream","khaki","light grey"],
+  "white": ["black","navy","blue","grey","charcoal","denim"],
+  "blue": ["white","beige","khaki","cream","black"],
+  "red": ["black","white","navy","denim","grey"],
+  "pink": ["white","black","grey","navy","denim"],
+  "green": ["black","white","beige","cream","khaki"],
+  "grey": ["black","white","navy","blue","burgundy"],
+  "brown": ["white","beige","cream","navy","black"],
+  "beige": ["black","navy","brown","white","burgundy"],
+};
+
+function matchScore(currentItem, candidateItem) {
+  let score = 0;
+  const aColors = (currentItem.available_colors || []).map(c => c.toLowerCase());
+  const bColors = (candidateItem.available_colors || []).map(c => c.toLowerCase());
+  const aTags = (currentItem.style_tags || []).map(t => t.toLowerCase());
+  const bTags = (candidateItem.style_tags || []).map(t => t.toLowerCase());
+
+  // 1. Style/occasion match (+5 for same vibe)
+  const vibeA = getStyleVibe(currentItem);
+  const vibeB = getStyleVibe(candidateItem);
+  if (vibeA === vibeB) score += 5;
+  else if ((vibeA === "formal" && vibeB === "casual") || (vibeA === "casual" && vibeB === "formal")) score += 1;
+
+  // 2. Color harmony (+3 for complementary, +2 for matching, +1 for neutral)
+  const neutrals = ["black","white","grey","gray","beige","cream","navy","charcoal"];
+  for (const ac of aColors) {
+    const complements = COMPLEMENTARY[ac] || [];
+    if (bColors.some(bc => complements.includes(bc))) { score += 3; break; }
+  }
+  if (aColors.some(c => bColors.includes(c))) score += 2;
+  if (bColors.some(c => neutrals.includes(c))) score += 1;
+
+  // 3. Style tag overlap (+2 per shared tag, max 6)
+  const tagOverlap = aTags.filter(t => bTags.includes(t)).length;
+  score += Math.min(tagOverlap * 2, 6);
+
+  // 4. Fit compatibility (+2)
+  const aFit = (currentItem.style_tags || []).find(t => /slim|regular|loose|oversized|relaxed|fitted/.test(t.toLowerCase()));
+  const bFit = (candidateItem.style_tags || []).find(t => /slim|regular|loose|oversized|relaxed|fitted/.test(t.toLowerCase()));
+  if (aFit && bFit && aFit.toLowerCase() === bFit.toLowerCase()) score += 2;
+
+  // 5. Price range similarity (+1 if within 50% price range)
+  const priceA = getPrice(currentItem);
+  const priceB = getPrice(candidateItem);
+  if (priceA > 0 && priceB > 0) {
+    const ratio = Math.min(priceA, priceB) / Math.max(priceA, priceB);
+    if (ratio > 0.5) score += 1;
+  }
+
+  return score;
 }
 
 function generateOutfits(currentItem, allItems, count = 3) {
   const currentGroup = getCatGroup(currentItem.category);
-  const currentColors = (currentItem.available_colors || []).map(c => c.toLowerCase());
   const currentGender = (currentItem.gender || "").toLowerCase();
   const currentId = currentItem.catalog_item_id || currentItem.id;
   const neededGroups = getComplementaryGroups(currentGroup);
@@ -45,7 +115,7 @@ function generateOutfits(currentItem, allItems, count = 3) {
     const g = (item.gender || "").toLowerCase();
     if (currentGender && g && g !== currentGender && g !== "unisex") return;
     const group = getCatGroup(item.category);
-    if (grouped[group]) grouped[group].push({ ...item, _score: colorScore(currentColors, item.available_colors) });
+    if (grouped[group]) grouped[group].push({ ...item, _score: matchScore(currentItem, item) });
   });
   for (const g of neededGroups) grouped[g].sort((a, b) => b._score - a._score);
   const outfits = [];
