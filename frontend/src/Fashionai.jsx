@@ -2883,6 +2883,10 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                 onUpdateRecs(items, true);
                 setBarQuery("");
                 return;
+              } else {
+                setAiMessage("No items found matching your request. Try something else!");
+                setBarQuery("");
+                return;
               }
             }
           }
