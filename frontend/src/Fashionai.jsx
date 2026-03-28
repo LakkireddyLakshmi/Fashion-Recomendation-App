@@ -2885,8 +2885,40 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                 setBarQuery("");
                 setSearchActive(true);
                 return;
-              } else {
-                setAiMessage("No items found matching your request. Try something else!");
+              }
+              // Retry without gender if no results
+              if (items.length === 0 && f.gender) {
+                params.delete("gender");
+                const r2 = await fetch(`${API}/api/recommendations/trending?${params}`);
+                if (r2.ok) {
+                  const d2 = await r2.json();
+                  const items2 = d2.items || [];
+                  if (items2.length > 0 && onUpdateRecs) {
+                    setAiMessage((f.message || "") + " (showing all genders)");
+                    onUpdateRecs(items2, true);
+                    setBarQuery("");
+                    setSearchActive(true);
+                    return;
+                  }
+                }
+              }
+              // Retry without any filters
+              if (items.length === 0) {
+                params.delete("category");
+                params.delete("color");
+                const r3 = await fetch(`${API}/api/recommendations/trending?${params}`);
+                if (r3.ok) {
+                  const d3 = await r3.json();
+                  const items3 = d3.items || [];
+                  if (items3.length > 0 && onUpdateRecs) {
+                    setAiMessage("Couldn't find an exact match, but here are some suggestions!");
+                    onUpdateRecs(items3, true);
+                    setBarQuery("");
+                    setSearchActive(true);
+                    return;
+                  }
+                }
+                setAiMessage("No items found. Try something else!");
                 setBarQuery("");
                 return;
               }
