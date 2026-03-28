@@ -2984,7 +2984,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       </div>
 
       {/* Complete the Look */}
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 32px" }}>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 100px" }}>
         <CompleteTheLook
           currentItem={currentItem}
           allItems={recommendations}
@@ -4639,15 +4639,16 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     <>
       {/* ── Floating cart counter ── */}
       {cartCount >= 0 && step === 3 && !chatResults && !chatLoading && (
-        <div className="floating-nav" style={{ position:"fixed", top:18, right:18, zIndex:200, display:"flex", gap:10 }}>
+        <div className="floating-nav" style={{ position:"fixed", top:14, right:120, zIndex:200, display:"flex", gap:8 }}>
           {/* Profile button */}
           <button onClick={()=>setProfileOpen(true)} style={{
-            background: "rgba(255,255,255,0.12)",
-            color: "rgba(255,255,255,0.65)",
-            borderRadius:50, padding:"8px 14px", border: "1px solid rgba(255,255,255,0.18)",
+            background: "#fff",
+            color: "#555",
+            borderRadius:50, padding:"8px 14px", border: "1px solid #e5e7eb",
             display:"flex", alignItems:"center", gap:6,
             fontFamily:"'League Spartan',sans-serif", fontWeight:700, fontSize:15,
             cursor:"pointer", transition:"all 0.3s",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
           }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
