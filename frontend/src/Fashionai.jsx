@@ -2794,7 +2794,10 @@ function CartDrawer({ cart, onClose, onUpdateQty, onRemove, onCheckout }) {
   );
 }
 
-function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed }) {
+function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed, cart, onLogout, onCartOpen, onProfileOpen }) {
+  const cartCount = cart ? cart.length : 0;
+  const setCartOpen = onCartOpen || (() => {});
+  const setProfileOpen = onProfileOpen || (() => {});
   const [page, setPage] = useState(0);
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("match");
@@ -5122,6 +5125,10 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           wishlist={wishlist}
           onToggleWishlist={toggleWishlist}
           recentlyViewed={recentlyViewed}
+          cart={cart}
+          onLogout={onLogout}
+          onCartOpen={() => setCartOpen(true)}
+          onProfileOpen={() => setProfileOpen(true)}
         />
       )}
       {err && (
