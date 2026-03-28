@@ -2794,6 +2794,41 @@ function CartDrawer({ cart, onClose, onUpdateQty, onRemove, onCheckout }) {
   );
 }
 
+// Mic button with Web Speech API
+function MicButton({ onResult }) {
+  const [listening, setListening] = useState(false);
+  const handleClick = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert("Speech recognition requires Chrome + HTTPS"); return; }
+    const recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.onstart = () => setListening(true);
+    recognition.onresult = (e) => {
+      const text = e.results[0][0].transcript;
+      setListening(false);
+      if (onResult) onResult(text);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.start();
+  };
+  return (
+    <button onClick={handleClick} style={{
+      background: "none", border: "none", cursor: "pointer", flexShrink: 0,
+      padding: 4, borderRadius: "50%",
+      animation: listening ? "pulse 1.5s infinite" : "none",
+    }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill={listening ? "#ef4444" : "none"} stroke={listening ? "#ef4444" : "#999"} strokeWidth="2">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+      </svg>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+    </button>
+  );
+}
+
 function StepFinish({ profile, recommendations, allRecommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed, cart, onLogout, onCartOpen, onProfileOpen, onUpdateRecs }) {
   const cartCount = cart ? cart.length : 0;
   const setCartOpen = onCartOpen || (() => {});
@@ -3045,12 +3080,13 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
           background: "#f8f9fa", borderRadius: 30, padding: "6px 6px 6px 16px",
           border: "1px solid #e5e7eb",
         }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2" style={{ flexShrink: 0 }}>
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="23"/>
-          </svg>
+          <MicButton onResult={(text) => {
+            // Find the input and set its value, then trigger search
+            const input = document.querySelector("#bottom-bar-input");
+            if (input) { input.value = text; input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); }
+          }} />
           <input
+            id="bottom-bar-input"
             type="text"
             placeholder='Tell me: "Show me different shoes"'
             style={{
