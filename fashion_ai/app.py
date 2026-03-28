@@ -2393,10 +2393,27 @@ async def trending(
             # Gender filter
             if norm_gender and ig != "unisex" and ig != norm_gender:
                 continue
-            # Category filter — substring match on category/subcategory
+            # Category filter — substring match + synonym expansion
             if norm_category:
-                cat_str = ((it.get("category") or "") + " " + (it.get("subcategory") or "")).lower()
-                if norm_category not in cat_str:
+                cat_str = ((it.get("category") or "") + " " + (it.get("subcategory") or "") + " " + (it.get("name") or "")).lower()
+                # Expand category synonyms
+                cat_synonyms = {
+                    "shirt": ["shirt", "top", "button"],
+                    "t-shirt": ["t-shirt", "tee", "top"],
+                    "top": ["top", "shirt", "blouse", "tee"],
+                    "blouse": ["blouse", "top"],
+                    "blazer": ["blazer", "jacket", "coat", "top"],
+                    "jeans": ["jeans", "denim", "bottom", "pant"],
+                    "trousers": ["trouser", "pant", "bottom", "chino", "slack"],
+                    "joggers": ["jogger", "track", "bottom", "sweat"],
+                    "cargo": ["cargo", "pant", "bottom"],
+                    "dress": ["dress", "gown", "maxi", "midi"],
+                    "kurta": ["kurta", "ethnic", "anarkali"],
+                    "shorts": ["short", "bermuda", "bottom"],
+                    "sweater": ["sweater", "pullover", "cardigan", "hoodie"],
+                }
+                terms = cat_synonyms.get(norm_category, [norm_category])
+                if not any(t in cat_str for t in terms):
                     continue
             # Color filter — substring match across all color fields
             if norm_color:
