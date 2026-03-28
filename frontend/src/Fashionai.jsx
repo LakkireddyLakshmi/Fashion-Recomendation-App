@@ -2837,6 +2837,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   const [barQuery, setBarQuery] = useState("");
 
   const [aiMessage, setAiMessage] = useState("");
+  const [searchActive, setSearchActive] = useState(false);
 
   const doBarSearch = async (query) => {
     try {
@@ -2882,6 +2883,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
               if (items.length > 0 && onUpdateRecs) {
                 onUpdateRecs(items, true);
                 setBarQuery("");
+                setSearchActive(true);
                 return;
               } else {
                 setAiMessage("No items found matching your request. Try something else!");
@@ -3006,6 +3008,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
       if (items.length > 0 && onUpdateRecs) {
         onUpdateRecs(items, true);
         setBarQuery("");
+        setSearchActive(true);
       }
     } catch (err) {
       console.warn("Search failed:", err);
@@ -3099,6 +3102,8 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
       return topKeywords.some(k => cat.includes(k) || name.includes(k)) ||
              bottomKeywords.some(k => cat.includes(k) || name.includes(k));
     });
+    // If search is active, skip filtering — show search results directly
+    if (searchActive) return items;
     // If we have tops+bottoms for this gender, use them. Otherwise show all items
     if (topsAndBottoms.length >= 2) return topsAndBottoms;
     // Try without gender filter
@@ -3110,7 +3115,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
     });
     if (allTopsBottoms.length >= 2) return allTopsBottoms;
     return items;
-  }, [filtered, profile]);
+  }, [filtered, profile, searchActive]);
 
   const currentItem = profileFiltered[page] || profileFiltered[0];
   const totalItems = profileFiltered.length;
