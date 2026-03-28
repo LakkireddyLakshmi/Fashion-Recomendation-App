@@ -2860,8 +2860,32 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
   }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
 
   const filtered = filteredData.items;
-  const currentItem = filtered[page] || filtered[0];
-  const totalItems = filtered.length;
+  // Filter by profile's detected categories and gender
+  const profileFiltered = useMemo(() => {
+    let items = filtered;
+    const gender = (profile?.gender || "").toLowerCase();
+    if (gender) {
+      const genderItems = items.filter(i => {
+        const g = (i.gender || "").toLowerCase();
+        return g === gender || g === (gender === "male" ? "men" : "women") || g === "unisex";
+      });
+      if (genderItems.length > 0) items = genderItems;
+    }
+    // Prefer tops and bottoms over dresses for non-dress profiles
+    const profileCats = (profile?.categories || []).map(c => c.toLowerCase());
+    const hasDressPreference = profileCats.some(c => c.includes("dress") || c.includes("gown"));
+    if (!hasDressPreference && items.length > 3) {
+      const nonDress = items.filter(i => {
+        const cat = (i.category || "").toLowerCase();
+        return !cat.includes("dress") && !cat.includes("gown");
+      });
+      if (nonDress.length > 2) items = nonDress;
+    }
+    return items;
+  }, [filtered, profile]);
+
+  const currentItem = profileFiltered[page] || profileFiltered[0];
+  const totalItems = profileFiltered.length;
 
   if (!currentItem) {
     return (
