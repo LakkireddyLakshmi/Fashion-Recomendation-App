@@ -11,7 +11,6 @@ function App() {
   const dispatch = useDispatch();
   const { user, isLoggedIn } = useSelector((s) => s.auth);
   const { data: profileData, isComplete } = useSelector((s) => s.profile);
-  const recs = useSelector((s) => s.recommendations.items);
 
   // Page 1: Not logged in → Sign in
   if (!isLoggedIn || !user) {
@@ -22,14 +21,12 @@ function App() {
     );
   }
 
-  // Page 2: Profile not complete → Image Upload & Analysis
+  // Page 2: Upload image → analyze → go directly to recommendations (no attributes page)
   if (!isComplete) {
     return (
       <ImageAnalysis
-        userEmail={user.email}
         onAnalysisComplete={(attributes) => {
-          // Convert image analysis attributes to profile format
-          const profile = {
+          dispatch(setProfile({
             gender: attributes.gender || "",
             age: attributes.estimated_age || 25,
             colors: attributes.color_palette || attributes.preferred_colors || [],
@@ -38,14 +35,7 @@ function App() {
             height: 170,
             weight: 65,
             bodyType: attributes.body_type || "Average",
-            skinTone: attributes.skin_tone || "",
-            currentStyle: attributes.current_style || "",
-            styleKeywords: attributes.style_keywords || [],
-            fashionScore: attributes.fashion_score || 5,
-            occasionFit: attributes.occasion_fit || "",
-            seasonFit: attributes.season_fit || "",
-          };
-          dispatch(setProfile(profile));
+          }));
         }}
       />
     );
@@ -67,7 +57,7 @@ function App() {
         weight: profileData?.weight || "",
         bodyType: profileData?.bodyType || "",
       }}
-      initialRecs={recs}
+      initialRecs={[]}
       skipWizard={true}
       onLogout={() => {
         dispatch(logout());

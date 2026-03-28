@@ -9,7 +9,7 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState(null);
-  const [results, setResults] = useState(null); // Store analysis results
+  const [results] = useState(null);
   const fileRef = useRef(null);
   const videoRef = useRef(null);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -87,8 +87,8 @@ export default function ImageAnalysis({ onAnalysisComplete }) {
       console.log("Claude Vision result:", attributes);
 
       setProgress("Done!");
-      setResults(attributes);
-      setAnalyzing(false);
+      // Go directly to recommendations — no attributes page
+      onAnalysisComplete(attributes);
 
     } catch (err) {
       console.error("Analysis error:", err);
