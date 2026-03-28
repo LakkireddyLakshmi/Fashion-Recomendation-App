@@ -3085,7 +3085,8 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
                     const d = await r.json();
                     const items = d.items || d.recommendations || [];
                     if (items.length > 0 && onUpdateRecs) {
-                      onUpdateRecs(items);
+                      // Merge with existing recs so Complete the Look has variety
+                      onUpdateRecs(items, true);
                     }
                   }
                 } catch (err) {
@@ -5169,7 +5170,16 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           onLogout={onLogout}
           onCartOpen={() => setCartOpen(true)}
           onProfileOpen={() => setProfileOpen(true)}
-          onUpdateRecs={(items) => setRecs(items)}
+          onUpdateRecs={(items, merge) => {
+            if (merge) {
+              // Put searched items first, then keep existing for outfit variety
+              const existingIds = new Set(items.map(i => i.catalog_item_id || i.id));
+              const kept = recs.filter(r => !existingIds.has(r.catalog_item_id || r.id));
+              setRecs([...items, ...kept]);
+            } else {
+              setRecs(items);
+            }
+          }}
         />
       )}
       {err && (
