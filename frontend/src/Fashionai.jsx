@@ -17,6 +17,7 @@ import TryOnModal from "./components/TryOnModal";
 import ImageSearchButton from "./components/ImageSearchButton";
 import UserProfile from "./components/UserProfile";
 import SizeRecommendation from "./components/SizeRecommendation";
+import CompleteTheLook from "./components/CompleteTheLook";
 import OutfitBuilder from "./components/OutfitBuilder";
 import CheckoutDrawer from "./components/CheckoutDrawer";
 
@@ -3547,6 +3548,17 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
           </div>
         </div>
       </div>
+
+      {/* ── Complete the Look ── */}
+      <CompleteTheLook
+        currentItem={item}
+        allItems={allRecs}
+        onAddToCart={onAddToCart}
+        onItemClick={(clickedItem) => {
+          const idx = allRecs.findIndex(r => (r.catalog_item_id || r.id) === (clickedItem.catalog_item_id || clickedItem.id));
+          if (idx >= 0) setDetailIdx(idx);
+        }}
+      />
 
       {/* ── Comments Section ── */}
       <CommentsSection itemId={item?.catalog_item_id || item?.id || "unknown"} userName={userProfile?.name || ""} />
