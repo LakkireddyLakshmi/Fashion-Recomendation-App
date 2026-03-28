@@ -2369,7 +2369,7 @@ async def post_recommendations(
 @app.get("/api/recommendations/trending", tags=["Recommendations"],
          summary="Public trending — no login needed")
 async def trending(
-    limit:    int           = Query(20, ge=1, le=500),
+    limit:    int           = Query(20, ge=1, le=3000),
     gender:   Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     color:    Optional[str] = Query(None),
