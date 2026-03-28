@@ -18,11 +18,11 @@ function getCatGroup(cat) {
 
 function getComplementaryGroups(group) {
   switch (group) {
-    case "top": return ["bottom", "shoes"];
-    case "bottom": return ["top", "shoes"];
-    case "dress": return ["shoes", "accessory"];
+    case "top": return ["bottom", "shoes", "accessory"];
+    case "bottom": return ["top", "shoes", "accessory"];
+    case "dress": return ["top", "bottom", "shoes", "accessory"];
     case "shoes": return ["top", "bottom"];
-    default: return ["top", "bottom", "shoes"];
+    default: return ["top", "bottom", "shoes", "accessory"];
   }
 }
 
