@@ -2881,9 +2881,12 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                 if (priced.length > 0) items = priced;
               }
               if (items.length > 0 && onUpdateRecs) {
-                onUpdateRecs(items, true);
+                onUpdateRecs(items, false); // Replace recs, don't merge
                 setBarQuery("");
                 setSearchActive(true);
+                setActiveFilter("All");
+                setPriceFilter("all");
+                setSearchQ("");
                 return;
               }
               // Retry without gender if no results
@@ -2895,9 +2898,11 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                   const items2 = d2.items || [];
                   if (items2.length > 0 && onUpdateRecs) {
                     setAiMessage((f.message || "") + " (showing all genders)");
-                    onUpdateRecs(items2, true);
+                    onUpdateRecs(items2, false);
                     setBarQuery("");
                     setSearchActive(true);
+                    setActiveFilter("All");
+                    setPriceFilter("all");
                     return;
                   }
                 }
