@@ -2911,16 +2911,42 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       {/* Top nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 32px", borderBottom: "1px solid #f0f0f0" }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: "#1a1a1a" }}>HueIQ</div>
-        <button onClick={() => setProfileOpen(true)} style={{
-          width: 36, height: 36, borderRadius: "50%",
-          border: "1px solid #e5e7eb", background: "#fff",
-          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-        }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
-          </svg>
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Bag */}
+          <button onClick={() => setCartOpen(true)} style={{
+            background: "#fff", color: "#1a1a1a",
+            borderRadius: 50, padding: "8px 16px", border: "1px solid #e5e7eb",
+            display: "flex", alignItems: "center", gap: 6,
+            fontFamily: "'League Spartan'", fontWeight: 700, fontSize: 14,
+            cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+          }}>
+            🛍 {cartCount > 0 ? `Bag · ${cartCount}` : "Bag"}
+          </button>
+          {/* Profile */}
+          <button onClick={() => setProfileOpen(true)} style={{
+            width: 36, height: 36, borderRadius: "50%",
+            border: "1px solid #e5e7eb", background: "#fff",
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+          </button>
+          {/* Logout */}
+          {onLogout && (
+            <button onClick={onLogout} style={{
+              width: 36, height: 36, borderRadius: "50%",
+              border: "1px solid #e5e7eb", background: "#fff",
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main content: Product image left + details right */}
@@ -4638,8 +4664,8 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
 
   return (
     <>
-      {/* ── Floating cart counter ── */}
-      {cartCount >= 0 && step === 3 && !chatResults && !chatLoading && (
+      {/* ── Floating cart counter (hidden - moved to top nav) ── */}
+      {false && cartCount >= 0 && step === 3 && !chatResults && !chatLoading && (
         <div className="floating-nav" style={{ position:"fixed", top:14, right:120, zIndex:200, display:"flex", gap:8 }}>
           {/* Profile button */}
           <button onClick={()=>setProfileOpen(true)} style={{
