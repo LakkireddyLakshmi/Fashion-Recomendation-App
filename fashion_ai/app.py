@@ -2425,15 +2425,23 @@ async def trending(
             filtered_items.append(it)
         items = filtered_items
 
-    # Sort by stock (most available = trending)
-    def _stock_sum(x):
-        total = 0
+    # Sort: prioritize well-categorized items (seed catalog) over generic Boss API items
+    generic_cats = {"dresses", "tops", "accessories"}
+    def _sort_key(x):
+        cat = (x.get("category") or "").lower().strip()
+        has_proper_category = cat not in generic_cats and len(cat) > 0
+        has_name = bool((x.get("name") or "").strip())
+        has_price = (x.get("base_price") or x.get("sale_price") or 0) > 0
+        # Seed items have proper categories, names, prices — score higher
+        quality_score = (3 if has_proper_category else 0) + (1 if has_name else 0) + (1 if has_price else 0)
+        # Stock as tiebreaker
+        stock = 0
         for v in (x.get("variants") or []):
             if isinstance(v, dict):
-                try: total += int(v.get("stock_quantity") or 0)
+                try: stock += int(v.get("stock_quantity") or 0)
                 except (TypeError, ValueError): pass
-        return total
-    items.sort(key=_stock_sum, reverse=True)
+        return (quality_score, stock)
+    items.sort(key=_sort_key, reverse=True)
 
     out:  List[Dict] = []
     seen: Set[str]   = set()
