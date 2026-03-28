@@ -3085,6 +3085,7 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
 
 function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new Set(), onToggleWishlist, userProfile }) {
   const [tryOnOpen, setTryOnOpen] = useState(false);
+  const [selectedOutfit, setSelectedOutfit] = useState(0);
   const fb =
     "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&fit=crop";
   const fallbackImg = item?.primary_image_url || fb;
@@ -3554,11 +3555,66 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
         currentItem={item}
         allItems={allRecs}
         onAddToCart={onAddToCart}
+        selectedOutfit={selectedOutfit}
+        onSelectOutfit={setSelectedOutfit}
         onItemClick={(clickedItem) => {
           const idx = allRecs.findIndex(r => (r.catalog_item_id || r.id) === (clickedItem.catalog_item_id || clickedItem.id));
           if (idx >= 0) setDetailIdx(idx);
         }}
       />
+
+      {/* ── Bottom Sticky Bar: Voice + Add Outfit ── */}
+      <div style={{
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        background: "rgba(10,10,20,0.95)",
+        backdropFilter: "blur(20px)",
+        borderTop: "1px solid rgba(255,255,255,0.1)",
+        padding: "12px 24px",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        zIndex: 100,
+      }}>
+        <div style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          background: "rgba(255,255,255,0.06)",
+          borderRadius: 30,
+          padding: "10px 16px",
+          border: "1px solid rgba(255,255,255,0.1)",
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+          </svg>
+          <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 14, fontFamily: "'League Spartan'" }}>
+            Tell me: "Show me different shoes"
+          </span>
+        </div>
+        <button
+          onClick={() => {/* Add selected outfit to cart */}}
+          style={{
+            padding: "12px 28px",
+            background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+            color: "#fff",
+            border: "none",
+            borderRadius: 30,
+            fontSize: 14,
+            fontWeight: 700,
+            cursor: "pointer",
+            fontFamily: "'League Spartan'",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Add Full Outfit to Cart
+        </button>
+      </div>
 
       {/* ── Comments Section ── */}
       <CommentsSection itemId={item?.catalog_item_id || item?.id || "unknown"} userName={userProfile?.name || ""} />
