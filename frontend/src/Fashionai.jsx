@@ -2794,7 +2794,7 @@ function CartDrawer({ cart, onClose, onUpdateQty, onRemove, onCheckout }) {
   );
 }
 
-function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed, cart, onLogout, onCartOpen, onProfileOpen }) {
+function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed, cart, onLogout, onCartOpen, onProfileOpen, onUpdateRecs }) {
   const cartCount = cart ? cart.length : 0;
   const setCartOpen = onCartOpen || (() => {});
   const setProfileOpen = onProfileOpen || (() => {});
@@ -3059,10 +3059,38 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
               color: "#1a1a1a", fontSize: 14, outline: "none",
               fontFamily: "'League Spartan'",
             }}
-            onKeyDown={(e) => {
+            onKeyDown={async (e) => {
               if (e.key === "Enter" && e.target.value.trim()) {
-                // TODO: handle voice/text swap commands
+                const query = e.target.value.trim();
                 e.target.value = "";
+                try {
+                  const params = new URLSearchParams({ limit: "20" });
+                  // Parse intent from query
+                  const q = query.toLowerCase();
+                  if (/\b(men|man|male|boy|guys)\b/.test(q)) params.set("gender", "men");
+                  else if (/\b(women|woman|female|girl|ladies)\b/.test(q)) params.set("gender", "women");
+                  const catMap = [
+                    { re: /\bshirts?\b/, cat: "shirt" }, { re: /\bt-?shirts?\b/, cat: "t-shirt" },
+                    { re: /\bjeans?\b/, cat: "jeans" }, { re: /\bdress(es)?\b/, cat: "dress" },
+                    { re: /\bblazers?\b/, cat: "blazer" }, { re: /\btops?\b/, cat: "top" },
+                    { re: /\bjoggers?\b/, cat: "joggers" }, { re: /\btrousers?\b/, cat: "trousers" },
+                  ];
+                  for (const { re, cat } of catMap) {
+                    if (re.test(q)) { params.set("category", cat); break; }
+                  }
+                  const colorMap = ["black","white","blue","red","green","pink","yellow","navy","grey","brown","beige"];
+                  for (const c of colorMap) { if (q.includes(c)) { params.set("color", c); break; } }
+                  const r = await fetch(`${API}/api/recommendations/trending?${params}`);
+                  if (r.ok) {
+                    const d = await r.json();
+                    const items = d.items || d.recommendations || [];
+                    if (items.length > 0 && onUpdateRecs) {
+                      onUpdateRecs(items);
+                    }
+                  }
+                } catch (err) {
+                  console.warn("Search failed:", err);
+                }
               }
             }}
           />
@@ -5141,6 +5169,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           onLogout={onLogout}
           onCartOpen={() => setCartOpen(true)}
           onProfileOpen={() => setProfileOpen(true)}
+          onUpdateRecs={(items) => setRecs(items)}
         />
       )}
       {err && (
