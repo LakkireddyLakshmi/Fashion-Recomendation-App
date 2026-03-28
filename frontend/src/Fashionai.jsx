@@ -3043,17 +3043,29 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       }}>
         <div style={{
           flex: 1, display: "flex", alignItems: "center", gap: 10,
-          background: "#f8f9fa", borderRadius: 30, padding: "10px 16px",
+          background: "#f8f9fa", borderRadius: 30, padding: "6px 6px 6px 16px",
           border: "1px solid #e5e7eb",
         }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2" style={{ flexShrink: 0 }}>
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
             <line x1="12" y1="19" x2="12" y2="23"/>
           </svg>
-          <span style={{ color: "#999", fontSize: 14, fontFamily: "'League Spartan'" }}>
-            Tell me: "Show me different shoes"
-          </span>
+          <input
+            type="text"
+            placeholder='Tell me: "Show me different shoes"'
+            style={{
+              flex: 1, background: "transparent", border: "none",
+              color: "#1a1a1a", fontSize: 14, outline: "none",
+              fontFamily: "'League Spartan'",
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && e.target.value.trim()) {
+                // TODO: handle voice/text swap commands
+                e.target.value = "";
+              }
+            }}
+          />
         </div>
         <button onClick={() => onAddToCart(currentItem)} style={{
           padding: "12px 28px", background: "#1a1a1a",
