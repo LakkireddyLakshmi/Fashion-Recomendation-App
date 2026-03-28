@@ -2860,28 +2860,30 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
   }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
 
   const filtered = filteredData.items;
-  // Filter by profile's detected categories and gender
+  // Filter: show only tops and bottoms (flowchart: recommend 1 top + 1 bottom)
   const profileFiltered = useMemo(() => {
     let items = filtered;
     const gender = (profile?.gender || "").toLowerCase();
+    // Gender filter
     if (gender) {
+      const genderMap = { male: "men", female: "women" };
       const genderItems = items.filter(i => {
         const g = (i.gender || "").toLowerCase();
-        return g === gender || g === (gender === "male" ? "men" : "women") || g === "unisex";
+        return g === gender || g === genderMap[gender] || g === "unisex" || !g;
       });
       if (genderItems.length > 0) items = genderItems;
     }
-    // Prefer tops and bottoms over dresses for non-dress profiles
-    const profileCats = (profile?.categories || []).map(c => c.toLowerCase());
-    const hasDressPreference = profileCats.some(c => c.includes("dress") || c.includes("gown"));
-    if (!hasDressPreference && items.length > 3) {
-      const nonDress = items.filter(i => {
-        const cat = (i.category || "").toLowerCase();
-        return !cat.includes("dress") && !cat.includes("gown");
-      });
-      if (nonDress.length > 2) items = nonDress;
-    }
-    return items;
+    // Only keep tops and bottoms (no dresses/jumpsuits)
+    const topKeywords = ["shirt","t-shirt","top","blazer","hoodie","kurta","blouse","jacket","outerwear","winterwear","sweater","polo"];
+    const bottomKeywords = ["jeans","jean","trouser","pant","jogger","bottom","cargo","shorts","track","legging","skirt"];
+    const topsAndBottoms = items.filter(i => {
+      const cat = (i.category || "").toLowerCase();
+      const name = (i.name || "").toLowerCase();
+      return topKeywords.some(k => cat.includes(k) || name.includes(k)) ||
+             bottomKeywords.some(k => cat.includes(k) || name.includes(k));
+    });
+    // If we have enough tops+bottoms, use them. Otherwise fall back to all items
+    return topsAndBottoms.length >= 2 ? topsAndBottoms : items;
   }, [filtered, profile]);
 
   const currentItem = profileFiltered[page] || profileFiltered[0];
