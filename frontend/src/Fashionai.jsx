@@ -2911,15 +2911,16 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       {/* Top nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 32px", borderBottom: "1px solid #f0f0f0" }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: "#1a1a1a" }}>HueIQ</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 13, color: "#999" }}>{page + 1} / {totalItems}</span>
-          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #e5e7eb", background: "#fff", cursor: page === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke={page === 0 ? "#ccc" : "#1a1a1a"} strokeWidth="2" strokeLinecap="round" /></svg>
-          </button>
-          <button onClick={() => setPage(p => Math.min(totalItems - 1, p + 1))} disabled={page >= totalItems - 1} style={{ width: 32, height: 32, borderRadius: "50%", border: "1px solid #e5e7eb", background: "#fff", cursor: page >= totalItems - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke={page >= totalItems - 1 ? "#ccc" : "#1a1a1a"} strokeWidth="2" strokeLinecap="round" /></svg>
-          </button>
-        </div>
+        <button onClick={() => setProfileOpen(true)} style={{
+          width: 36, height: 36, borderRadius: "50%",
+          border: "1px solid #e5e7eb", background: "#fff",
+          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+        </button>
       </div>
 
       {/* Main content: Product image left + details right */}
