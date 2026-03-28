@@ -2834,6 +2834,43 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   const setCartOpen = onCartOpen || (() => {});
   const setProfileOpen = onProfileOpen || (() => {});
   const fullRecs = allRecommendations || recommendations;
+  const [barQuery, setBarQuery] = useState("");
+
+  const doBarSearch = async (query) => {
+    try {
+      const params = new URLSearchParams({ limit: "20" });
+      const q = query.toLowerCase();
+      if (/\b(men|man|male|boy|guys)\b/.test(q)) params.set("gender", "men");
+      else if (/\b(women|woman|female|girl|ladies)\b/.test(q)) params.set("gender", "women");
+      const catMap = [
+        { re: /\bt-?shirts?\b|\btees?\b/, cat: "t-shirt" },
+        { re: /\bshirts?\b/, cat: "shirt" },
+        { re: /\bjeans?\b|\bdenims?\b/, cat: "jeans" },
+        { re: /\bdress(es)?\b/, cat: "dress" },
+        { re: /\bblazers?\b|\bjackets?\b/, cat: "blazer" },
+        { re: /\btops?\b/, cat: "top" },
+        { re: /\bjoggers?\b/, cat: "joggers" },
+        { re: /\btrousers?\b|\bpants?\b/, cat: "trousers" },
+        { re: /\bcargo\b/, cat: "cargo" },
+        { re: /\bkurtas?\b/, cat: "kurta" },
+      ];
+      for (const { re, cat } of catMap) { if (re.test(q)) { params.set("category", cat); break; } }
+      const colors = ["black","white","blue","red","green","pink","yellow","navy","grey","brown","beige","purple","orange","maroon"];
+      for (const c of colors) { if (q.includes(c)) { params.set("color", c); break; } }
+      const r = await fetch(`${API}/api/recommendations/trending?${params}`);
+      if (r.ok) {
+        const d = await r.json();
+        const items = d.items || d.recommendations || [];
+        if (items.length > 0 && onUpdateRecs) {
+          onUpdateRecs(items, true);
+          setBarQuery("");
+        }
+      }
+    } catch (err) {
+      console.warn("Search failed:", err);
+    }
+  };
+
   const [page, setPage] = useState(0);
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("match");
@@ -3080,53 +3117,20 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
           background: "#f8f9fa", borderRadius: 30, padding: "6px 6px 6px 16px",
           border: "1px solid #e5e7eb",
         }}>
-          <MicButton onResult={(text) => {
-            // Find the input and set its value, then trigger search
-            const input = document.querySelector("#bottom-bar-input");
-            if (input) { input.value = text; input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); }
-          }} />
+          <MicButton onResult={(text) => { setBarQuery(text); doBarSearch(text); }} />
           <input
-            id="bottom-bar-input"
             type="text"
+            value={barQuery}
+            onChange={(e) => setBarQuery(e.target.value)}
             placeholder='Tell me: "Show me different shoes"'
             style={{
               flex: 1, background: "transparent", border: "none",
               color: "#1a1a1a", fontSize: 14, outline: "none",
               fontFamily: "'League Spartan'",
             }}
-            onKeyDown={async (e) => {
-              if (e.key === "Enter" && e.target.value.trim()) {
-                const query = e.target.value.trim();
-                e.target.value = "";
-                try {
-                  const params = new URLSearchParams({ limit: "20" });
-                  // Parse intent from query
-                  const q = query.toLowerCase();
-                  if (/\b(men|man|male|boy|guys)\b/.test(q)) params.set("gender", "men");
-                  else if (/\b(women|woman|female|girl|ladies)\b/.test(q)) params.set("gender", "women");
-                  const catMap = [
-                    { re: /\bshirts?\b/, cat: "shirt" }, { re: /\bt-?shirts?\b/, cat: "t-shirt" },
-                    { re: /\bjeans?\b/, cat: "jeans" }, { re: /\bdress(es)?\b/, cat: "dress" },
-                    { re: /\bblazers?\b/, cat: "blazer" }, { re: /\btops?\b/, cat: "top" },
-                    { re: /\bjoggers?\b/, cat: "joggers" }, { re: /\btrousers?\b/, cat: "trousers" },
-                  ];
-                  for (const { re, cat } of catMap) {
-                    if (re.test(q)) { params.set("category", cat); break; }
-                  }
-                  const colorMap = ["black","white","blue","red","green","pink","yellow","navy","grey","brown","beige"];
-                  for (const c of colorMap) { if (q.includes(c)) { params.set("color", c); break; } }
-                  const r = await fetch(`${API}/api/recommendations/trending?${params}`);
-                  if (r.ok) {
-                    const d = await r.json();
-                    const items = d.items || d.recommendations || [];
-                    if (items.length > 0 && onUpdateRecs) {
-                      // Merge with existing recs so Complete the Look has variety
-                      onUpdateRecs(items, true);
-                    }
-                  }
-                } catch (err) {
-                  console.warn("Search failed:", err);
-                }
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && barQuery.trim()) {
+                doBarSearch(barQuery.trim());
               }
             }}
           />
