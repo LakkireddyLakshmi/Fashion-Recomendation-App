@@ -83,7 +83,6 @@ export default function CompleteTheLook({ currentItem, allItems, onAddToCart }) 
   if (!outfits.length) return null;
 
   const get = (oi, si) => overrides[`${oi}-${si}`] || outfits[oi].items[si];
-
   const total = (oi) => outfits[oi].items.reduce((s, _, si) => s + getPrice(get(oi, si)) / 10, 0).toFixed(0);
 
   const handleSwap = (oi, si) => {
@@ -116,58 +115,70 @@ export default function CompleteTheLook({ currentItem, allItems, onAddToCart }) 
       </p>
 
       {/* 3 outfit cards side by side */}
-      <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 8 }}>
+      <div style={{ display: "flex", gap: 16 }}>
         {outfits.map((outfit, oi) => (
           <div key={oi} style={{
-            flex: "0 0 220px",
+            flex: 1,
             background: "#fff",
             borderRadius: 14,
             border: "1px solid #e5e7eb",
             overflow: "hidden",
             boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
           }}>
-            {/* Outfit items - vertical grid of images */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, padding: 2 }}>
+            {/* All items in equal vertical stack */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 1, background: "#f0f0f0" }}>
               {outfit.items.map((_, si) => {
                 const item = get(oi, si);
                 const img = getImg(item);
+                const isSelected = si === 0;
                 return (
                   <div key={si} style={{
                     position: "relative",
-                    aspectRatio: si === 0 ? "1/1.2" : "1/1",
+                    height: 140,
+                    background: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                     overflow: "hidden",
-                    gridColumn: si === 0 ? "1 / -1" : undefined,
-                    background: "#f8f9fa",
                   }}>
-                    <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      onError={e => { e.target.src = "https://via.placeholder.com/200x200/f0f0f0/ccc?text=" + getCatGroup(item.category); }} />
-                    {si === 0 && (
+                    <img src={img} alt={item.name} style={{
+                      height: "100%",
+                      maxWidth: "100%",
+                      objectFit: "contain",
+                    }} onError={e => { e.target.src = "https://via.placeholder.com/200x180/f8f9fa/ccc?text=" + getCatGroup(item.category); }} />
+                    {isSelected && (
                       <div style={{
-                        position: "absolute", bottom: 6, left: 6,
+                        position: "absolute", top: 8, left: 8,
                         background: "#1a1a1a", color: "#fff",
-                        fontSize: 9, fontWeight: 700, padding: "2px 8px",
-                        borderRadius: 4, textTransform: "uppercase", letterSpacing: 0.5,
+                        fontSize: 8, fontWeight: 700, padding: "2px 6px",
+                        borderRadius: 3, textTransform: "uppercase", letterSpacing: 0.5,
                       }}>Selected</div>
                     )}
+                    <div style={{
+                      position: "absolute", bottom: 4, right: 6,
+                      fontSize: 11, fontWeight: 700, color: "#1a1a1a",
+                      background: "rgba(255,255,255,0.9)", padding: "1px 6px",
+                      borderRadius: 4,
+                    }}>${(getPrice(item) / 10).toFixed(0)}</div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Swap Items row */}
-            <div style={{ padding: "8px 10px", borderTop: "1px solid #f0f0f0" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                <span style={{ fontSize: 11, color: "#999" }}>Swap Items</span>
+            {/* Swap Items + Add Outfit */}
+            <div style={{ padding: "10px 12px", borderTop: "1px solid #f0f0f0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                <span style={{ fontSize: 11, color: "#999", fontFamily: "'League Spartan'" }}>Swap Items</span>
                 {outfit.items.slice(1).map((_, si) => {
                   const item = get(oi, si + 1);
                   return (
                     <div key={si} onClick={() => handleSwap(oi, si + 1)} style={{
-                      width: 26, height: 26, borderRadius: 6, overflow: "hidden",
+                      width: 28, height: 28, borderRadius: 6, overflow: "hidden",
                       border: "1.5px solid #e5e7eb", cursor: "pointer",
-                      transition: "border-color 0.2s",
+                      transition: "all 0.2s",
                     }}
-                      onMouseEnter={e => e.currentTarget.style.borderColor = "#7c3aed"}
-                      onMouseLeave={e => e.currentTarget.style.borderColor = "#e5e7eb"}>
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#7c3aed"; e.currentTarget.style.transform = "scale(1.1)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; e.currentTarget.style.transform = "scale(1)"; }}>
                       <img src={getImg(item)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         onError={e => { e.target.style.display = "none"; }} />
                     </div>
@@ -175,10 +186,10 @@ export default function CompleteTheLook({ currentItem, allItems, onAddToCart }) 
                 })}
               </div>
               <button onClick={() => addOutfit(oi)} style={{
-                width: "100%", padding: "9px 0",
+                width: "100%", padding: "10px 0",
                 background: "#1a1a1a", color: "#fff",
                 border: "none", borderRadius: 8,
-                fontSize: 12, fontWeight: 700, cursor: "pointer",
+                fontSize: 13, fontWeight: 700, cursor: "pointer",
                 fontFamily: "'League Spartan'",
               }}>
                 Add Full Outfit — ${total(oi)}
@@ -202,7 +213,7 @@ export default function CompleteTheLook({ currentItem, allItems, onAddToCart }) 
               {swapOptions.map((item, i) => (
                 <div key={i} onClick={() => applySwap(item)} style={{
                   cursor: "pointer", borderRadius: 10, overflow: "hidden",
-                  border: "1px solid #e5e7eb", transition: "border-color 0.2s, box-shadow 0.2s",
+                  border: "1px solid #e5e7eb", transition: "all 0.2s",
                 }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = "#7c3aed"; e.currentTarget.style.boxShadow = "0 4px 12px rgba(124,58,237,0.15)"; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; e.currentTarget.style.boxShadow = "none"; }}>
