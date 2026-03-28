@@ -2794,10 +2794,11 @@ function CartDrawer({ cart, onClose, onUpdateQty, onRemove, onCheckout }) {
   );
 }
 
-function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed, cart, onLogout, onCartOpen, onProfileOpen, onUpdateRecs }) {
+function StepFinish({ profile, recommendations, allRecommendations, onSelectItem, onAddToCart, wishlist, onToggleWishlist, recentlyViewed, cart, onLogout, onCartOpen, onProfileOpen, onUpdateRecs }) {
   const cartCount = cart ? cart.length : 0;
   const setCartOpen = onCartOpen || (() => {});
   const setProfileOpen = onProfileOpen || (() => {});
+  const fullRecs = allRecommendations || recommendations;
   const [page, setPage] = useState(0);
   const [activeFilter, setActiveFilter] = useState("All");
   const [sortBy, setSortBy] = useState("match");
@@ -3026,10 +3027,8 @@ function StepFinish({ profile, recommendations, onSelectItem, onAddToCart, wishl
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 100px" }}>
         <CompleteTheLook
           currentItem={currentItem}
-          allItems={recommendations}
+          allItems={fullRecs}
           onAddToCart={onAddToCart}
-          selectedOutfit={0}
-          onSelectOutfit={() => {}}
         />
       </div>
 
@@ -5161,6 +5160,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
         <StepFinish
           profile={profile}
           recommendations={recs}
+          allRecommendations={recs}
           onSelectItem={(item) => { setSelItem(item); setView("detail"); addRecentlyViewed(item); }}
           onAddToCart={handleAddToCart}
           wishlist={wishlist}
