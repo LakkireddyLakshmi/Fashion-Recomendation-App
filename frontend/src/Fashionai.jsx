@@ -3112,45 +3112,9 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
 
   const filtered = filteredData.items;
-  // Filter: show only tops and bottoms (flowchart: recommend 1 top + 1 bottom)
-  const profileFiltered = useMemo(() => {
-    let items = filtered;
-    const gender = (profile?.gender || "").toLowerCase();
-    // Gender filter
-    if (gender) {
-      const genderMap = { male: "men", female: "women" };
-      const genderItems = items.filter(i => {
-        const g = (i.gender || "").toLowerCase();
-        return g === gender || g === genderMap[gender] || g === "unisex" || !g;
-      });
-      if (genderItems.length > 0) items = genderItems;
-    }
-    // Only keep tops and bottoms (no dresses/jumpsuits)
-    const topKeywords = ["shirt","t-shirt","top","blazer","hoodie","kurta","blouse","jacket","outerwear","winterwear","sweater","polo"];
-    const bottomKeywords = ["jeans","jean","trouser","pant","jogger","bottom","cargo","shorts","track","legging","skirt"];
-    const topsAndBottoms = items.filter(i => {
-      const cat = (i.category || "").toLowerCase();
-      const name = (i.name || "").toLowerCase();
-      return topKeywords.some(k => cat.includes(k) || name.includes(k)) ||
-             bottomKeywords.some(k => cat.includes(k) || name.includes(k));
-    });
-    // If search is active, skip filtering — show search results directly
-    if (searchActive) return items;
-    // If we have tops+bottoms for this gender, use them. Otherwise show all items
-    if (topsAndBottoms.length >= 2) return topsAndBottoms;
-    // Try without gender filter
-    const allTopsBottoms = filtered.filter(i => {
-      const cat = (i.category || "").toLowerCase();
-      const name = (i.name || "").toLowerCase();
-      return topKeywords.some(k => cat.includes(k) || name.includes(k)) ||
-             bottomKeywords.some(k => cat.includes(k) || name.includes(k));
-    });
-    if (allTopsBottoms.length >= 2) return allTopsBottoms;
-    return items;
-  }, [filtered, profile, searchActive]);
-
-  const currentItem = profileFiltered[page] || profileFiltered[0];
-  const totalItems = profileFiltered.length;
+  // Show first item from filtered recommendations
+  const currentItem = filtered[0];
+  const totalItems = filtered.length;
 
   if (!currentItem) {
     return (
