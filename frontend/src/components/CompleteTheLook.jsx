@@ -49,12 +49,33 @@ function generateOutfits(currentItem, allItems, count = 3) {
   });
   for (const g of neededGroups) grouped[g].sort((a, b) => b._score - a._score);
   const outfits = [];
+  const used = {}; // track used items per group to avoid repeats
+  for (const g of neededGroups) used[g] = new Set();
+
   for (let i = 0; i < count; i++) {
     const outfit = { id: i, items: [currentItem] };
+    let isDifferent = false;
     for (const g of neededGroups) {
-      if (grouped[g].length > 0) outfit.items.push(grouped[g][i % grouped[g].length]);
+      const pool = grouped[g];
+      if (pool.length === 0) continue;
+      // Find an unused item first, then fall back to round-robin
+      let picked = null;
+      for (let j = 0; j < pool.length; j++) {
+        const idx = (i + j) % pool.length;
+        const id = pool[idx].catalog_item_id || pool[idx].id;
+        if (!used[g].has(id)) {
+          picked = pool[idx];
+          used[g].add(id);
+          isDifferent = true;
+          break;
+        }
+      }
+      if (!picked) {
+        picked = pool[i % pool.length];
+      }
+      outfit.items.push(picked);
     }
-    if (outfit.items.length > 1) outfits.push(outfit);
+    if (outfit.items.length > 1 && (isDifferent || i === 0)) outfits.push(outfit);
   }
   return outfits;
 }
