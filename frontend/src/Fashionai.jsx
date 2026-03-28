@@ -4607,6 +4607,23 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     }));
   };
 
+  // Auto-fetch recommendations on mount when skipping wizard
+  useEffect(() => {
+    if (skipWizard && recs.length === 0 && !loading) {
+      (async () => {
+        setLoading(true);
+        try {
+          const items = await fetchRecs();
+          setRecs(items);
+        } catch (e) {
+          console.error("Auto-fetch recs failed:", e);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }
+  }, [skipWizard]);
+
   const handleSubmit = async () => {
     setLoading(true);
     setErr("");
