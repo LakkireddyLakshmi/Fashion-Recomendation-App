@@ -29,46 +29,30 @@ function getComplementaryGroups(group) {
 function colorScore(colorsA, colorsB) {
   const a = (colorsA || []).map(c => c.toLowerCase());
   const b = (colorsB || []).map(c => c.toLowerCase());
-  const match = a.filter(c => b.includes(c)).length;
-  const neutrals = ["black","white","grey","gray","beige","cream","navy"];
-  const hasNeutral = b.some(c => neutrals.includes(c));
-  return match * 2 + (hasNeutral ? 1 : 0);
+  return a.filter(c => b.includes(c)).length * 2 + (b.some(c => ["black","white","grey","beige","cream","navy"].includes(c)) ? 1 : 0);
 }
 
-function generateOutfits(currentItem, allItems, count = 6) {
+function generateOutfits(currentItem, allItems, count = 3) {
   const currentGroup = getCatGroup(currentItem.category);
   const currentColors = (currentItem.available_colors || []).map(c => c.toLowerCase());
   const currentGender = (currentItem.gender || "").toLowerCase();
   const currentId = currentItem.catalog_item_id || currentItem.id;
   const neededGroups = getComplementaryGroups(currentGroup);
-
   const grouped = {};
   for (const g of neededGroups) grouped[g] = [];
-
   allItems.forEach(item => {
     if ((item.catalog_item_id || item.id) === currentId) return;
     const g = (item.gender || "").toLowerCase();
     if (currentGender && g && g !== currentGender && g !== "unisex") return;
     const group = getCatGroup(item.category);
-    if (grouped[group]) {
-      const score = colorScore(currentColors, item.available_colors);
-      grouped[group].push({ ...item, _score: score });
-    }
+    if (grouped[group]) grouped[group].push({ ...item, _score: colorScore(currentColors, item.available_colors) });
   });
-
-  for (const g of neededGroups) {
-    grouped[g].sort((a, b) => b._score - a._score);
-  }
-
+  for (const g of neededGroups) grouped[g].sort((a, b) => b._score - a._score);
   const outfits = [];
   for (let i = 0; i < count; i++) {
     const outfit = { id: i, items: [currentItem] };
     for (const g of neededGroups) {
-      const pool = grouped[g];
-      if (pool.length > 0) {
-        const idx = i % pool.length;
-        outfit.items.push(pool[idx]);
-      }
+      if (grouped[g].length > 0) outfit.items.push(grouped[g][i % grouped[g].length]);
     }
     if (outfit.items.length > 1) outfits.push(outfit);
   }
@@ -76,10 +60,10 @@ function generateOutfits(currentItem, allItems, count = 6) {
 }
 
 function getPrice(item) {
-  if (item.sale_price && item.sale_price > 0) return item.sale_price;
+  if (item.sale_price > 0) return item.sale_price;
   if (item.variants?.length) {
-    const prices = item.variants.map(v => v.price_override || item.base_price || item.price || 0).filter(p => p > 0);
-    return prices.length ? Math.min(...prices) : (item.base_price || item.price || 0);
+    const p = item.variants.map(v => v.price_override || item.base_price || item.price || 0).filter(p => p > 0);
+    return p.length ? Math.min(...p) : (item.base_price || item.price || 0);
   }
   return item.base_price || item.price || 0;
 }
@@ -88,233 +72,151 @@ function getImg(item) {
   return item.primary_image_url || item.image || (item.images?.[0]?.image_url) || "";
 }
 
-export default function CompleteTheLook({ currentItem, allItems, onAddToCart, onItemClick, selectedOutfit, onSelectOutfit }) {
+export default function CompleteTheLook({ currentItem, allItems, onAddToCart }) {
   const [swapSlot, setSwapSlot] = useState(null);
   const [swapOptions, setSwapOptions] = useState([]);
-  const [outfitOverrides, setOutfitOverrides] = useState({});
+  const [overrides, setOverrides] = useState({});
 
-  const outfits = useMemo(
-    () => generateOutfits(currentItem, allItems, 6),
-    [currentItem?.catalog_item_id || currentItem?.id, allItems.length]
-  );
+  const outfits = useMemo(() => generateOutfits(currentItem, allItems, 3),
+    [currentItem?.catalog_item_id || currentItem?.id, allItems.length]);
 
   if (!outfits.length) return null;
 
-  const handleSwap = (outfitIdx, slotIdx) => {
-    const item = getOutfitItem(outfitIdx, slotIdx);
+  const get = (oi, si) => overrides[`${oi}-${si}`] || outfits[oi].items[si];
+
+  const total = (oi) => outfits[oi].items.reduce((s, _, si) => s + getPrice(get(oi, si)) / 10, 0).toFixed(0);
+
+  const handleSwap = (oi, si) => {
+    const item = get(oi, si);
     const group = getCatGroup(item.category);
-    const currentGender = (currentItem.gender || "").toLowerCase();
-    const alternatives = allItems.filter(i => {
+    const g = (currentItem.gender || "").toLowerCase();
+    setSwapOptions(allItems.filter(i => {
       if ((i.catalog_item_id || i.id) === (item.catalog_item_id || item.id)) return false;
-      const g = (i.gender || "").toLowerCase();
-      if (currentGender && g && g !== currentGender && g !== "unisex") return false;
+      const ig = (i.gender || "").toLowerCase();
+      if (g && ig && ig !== g && ig !== "unisex") return false;
       return getCatGroup(i.category) === group;
-    }).slice(0, 12);
-    setSwapOptions(alternatives);
-    setSwapSlot({ outfitIdx, slotIdx });
+    }).slice(0, 12));
+    setSwapSlot({ oi, si });
   };
 
-  const applySwap = (newItem) => {
-    const key = `${swapSlot.outfitIdx}-${swapSlot.slotIdx}`;
-    setOutfitOverrides(prev => ({ ...prev, [key]: newItem }));
+  const applySwap = (item) => {
+    setOverrides(p => ({ ...p, [`${swapSlot.oi}-${swapSlot.si}`]: item }));
     setSwapSlot(null);
-    setSwapOptions([]);
   };
 
-  const getOutfitItem = (outfitIdx, slotIdx) => {
-    const key = `${outfitIdx}-${slotIdx}`;
-    return outfitOverrides[key] || outfits[outfitIdx].items[slotIdx];
-  };
-
-  const getOutfitTotal = (outfitIdx) => {
-    const outfit = outfits[outfitIdx];
-    return outfit.items.reduce((sum, _, slotIdx) => {
-      const item = getOutfitItem(outfitIdx, slotIdx);
-      return sum + (getPrice(item) / 10);
-    }, 0).toFixed(0);
-  };
-
-  const addFullOutfit = (outfitIdx) => {
-    const outfit = outfits[outfitIdx];
-    outfit.items.forEach((_, slotIdx) => {
-      const item = getOutfitItem(outfitIdx, slotIdx);
-      if (onAddToCart) onAddToCart(item);
-    });
-  };
+  const addOutfit = (oi) => outfits[oi].items.forEach((_, si) => onAddToCart?.(get(oi, si)));
 
   return (
-    <div style={{ width: "100%", maxWidth: 700, marginTop: 32 }}>
-      {/* Header */}
-      <div style={{ marginBottom: 20 }}>
-        <h3 style={{ fontFamily: "'League Spartan'", fontSize: 20, fontWeight: 700, color: "#fff", margin: 0 }}>
-          Complete the Look
-        </h3>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 2, fontStyle: "italic" }}>
-          AI-styled outfit recommendations
-        </p>
-      </div>
+    <div style={{ width: "100%", marginTop: 40 }}>
+      <h3 style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a", margin: "0 0 4px", fontFamily: "'League Spartan'" }}>
+        Complete the Look
+      </h3>
+      <p style={{ fontSize: 13, color: "#999", margin: "0 0 20px", fontStyle: "italic" }}>
+        AI-styled outfit recommendations
+      </p>
 
-      {/* Outfit Cards - Horizontal Scroll */}
-      <div style={{
-        display: "flex",
-        gap: 16,
-        overflowX: "auto",
-        paddingBottom: 12,
-        scrollSnapType: "x mandatory",
-        WebkitOverflowScrolling: "touch",
-      }}>
-        {outfits.map((outfit, oi) => {
-          const isSelected = selectedOutfit === oi;
-          return (
-            <div
-              key={oi}
-              onClick={() => onSelectOutfit?.(oi)}
-              style={{
-                minWidth: 200,
-                maxWidth: 200,
-                background: isSelected ? "rgba(124,58,237,0.12)" : "rgba(255,255,255,0.04)",
-                borderRadius: 14,
-                border: isSelected ? "2px solid #7c3aed" : "1px solid rgba(255,255,255,0.08)",
-                overflow: "hidden",
-                scrollSnapAlign: "start",
-                flexShrink: 0,
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-            >
-              {/* Vertical stack of outfit items */}
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {outfit.items.map((_, si) => {
-                  const item = getOutfitItem(oi, si);
-                  const img = getImg(item);
-                  const isMain = si === 0;
+      {/* 3 outfit cards side by side */}
+      <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 8 }}>
+        {outfits.map((outfit, oi) => (
+          <div key={oi} style={{
+            flex: "0 0 220px",
+            background: "#fff",
+            borderRadius: 14,
+            border: "1px solid #e5e7eb",
+            overflow: "hidden",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+          }}>
+            {/* Outfit items - vertical grid of images */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, padding: 2 }}>
+              {outfit.items.map((_, si) => {
+                const item = get(oi, si);
+                const img = getImg(item);
+                return (
+                  <div key={si} style={{
+                    position: "relative",
+                    aspectRatio: si === 0 ? "1/1.2" : "1/1",
+                    overflow: "hidden",
+                    gridColumn: si === 0 ? "1 / -1" : undefined,
+                    background: "#f8f9fa",
+                  }}>
+                    <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      onError={e => { e.target.src = "https://via.placeholder.com/200x200/f0f0f0/ccc?text=" + getCatGroup(item.category); }} />
+                    {si === 0 && (
+                      <div style={{
+                        position: "absolute", bottom: 6, left: 6,
+                        background: "#1a1a1a", color: "#fff",
+                        fontSize: 9, fontWeight: 700, padding: "2px 8px",
+                        borderRadius: 4, textTransform: "uppercase", letterSpacing: 0.5,
+                      }}>Selected</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Swap Items row */}
+            <div style={{ padding: "8px 10px", borderTop: "1px solid #f0f0f0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: "#999" }}>Swap Items</span>
+                {outfit.items.slice(1).map((_, si) => {
+                  const item = get(oi, si + 1);
                   return (
-                    <div key={si} style={{
-                      position: "relative",
-                      height: isMain ? 120 : 90,
-                      borderBottom: si < outfit.items.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "6px 8px",
-                      gap: 10,
-                    }}>
-                      <img
-                        src={img}
-                        alt={item.name}
-                        style={{
-                          width: isMain ? 80 : 60,
-                          height: isMain ? 100 : 72,
-                          objectFit: "cover",
-                          borderRadius: 8,
-                          border: isMain ? "2px solid #7c3aed" : "1px solid rgba(255,255,255,0.1)",
-                        }}
-                        onError={e => { e.target.style.display = "none"; }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontSize: 11,
-                          color: isMain ? "#a78bfa" : "rgba(255,255,255,0.7)",
-                          fontWeight: 600,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          textTransform: "uppercase",
-                          letterSpacing: 0.3,
-                          marginBottom: 2,
-                        }}>
-                          {getCatGroup(item.category)}
-                        </div>
-                        <div style={{
-                          fontSize: 10,
-                          color: "rgba(255,255,255,0.5)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}>
-                          {item.name?.split(" ").slice(0, 3).join(" ")}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 2 }}>
-                          ${(getPrice(item) / 10).toFixed(0)}
-                        </div>
-                      </div>
+                    <div key={si} onClick={() => handleSwap(oi, si + 1)} style={{
+                      width: 26, height: 26, borderRadius: 6, overflow: "hidden",
+                      border: "1.5px solid #e5e7eb", cursor: "pointer",
+                      transition: "border-color 0.2s",
+                    }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = "#7c3aed"}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = "#e5e7eb"}>
+                      <img src={getImg(item)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        onError={e => { e.target.style.display = "none"; }} />
                     </div>
                   );
                 })}
               </div>
-
-              {/* Swap + Price */}
-              <div style={{ padding: "8px 8px 10px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                {/* Swap buttons as small thumbnails */}
-                <div style={{ display: "flex", gap: 4, marginBottom: 8, alignItems: "center" }}>
-                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginRight: 4 }}>Swap Items</span>
-                  {outfit.items.slice(1, 4).map((_, si) => {
-                    const item = getOutfitItem(oi, si + 1);
-                    const img = getImg(item);
-                    return (
-                      <div
-                        key={si}
-                        onClick={(e) => { e.stopPropagation(); handleSwap(oi, si + 1); }}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 6,
-                          overflow: "hidden",
-                          border: "1px solid rgba(255,255,255,0.2)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <button
-                  onClick={(e) => { e.stopPropagation(); addFullOutfit(oi); }}
-                  style={{
-                    width: "100%",
-                    padding: "8px 0",
-                    background: isSelected ? "#7c3aed" : "rgba(255,255,255,0.08)",
-                    color: "#fff",
-                    border: isSelected ? "none" : "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "'League Spartan'",
-                  }}
-                >
-                  Add Full Outfit — ${getOutfitTotal(oi)}
-                </button>
-              </div>
+              <button onClick={() => addOutfit(oi)} style={{
+                width: "100%", padding: "9px 0",
+                background: "#1a1a1a", color: "#fff",
+                border: "none", borderRadius: 8,
+                fontSize: 12, fontWeight: 700, cursor: "pointer",
+                fontFamily: "'League Spartan'",
+              }}>
+                Add Full Outfit — ${total(oi)}
+              </button>
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
       {/* Swap Modal */}
       {swapSlot && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setSwapSlot(null)}>
-          <div style={{ background: "#1a1a2e", borderRadius: 20, padding: 24, width: "90%", maxWidth: 500, maxHeight: "70vh", overflow: "auto", border: "1px solid rgba(255,255,255,0.1)" }}
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "90%", maxWidth: 480, maxHeight: "70vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}
             onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h4 style={{ fontFamily: "'League Spartan'", color: "#fff", margin: 0, fontSize: 18 }}>Swap Item</h4>
-              <button onClick={() => setSwapSlot(null)} style={{ background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" }}>x</button>
+              <h4 style={{ color: "#1a1a1a", margin: 0, fontSize: 18, fontFamily: "'League Spartan'" }}>Swap Item</h4>
+              <button onClick={() => setSwapSlot(null)} style={{ background: "none", border: "none", color: "#999", fontSize: 22, cursor: "pointer" }}>x</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
               {swapOptions.map((item, i) => (
-                <div key={i} onClick={() => applySwap(item)} style={{ cursor: "pointer", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.05)", transition: "border-color 0.2s" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = "#7c3aed"}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"}>
-                  <img src={getImg(item)} alt={item.name} style={{ width: "100%", aspectRatio: "3/4", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                <div key={i} onClick={() => applySwap(item)} style={{
+                  cursor: "pointer", borderRadius: 10, overflow: "hidden",
+                  border: "1px solid #e5e7eb", transition: "border-color 0.2s, box-shadow 0.2s",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#7c3aed"; e.currentTarget.style.boxShadow = "0 4px 12px rgba(124,58,237,0.15)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; e.currentTarget.style.boxShadow = "none"; }}>
+                  <img src={getImg(item)} alt="" style={{ width: "100%", aspectRatio: "3/4", objectFit: "cover" }}
+                    onError={e => { e.target.style.display = "none"; }} />
                   <div style={{ padding: "4px 6px" }}>
-                    <div style={{ fontSize: 10, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name?.split(" ").slice(0, 3).join(" ")}</div>
-                    <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 700 }}>${(getPrice(item) / 10).toFixed(0)}</div>
+                    <div style={{ fontSize: 10, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.name?.split(" ").slice(0, 3).join(" ")}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#1a1a1a", fontWeight: 700 }}>${(getPrice(item) / 10).toFixed(0)}</div>
                   </div>
                 </div>
               ))}
-              {!swapOptions.length && <div style={{ gridColumn: "1/-1", textAlign: "center", color: "rgba(255,255,255,0.4)", padding: 40 }}>No alternatives found</div>}
+              {!swapOptions.length && <div style={{ gridColumn: "1/-1", textAlign: "center", color: "#999", padding: 40 }}>No alternatives found</div>}
             </div>
           </div>
         </div>
@@ -323,5 +225,4 @@ export default function CompleteTheLook({ currentItem, allItems, onAddToCart, on
   );
 }
 
-// Export utilities for parent components
 export { getPrice, getImg, generateOutfits, getCatGroup };
