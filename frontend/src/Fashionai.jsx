@@ -2845,8 +2845,12 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
       const q = query.toLowerCase().trim();
       const params = new URLSearchParams({ limit: "50" });
 
-      // ── Try AI-powered search first ──
-      try {
+      // ── Try local parsing first for simple queries (instant) ──
+      const simpleWords = /\b(shirt|t-shirt|tee|jeans|dress|blazer|top|jogger|trouser|pant|cargo|kurta|jumpsuit|skirt|short|sweater|hoodie|polo|black|white|blue|red|green|pink|yellow|navy|grey|brown|beige|purple|orange|men|women|male|female|boy|girl)\b/;
+      const hasSimpleMatch = simpleWords.test(q);
+
+      // ── Try AI-powered search only for complex queries ──
+      if (!hasSimpleMatch) try {
         const aiRes = await fetch(`${API}/api/ai-search`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
