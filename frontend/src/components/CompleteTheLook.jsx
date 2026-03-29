@@ -17,13 +17,12 @@ function getCatGroup(cat) {
 }
 
 function getComplementaryGroups(group) {
+  // Only pair tops with bottoms and vice versa — no accessories, no shoes
   switch (group) {
-    case "top": return ["bottom", "dress", "accessory"];
-    case "bottom": return ["top", "dress"];
-    case "dress": return ["top", "accessory", "bottom"];
-    case "shoes": return ["top", "bottom", "dress"];
-    case "accessory": return ["top", "dress", "bottom"];
-    default: return ["top", "bottom", "dress", "accessory"];
+    case "top": return ["bottom"];
+    case "bottom": return ["top"];
+    case "dress": return ["top"];
+    default: return ["top", "bottom"];
   }
 }
 
@@ -113,9 +112,15 @@ function generateOutfits(currentItem, allItems, count = 3) {
   for (const g of neededGroups) grouped[g] = [];
   allItems.forEach(item => {
     if ((item.catalog_item_id || item.id) === currentId) return;
+    // Skip items with no price
+    const price = getPrice(item);
+    if (price <= 0) return;
+    // Skip accessories
+    const grp = getCatGroup(item.category);
+    if (grp === "accessory" || grp === "shoes" || grp === "other") return;
     const g = (item.gender || "").toLowerCase();
     if (currentGender && g && g !== currentGender && g !== "unisex") return;
-    const group = getCatGroup(item.category);
+    const group = grp;
     if (grouped[group]) grouped[group].push({ ...item, _score: matchScore(currentItem, item) });
   });
   for (const g of neededGroups) grouped[g].sort((a, b) => b._score - a._score);
