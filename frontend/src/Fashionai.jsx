@@ -2840,6 +2840,14 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   const [searchActive, setSearchActive] = useState(false);
   const [searchItem, setSearchItem] = useState(null);
 
+  // Auto-dismiss AI message after 3 seconds
+  useEffect(() => {
+    if (aiMessage) {
+      const t = setTimeout(() => setAiMessage(""), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [aiMessage]);
+
   const doBarSearch = async (query) => {
     try {
       const q = query.toLowerCase().trim();
