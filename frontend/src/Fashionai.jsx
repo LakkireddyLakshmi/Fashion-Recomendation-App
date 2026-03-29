@@ -2864,7 +2864,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
             if (f.gender) params.set("gender", f.gender);
             if (f.category) params.set("category", f.category);
             if (f.color) params.set("color", f.color);
-            if (f.message) setAiMessage(f.message);
+            if (f.message) { setAiMessage(f.message); setTimeout(() => setAiMessage(""), 3000); }
             // Fetch with AI filters
             const r = await fetch(`${API}/api/recommendations/trending?${params}`);
             if (r.ok) {
@@ -2903,7 +2903,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                   const d2 = await r2.json();
                   const items2 = d2.items || [];
                   if (items2.length > 0 && onUpdateRecs) {
-                    setAiMessage((f.message || "") + " (showing all genders)");
+                    setAiMessage((f.message || "") + " (showing all genders)"); setTimeout(() => setAiMessage(""), 3000);
                     onUpdateRecs(items2, true);
                     setSearchItem(items2[0]);
                     setBarQuery("");
@@ -2921,7 +2921,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                   const d3 = await r3.json();
                   const items3 = d3.items || [];
                   if (items3.length > 0 && onUpdateRecs) {
-                    setAiMessage("Couldn't find an exact match, but here are some suggestions!");
+                    setAiMessage("Couldn't find an exact match, but here are some suggestions!"); setTimeout(() => setAiMessage(""), 3000);
                     onUpdateRecs(items3, true);
                     setBarQuery("");
                     setSearchActive(true);
@@ -3054,6 +3054,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
         setSearchActive(true);
       } else {
         setAiMessage("No items found. Try a different search.");
+        setTimeout(() => setAiMessage(""), 3000);
       }
     } catch (err) {
       console.warn("Search failed:", err);
@@ -3305,14 +3306,6 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
             }}
           />
         </div>
-        <button onClick={() => onAddToCart(currentItem)} style={{
-          padding: "12px 28px", background: "#1a1a1a",
-          color: "#fff", border: "none", borderRadius: 30,
-          fontSize: 14, fontWeight: 700, cursor: "pointer",
-          fontFamily: "'League Spartan'", whiteSpace: "nowrap",
-        }}>
-          Add Full Outfit to Cart
-        </button>
       </div>
 
       {/* Recently Viewed */}
