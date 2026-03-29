@@ -2838,6 +2838,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
 
   const [aiMessage, setAiMessage] = useState("");
   const [searchActive, setSearchActive] = useState(false);
+  const [searchItem, setSearchItem] = useState(null);
 
   const doBarSearch = async (query) => {
     try {
@@ -2881,7 +2882,8 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                 if (priced.length > 0) items = priced;
               }
               if (items.length > 0 && onUpdateRecs) {
-                onUpdateRecs(items, true); // Merge so Complete the Look has variety
+                onUpdateRecs(items, true);
+                setSearchItem(items[0]);
                 setBarQuery("");
                 setSearchActive(true);
                 setActiveFilter("All");
@@ -2898,11 +2900,10 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                   const items2 = d2.items || [];
                   if (items2.length > 0 && onUpdateRecs) {
                     setAiMessage((f.message || "") + " (showing all genders)");
-                    onUpdateRecs(items2, false);
+                    onUpdateRecs(items2, true);
+                    setSearchItem(items2[0]);
                     setBarQuery("");
                     setSearchActive(true);
-                    setActiveFilter("All");
-                    setPriceFilter("all");
                     return;
                   }
                 }
@@ -3117,8 +3118,8 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
 
   const filtered = filteredData.items;
-  // Show first item from filtered recommendations
-  const currentItem = filtered[0];
+  // Show search result item if available, otherwise first from recs
+  const currentItem = searchItem || filtered[0];
   const totalItems = filtered.length;
 
   if (!currentItem) {
