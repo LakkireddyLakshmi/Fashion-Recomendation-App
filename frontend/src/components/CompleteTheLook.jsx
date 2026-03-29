@@ -20,7 +20,7 @@ function getComplementaryGroups(group) {
   switch (group) {
     case "top": return ["bottom"];
     case "bottom": return ["top"];
-    case "dress": return ["shoes", "accessory"];
+    case "dress": return ["top", "shoes", "accessory"];
     default: return ["top", "bottom"];
   }
 }
