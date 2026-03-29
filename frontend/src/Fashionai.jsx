@@ -2881,7 +2881,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
                 if (priced.length > 0) items = priced;
               }
               if (items.length > 0 && onUpdateRecs) {
-                onUpdateRecs(items, false); // Replace recs, don't merge
+                onUpdateRecs(items, true); // Merge so Complete the Look has variety
                 setBarQuery("");
                 setSearchActive(true);
                 setActiveFilter("All");
