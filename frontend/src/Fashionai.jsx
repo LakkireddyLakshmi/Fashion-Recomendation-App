@@ -3049,8 +3049,11 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
 
       if (items.length > 0 && onUpdateRecs) {
         onUpdateRecs(items, true);
+        setSearchItem(items[0]);
         setBarQuery("");
         setSearchActive(true);
+      } else {
+        setAiMessage("No items found. Try a different search.");
       }
     } catch (err) {
       console.warn("Search failed:", err);
