@@ -20,8 +20,8 @@ function getComplementaryGroups(group) {
   switch (group) {
     case "top": return ["bottom"];
     case "bottom": return ["top"];
-    case "dress": return ["top", "shoes", "accessory"];
-    default: return ["top", "bottom"];
+    case "dress": return ["bottom"]; // Pair dress with bottom only
+    default: return ["bottom"]; // Default to bottom
   }
 }
 
@@ -114,9 +114,9 @@ function generateOutfits(currentItem, allItems, count = 3) {
     // Skip items with no price
     const price = getPrice(item);
     if (price <= 0) return;
-    // Skip 'other' category
+    // Skip dresses, accessories, shoes, other — only tops and bottoms
     const grp = getCatGroup(item.category);
-    if (grp === "other") return;
+    if (grp !== "top" && grp !== "bottom") return;
     const g = (item.gender || "").toLowerCase();
     if (currentGender && g && g !== currentGender && g !== "unisex") return;
     const group = grp;
