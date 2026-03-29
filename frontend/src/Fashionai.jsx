@@ -3305,6 +3305,18 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
               }
             }}
           />
+          {barQuery.trim() && (
+            <button onClick={() => doBarSearch(barQuery.trim())} style={{
+              background: "#1a1a1a", border: "none", borderRadius: "50%",
+              width: 32, height: 32, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
