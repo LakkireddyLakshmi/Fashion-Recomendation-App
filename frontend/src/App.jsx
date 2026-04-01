@@ -4,7 +4,7 @@ import { clearProfile, updateProfile } from "./store/profileSlice";
 import { persistor } from "./store";
 import { setProfile } from "./store/profileSlice";
 import { SignInPage } from "./components/ui/sign-in-flow";
-import ImageAnalysis from "./ImageAnalysis";
+import StyleProfile from "./StyleProfile";
 import Fashionai from "./Fashionai";
 
 function App() {
@@ -21,20 +21,40 @@ function App() {
     );
   }
 
-  // Page 2: Upload image → analyze → go directly to recommendations (no attributes page)
+  // Page 2: Style Profile questions
   if (!isComplete) {
     return (
-      <ImageAnalysis
-        onAnalysisComplete={(attributes) => {
+      <StyleProfile
+        onComplete={(answers) => {
+          // Map answers to profile format
+          const colorMap = {
+            "Neutrals (black, white, grey)": ["black", "white", "grey"],
+            "Earth Tones": ["brown", "beige", "olive", "tan"],
+            "Bold/Color Pop": ["red", "blue", "pink", "yellow", "orange"],
+            "Patterns": ["multicolor"],
+          };
+          const categoryMap = {
+            "Minimal": ["shirt", "trousers", "blazer"],
+            "Street": ["t-shirt", "jeans", "joggers", "cargo"],
+            "Athleisure": ["t-shirt", "joggers", "shorts"],
+            "Formal": ["shirt", "blazer", "trousers"],
+          };
+          const fitMap = {
+            "Slim/Fitted": "slim",
+            "Relaxed Fit": "regular",
+            "Oversized": "oversized",
+          };
+
+          const colors = (answers.colors || []).flatMap(c => colorMap[c] || []);
+          const categories = categoryMap[answers.style] || ["shirt", "jeans"];
+          const fit = fitMap[answers.fit] || "regular";
+
           dispatch(setProfile({
-            gender: attributes.gender || "",
-            age: attributes.estimated_age || 25,
-            colors: attributes.color_palette || attributes.preferred_colors || [],
-            categories: attributes.clothing_detected || [],
-            fit: attributes.recommended_fit || "Regular",
-            height: 170,
-            weight: 65,
-            bodyType: attributes.body_type || "Average",
+            style: answers.style,
+            occasion: answers.occasion,
+            fit,
+            colors,
+            categories,
           }));
         }}
       />
@@ -56,6 +76,8 @@ function App() {
         height: profileData?.height || "",
         weight: profileData?.weight || "",
         bodyType: profileData?.bodyType || "",
+        style: profileData?.style || "",
+        occasion: profileData?.occasion || "",
       }}
       initialRecs={[]}
       skipWizard={true}
