@@ -2018,6 +2018,40 @@ class RecRequest(BaseModel):
     include_score_detail: bool      = False
 
 
+# ── V2 Recommendation models (structured preferences) ───────────
+class StylePreferences(BaseModel):
+    selected_styles:     List[str] = Field(default_factory=list)
+    selected_colors:     List[str] = Field(default_factory=list)
+    selected_categories: List[str] = Field(default_factory=list)
+
+class FitPreferences(BaseModel):
+    fit_preference: Optional[str] = None
+    body_type:      Optional[str] = None
+    size:           Optional[str] = None
+    pants_size:     Optional[str] = None
+    shoe_size:      Optional[str] = None
+
+class BodyMeasurementsIn(BaseModel):
+    height: Optional[float] = None
+    chest:  Optional[float] = None
+    waist:  Optional[float] = None
+    weight: Optional[float] = None
+
+class ContextPreferences(BaseModel):
+    mood:     Optional[str] = None
+    occasion: Optional[str] = None
+
+class RecRequestV2(BaseModel):
+    user_id:              int
+    session_id:           Optional[str]        = None
+    style_preferences:    StylePreferences     = Field(default_factory=StylePreferences)
+    fit_preferences:      FitPreferences       = Field(default_factory=FitPreferences)
+    body_measurements:    BodyMeasurementsIn   = Field(default_factory=BodyMeasurementsIn)
+    context_preferences:  ContextPreferences   = Field(default_factory=ContextPreferences)
+    favorite_stores:      List[str]            = Field(default_factory=list)
+    top_k:                int                  = Field(default=10, ge=1, le=500)
+
+
 # ── FastAPI ───────────────────────────────────────────────────────
 app = FastAPI(title="HueIQ Recommendation Engine", version="9.0.0")
 # CORS — allow all origins so browser preflight (OPTIONS) always passes.
@@ -2359,6 +2393,97 @@ async def post_recommendations(
             "colors":     pj.get("preferred_colors", []),
             "categories": pj.get("preferred_categories", []),
             "season":     pj.get("preferred_season", ""),
+        },
+    }
+
+
+# ── V2: Structured preference-based recommendations ─────────────
+@app.post("/api/v2/recommendations", tags=["Recommendations"],
+          summary="V2 — structured preference-based recommendations")
+async def recommendations_v2(req: RecRequestV2):
+    """
+    Accepts structured user preferences (style, fit, body, context)
+    and returns scored recommendations.  No JWT required — user_id
+    is passed in the body.
+    """
+    sp = req.style_preferences
+    fp = req.fit_preferences
+    bm = req.body_measurements
+    cp = req.context_preferences
+
+    # Build a synthetic user doc from the request so rank_catalog can score
+    user_doc: Dict[str, Any] = {
+        "user_id": str(req.user_id),
+        "name":    "",
+        "email":   "",
+        "profile_data_json": {
+            "gender":               _norm_gender(fp.body_type or ""),
+            "preferred_colors":     [c.lower() for c in sp.selected_colors],
+            "preferred_categories": [c.lower() for c in sp.selected_categories],
+            "preferred_season":     "",
+            "style_preferences":    [s.lower() for s in sp.selected_styles],
+            "body_measurements": {
+                "height":          bm.height or 0,
+                "weight":          bm.weight or 0,
+                "chest":           bm.chest or 0,
+                "waist":           bm.waist or 0,
+                "build":           (fp.body_type or "").lower(),
+                "shirt_size":      fp.size or "",
+                "pants_size":      fp.pants_size or "",
+            },
+        },
+    }
+
+    # Override: pass occasion/mood as season-like hint for scoring
+    override: Dict[str, Any] = {}
+    if cp.occasion:
+        override["season"] = cp.occasion.lower()
+
+    # Run the ranker
+    items = await rank_catalog(user_doc, top_k=req.top_k,
+                               override=override if override else None)
+
+    # Filter by favorite stores (brand name substring match)
+    fav = [s.lower() for s in req.favorite_stores]
+    if fav:
+        store_matched = [
+            it for it in items
+            if any(f in (it.get("name") or "").lower() for f in fav)
+        ]
+        # If store filter yields results, prefer them; otherwise keep all
+        if store_matched:
+            items = store_matched[:req.top_k]
+
+    # Build response in the expected schema
+    recs = []
+    dify_ids: Set[str] = set()
+    for it in items:
+        iid = it.get("catalog_item_id") or it.get("id") or ""
+        recs.append({
+            "catalog_item_id": iid,
+            "score":           round(it.get("score", 0), 2),
+            "boosted":         (it.get("score_detail") or {}).get("dify", 0) > 0,
+        })
+
+    return {
+        "recommendations": recs,
+        "session_id":      req.session_id or "",
+        "preferences_used": {
+            "styles":           sp.selected_styles,
+            "color_preferences": sp.selected_colors,
+            "categories":       sp.selected_categories,
+            "fit_preference":   fp.fit_preference or "",
+            "body_type":        fp.body_type or "",
+            "size":             fp.size or "",
+            "pants_size":       fp.pants_size or "",
+            "shoe_size":        fp.shoe_size or "",
+            "height":           bm.height or 0,
+            "chest":            bm.chest or 0,
+            "waist":            bm.waist or 0,
+            "weight":           bm.weight or 0,
+            "mood":             cp.mood or "",
+            "occasion":         cp.occasion or "",
+            "favorite_stores":  req.favorite_stores,
         },
     }
 
