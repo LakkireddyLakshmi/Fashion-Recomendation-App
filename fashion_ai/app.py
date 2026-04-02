@@ -2041,13 +2041,19 @@ class ContextPreferences(BaseModel):
     mood:     Optional[str] = None
     occasion: Optional[str] = None
 
+class BudgetIn(BaseModel):
+    min_price: float = 0
+    max_price: float = 50000
+
 class RecRequestV2(BaseModel):
     user_id:              int
     session_id:           Optional[str]        = None
+    gender:               Optional[str]        = None
     style_preferences:    StylePreferences     = Field(default_factory=StylePreferences)
     fit_preferences:      FitPreferences       = Field(default_factory=FitPreferences)
     body_measurements:    BodyMeasurementsIn   = Field(default_factory=BodyMeasurementsIn)
     context_preferences:  ContextPreferences   = Field(default_factory=ContextPreferences)
+    budget:               BudgetIn             = Field(default_factory=BudgetIn)
     favorite_stores:      List[str]            = Field(default_factory=list)
     top_k:                int                  = Field(default=10, ge=1, le=500)
 
@@ -2417,7 +2423,7 @@ async def recommendations_v2(req: RecRequestV2):
         "name":    "",
         "email":   "",
         "profile_data_json": {
-            "gender":               _norm_gender(fp.body_type or ""),
+            "gender":               _norm_gender(req.gender or ""),
             "preferred_colors":     [c.lower() for c in sp.selected_colors],
             "preferred_categories": [c.lower() for c in sp.selected_categories],
             "preferred_season":     "",
@@ -2439,9 +2445,16 @@ async def recommendations_v2(req: RecRequestV2):
     if cp.occasion:
         override["season"] = cp.occasion.lower()
 
-    # Run the ranker
-    items = await rank_catalog(user_doc, top_k=req.top_k,
+    # Run the ranker (request extra items so we have enough after price filtering)
+    items = await rank_catalog(user_doc, top_k=req.top_k * 3,
                                override=override if override else None)
+
+    # Filter by budget (price range)
+    min_p = req.budget.min_price
+    max_p = req.budget.max_price
+    if min_p > 0 or max_p < 50000:
+        items = [it for it in items
+                 if min_p <= (it.get("base_price") or 0) <= max_p]
 
     # Filter by favorite stores (brand name substring match)
     fav = [s.lower() for s in req.favorite_stores]
@@ -2452,7 +2465,9 @@ async def recommendations_v2(req: RecRequestV2):
         ]
         # If store filter yields results, prefer them; otherwise keep all
         if store_matched:
-            items = store_matched[:req.top_k]
+            items = store_matched
+
+    items = items[:req.top_k]
 
     # Build response in the expected schema
     recs = []
@@ -2469,6 +2484,7 @@ async def recommendations_v2(req: RecRequestV2):
         "recommendations": recs,
         "session_id":      req.session_id or "",
         "preferences_used": {
+            "gender":           req.gender or "",
             "styles":           sp.selected_styles,
             "color_preferences": sp.selected_colors,
             "categories":       sp.selected_categories,
@@ -2483,6 +2499,8 @@ async def recommendations_v2(req: RecRequestV2):
             "weight":           bm.weight or 0,
             "mood":             cp.mood or "",
             "occasion":         cp.occasion or "",
+            "budget_min":       req.budget.min_price,
+            "budget_max":       req.budget.max_price,
             "favorite_stores":  req.favorite_stores,
         },
     }
