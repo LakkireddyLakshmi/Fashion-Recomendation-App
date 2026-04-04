@@ -2,6 +2,11 @@ import { useState } from "react";
 
 const STEPS = [
   {
+    question: "Tell us about yourself",
+    key: "basics",
+    type: "basics",
+  },
+  {
     question: "What's your Style Identity?",
     key: "style",
     options: ["Minimal", "Street", "Athleisure", "Formal"],
@@ -24,9 +29,14 @@ const STEPS = [
     options: ["Neutrals (black, white, grey)", "Earth Tones", "Bold/Color Pop", "Patterns"],
     multi: true,
   },
+  {
+    question: "What's your Budget?",
+    key: "budget",
+    options: ["Under ₹1,000", "₹1,000 – ₹3,000", "₹3,000 – ₹5,000", "₹5,000 – ₹10,000", "₹10,000+", "No Preference"],
+  },
 ];
 
-export default function StyleProfile({ onComplete }) {
+export default function StyleProfile({ onComplete, userName }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({});
 
@@ -40,14 +50,17 @@ export default function StyleProfile({ onComplete }) {
       setAnswers({ ...answers, [current.key]: updated });
     } else {
       setAnswers({ ...answers, [current.key]: option });
-      // Auto-advance after selection for single-choice
       if (step < STEPS.length - 1) {
         setTimeout(() => setStep(step + 1), 300);
       }
     }
   };
 
-  const canContinue = current.multi ? (Array.isArray(selected) && selected.length > 0) : !!selected;
+  const canContinue = current.type === "basics"
+    ? !!(answers.gender && answers.age)
+    : current.multi
+      ? (Array.isArray(selected) && selected.length > 0)
+      : !!selected;
 
   const handleNext = () => {
     if (step < STEPS.length - 1) {
@@ -55,6 +68,14 @@ export default function StyleProfile({ onComplete }) {
     } else {
       onComplete(answers);
     }
+  };
+
+  const inputStyle = {
+    width: "100%", padding: "14px 18px", borderRadius: 12,
+    border: "1px solid #e5e7eb", background: "#fff",
+    fontSize: 16, fontFamily: "'League Spartan', system-ui, sans-serif",
+    outline: "none", boxSizing: "border-box",
+    transition: "border-color 0.2s",
   };
 
   return (
@@ -85,29 +106,87 @@ export default function StyleProfile({ onComplete }) {
       )}
       {!current.subtitle && <div style={{ height: 32 }} />}
 
-      {/* Options */}
+      {/* Content */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 400 }}>
-        {current.options.map(option => {
-          const isSelected = current.multi
-            ? (Array.isArray(selected) && selected.includes(option))
-            : selected === option;
-          return (
-            <button key={option} onClick={() => handleSelect(option)} style={{
-              padding: "16px 24px",
-              borderRadius: 12,
-              border: isSelected ? "2px solid #1a1a1a" : "1px solid #e5e7eb",
-              background: isSelected ? "#1a1a1a" : "#fff",
-              color: isSelected ? "#fff" : "#1a1a1a",
-              fontSize: 16, fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "'League Spartan'",
-              transition: "all 0.2s",
-              textAlign: "left",
-            }}>
-              {option}
-            </button>
-          );
-        })}
+        {current.type === "basics" ? (
+          <>
+            {/* Gender */}
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 6, letterSpacing: 1, textTransform: "uppercase" }}>Gender</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {["Male", "Female"].map(g => {
+                  const sel = answers.gender === g;
+                  return (
+                    <button key={g} onClick={() => setAnswers(a => ({ ...a, gender: g }))} style={{
+                      flex: 1, padding: "14px 0", borderRadius: 12,
+                      border: sel ? "2px solid #1a1a1a" : "1px solid #e5e7eb",
+                      background: sel ? "#1a1a1a" : "#fff",
+                      color: sel ? "#fff" : "#1a1a1a",
+                      fontSize: 16, fontWeight: 600, cursor: "pointer",
+                      fontFamily: "'League Spartan'", transition: "all 0.2s",
+                    }}>{g}</button>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Age */}
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 6, letterSpacing: 1, textTransform: "uppercase" }}>Age</div>
+              <input
+                type="number" placeholder="Enter your age" min="10" max="100"
+                value={answers.age || ""}
+                onChange={e => setAnswers(a => ({ ...a, age: e.target.value }))}
+                style={inputStyle}
+              />
+            </div>
+            {/* Height (optional) */}
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 6, letterSpacing: 1, textTransform: "uppercase" }}>
+                Height <span style={{ fontWeight: 400, color: "#bbb" }}>(cm, optional)</span>
+              </div>
+              <input
+                type="number" placeholder="e.g. 170" min="100" max="250"
+                value={answers.height || ""}
+                onChange={e => setAnswers(a => ({ ...a, height: e.target.value }))}
+                style={inputStyle}
+              />
+            </div>
+            {/* Weight (optional) */}
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#888", marginBottom: 6, letterSpacing: 1, textTransform: "uppercase" }}>
+                Weight <span style={{ fontWeight: 400, color: "#bbb" }}>(kg, optional)</span>
+              </div>
+              <input
+                type="number" placeholder="e.g. 65" min="30" max="200"
+                value={answers.weight || ""}
+                onChange={e => setAnswers(a => ({ ...a, weight: e.target.value }))}
+                style={inputStyle}
+              />
+            </div>
+          </>
+        ) : (
+          current.options.map(option => {
+            const isSelected = current.multi
+              ? (Array.isArray(selected) && selected.includes(option))
+              : selected === option;
+            return (
+              <button key={option} onClick={() => handleSelect(option)} style={{
+                padding: "16px 24px",
+                borderRadius: 12,
+                border: isSelected ? "2px solid #1a1a1a" : "1px solid #e5e7eb",
+                background: isSelected ? "#1a1a1a" : "#fff",
+                color: isSelected ? "#fff" : "#1a1a1a",
+                fontSize: 16, fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "'League Spartan'",
+                transition: "all 0.2s",
+                textAlign: "left",
+              }}>
+                {option}
+              </button>
+            );
+          })
+        )}
       </div>
 
       {/* Navigation */}

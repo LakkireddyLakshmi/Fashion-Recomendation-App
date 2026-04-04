@@ -11,6 +11,15 @@ const fieldDefs = [
   { key: "weight", label: "Weight (kg)", type: "number" },
   { key: "bodyType", label: "Body Type", type: "select", options: ["Slim", "Athletic", "Average", "Curvy", "Plus"] },
   { key: "fit", label: "Preferred Fit", type: "select", options: ["Slim", "Regular", "Loose", "Oversized"] },
+  { key: "styleIdentity", label: "Style Identity", type: "select", options: ["Minimal", "Street", "Athleisure", "Formal", "Casual", "Ethnic"] },
+  { key: "budgetId", label: "Budget Range", type: "select", options: [
+    { value: "under1000", label: "Under ₹1K" },
+    { value: "1k_3k", label: "₹1K – 3K" },
+    { value: "3k_5k", label: "₹3K – 5K" },
+    { value: "5k_10k", label: "₹5K – 10K" },
+    { value: "above10k", label: "₹10K+" },
+    { value: "any", label: "Any Budget" },
+  ]},
 ];
 
 const tagFieldDefs = [
@@ -19,17 +28,61 @@ const tagFieldDefs = [
 ];
 
 export default function UserProfile({ profile, onUpdate, onClose }) {
-  const [form, setForm] = useState({ ...profile });
+  // Normalize gender to match dropdown options
+  const normalizeGender = (g) => {
+    const l = (g || "").toLowerCase();
+    if (["male", "men", "man", "m"].includes(l)) return "Male";
+    if (["female", "women", "woman", "f", "ladies"].includes(l)) return "Female";
+    if (l === "non-binary") return "Non-binary";
+    return g || "";
+  };
+  const normalizeFit = (f) => {
+    const l = (f || "").toLowerCase();
+    if (l === "slim") return "Slim";
+    if (l === "regular") return "Regular";
+    if (l === "loose") return "Loose";
+    if (l === "oversized") return "Oversized";
+    return f || "";
+  };
+  const normalizeBodyType = (b) => {
+    const l = (b || "").toLowerCase();
+    if (l === "slim") return "Slim";
+    if (l === "athletic") return "Athletic";
+    if (l === "average") return "Average";
+    if (l === "curvy") return "Curvy";
+    if (l === "plus" || l === "plus size") return "Plus";
+    return b || "";
+  };
+  const normalizeStyle = (s) => {
+    const l = (s || "").toLowerCase();
+    const map = { minimal:"Minimal", street:"Street", athleisure:"Athleisure", formal:"Formal", casual:"Casual", ethnic:"Ethnic" };
+    return map[l] || s || "";
+  };
+  const [form, setForm] = useState({
+    ...profile,
+    gender: normalizeGender(profile?.gender),
+    fit: normalizeFit(profile?.fit),
+    bodyType: normalizeBodyType(profile?.bodyType),
+    styleIdentity: normalizeStyle(profile?.styleIdentity),
+  });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [tagInput, setTagInput] = useState({});
 
-  const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+  const set = (k, v) => {
+    if (k === "budgetId") {
+      const budgetRanges = { under1000: [0,1000], "1k_3k": [1000,3000], "3k_5k": [3000,5000], "5k_10k": [5000,10000], above10k: [10000,50000], any: [0,50000] };
+      const [min, max] = budgetRanges[v] || [0, 50000];
+      setForm((p) => ({ ...p, budgetId: v, budgetMin: min, budgetMax: max }));
+    } else {
+      setForm((p) => ({ ...p, [k]: v }));
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const token = sessionStorage.getItem("hueiq_token");
+      const token = sessionStorage.getItem("hueiq_token") || localStorage.getItem("hueiq_token");
       const headers = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
       await fetch(`${API}/api/save-profile`, {
@@ -47,9 +100,11 @@ export default function UserProfile({ profile, onUpdate, onClose }) {
           },
           preferred_colors: form.colors || [],
           preferred_categories: form.categories || [],
-          style_preferences: [form.fit],
+          style_preferences: [form.styleIdentity, form.fit].filter(Boolean),
         }),
       });
+      // Persist to localStorage
+      localStorage.setItem("hueiq_profile", JSON.stringify(form));
       onUpdate && onUpdate(form);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -130,9 +185,11 @@ export default function UserProfile({ profile, onUpdate, onClose }) {
                   }}
                 >
                   <option value="" style={{ background: "#1a1a2e" }}>Select...</option>
-                  {options.map((o) => (
-                    <option key={o} value={o} style={{ background: "#1a1a2e" }}>{o}</option>
-                  ))}
+                  {options.map((o) => {
+                    const val = typeof o === "object" ? o.value : o;
+                    const lbl = typeof o === "object" ? o.label : o;
+                    return <option key={val} value={val} style={{ background: "#1a1a2e" }}>{lbl}</option>;
+                  })}
                 </select>
               ) : (
                 <input

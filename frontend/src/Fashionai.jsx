@@ -680,7 +680,7 @@ function Screen({ bg, children }) {
       style={{
         width: "100vw",
         minHeight: "100vh",
-        background: "#f8f9fa",
+        background: bg ? "linear-gradient(135deg, #0f0a1e 0%, #1a1035 40%, #0d1525 100%)" : "#f8f9fa",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -1882,6 +1882,92 @@ function StepStyle({ data, setData, onNext, onBack }) {
           </div>
         </div>
 
+        {/* ══ STYLE IDENTITY ══ */}
+        {(() => {
+          const STYLES = [
+            { id:"minimal",    label:"Minimal",    desc:"Clean & timeless",    gradient:"linear-gradient(160deg,#64748b,#94a3b8)", glow:"rgba(148,163,184,0.4)" },
+            { id:"street",     label:"Street",     desc:"Urban & edgy",        gradient:"linear-gradient(160deg,#f97316,#f43f5e)", glow:"rgba(249,115,22,0.4)" },
+            { id:"athleisure", label:"Athleisure",  desc:"Sporty & comfortable",gradient:"linear-gradient(160deg,#14b8a6,#06b6d4)", glow:"rgba(20,184,166,0.4)" },
+            { id:"formal",     label:"Formal",     desc:"Polished & sharp",    gradient:"linear-gradient(160deg,#7c3aed,#a855f7)", glow:"rgba(124,58,237,0.4)" },
+            { id:"casual",     label:"Casual",     desc:"Relaxed everyday",    gradient:"linear-gradient(160deg,#eab308,#f59e0b)", glow:"rgba(234,179,8,0.4)" },
+            { id:"ethnic",     label:"Ethnic",     desc:"Traditional & rich",  gradient:"linear-gradient(160deg,#ec4899,#f472b6)", glow:"rgba(236,72,153,0.4)" },
+          ];
+          const selStyle = data.styleIdentity || "";
+          return (
+            <div style={{ padding:"0 28px 20px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
+                <span style={{ fontSize:9, fontWeight:700, letterSpacing:3, color:"rgba(255,255,255,0.3)", fontFamily:"'League Spartan'", flexShrink:0 }}>STYLE IDENTITY</span>
+                <div style={{ flex:1, height:"1px", background:"linear-gradient(90deg, rgba(255,255,255,0.12) 0%, transparent 100%)" }}/>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                {STYLES.map(({ id, label, desc, gradient, glow }) => {
+                  const active = selStyle === id;
+                  return (
+                    <button key={id} onClick={() => setData(d => ({ ...d, styleIdentity: id }))} style={{
+                      border: active ? "none" : "1px solid rgba(255,255,255,0.15)",
+                      borderRadius:16, cursor:"pointer",
+                      background: active ? gradient : "rgba(255,255,255,0.06)",
+                      padding: active ? "14px 10px" : "13px 9px",
+                      display:"flex", flexDirection:"column", alignItems:"center", gap:4,
+                      boxShadow: active ? `0 8px 28px ${glow}` : "none",
+                      transform: active ? "scale(1.04)" : "scale(1)",
+                      transition:"all 0.22s cubic-bezier(0.34,1.56,0.64,1)",
+                    }}>
+                      <div style={{
+                        fontFamily:"'League Spartan'", fontSize:14, fontWeight: active ? 800 : 500,
+                        color: active ? "#fff" : "rgba(255,255,255,0.6)",
+                      }}>{label}</div>
+                      <div style={{
+                        fontFamily:"'League Spartan'", fontSize:9, fontWeight:300,
+                        color: active ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.3)",
+                      }}>{desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ══ BUDGET RANGE ══ */}
+        {(() => {
+          const BUDGETS = [
+            { id:"under1000",  label:"Under ₹1K",   min:0,     max:1000  },
+            { id:"1k_3k",     label:"₹1K – 3K",    min:1000,  max:3000  },
+            { id:"3k_5k",     label:"₹3K – 5K",    min:3000,  max:5000  },
+            { id:"5k_10k",    label:"₹5K – 10K",   min:5000,  max:10000 },
+            { id:"above10k",  label:"₹10K+",        min:10000, max:50000 },
+            { id:"any",       label:"Any Budget",   min:0,     max:50000 },
+          ];
+          const selBudget = data.budgetId || "any";
+          return (
+            <div style={{ padding:"0 28px 20px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14 }}>
+                <span style={{ fontSize:9, fontWeight:700, letterSpacing:3, color:"rgba(255,255,255,0.3)", fontFamily:"'League Spartan'", flexShrink:0 }}>BUDGET</span>
+                <div style={{ flex:1, height:"1px", background:"linear-gradient(90deg, rgba(255,255,255,0.12) 0%, transparent 100%)" }}/>
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {BUDGETS.map(({ id, label, min, max }) => {
+                  const active = selBudget === id;
+                  return (
+                    <button key={id} onClick={() => setData(d => ({ ...d, budgetId: id, budgetMin: min, budgetMax: max }))} style={{
+                      padding:"8px 16px", borderRadius:50,
+                      background: active ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.08)",
+                      border: active ? "none" : "1px solid rgba(255,255,255,0.18)",
+                      color: active ? "#0d0018" : "rgba(255,255,255,0.75)",
+                      fontFamily:"'League Spartan'", fontSize:13, fontWeight: active ? 700 : 400,
+                      cursor:"pointer", transition:"all 0.18s",
+                    }}>
+                      {label}
+                      {active && id !== "any" && <span style={{ marginLeft:6, fontSize:11, background:"#7c3aed", color:"#fff", borderRadius:"50%", width:16, height:16, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ══ WHAT ARE YOU LOOKING FOR? ══ */}
         {(() => {
           const g = (data.gender || "").toLowerCase();
@@ -2852,6 +2938,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
     try {
       const q = query.toLowerCase().trim();
       const params = new URLSearchParams({ limit: "50" });
+      if (profile?.gender) params.set("gender", profile.gender);
 
       // ── Try local parsing first for simple queries (instant) ──
       const simpleWords = /\b(shirt|t-shirt|tee|jeans|dress|blazer|top|jogger|trouser|pant|cargo|kurta|jumpsuit|skirt|short|sweater|hoodie|polo|black|white|blue|red|green|pink|yellow|navy|grey|brown|beige|purple|orange|men|women|male|female|boy|girl)\b/;
@@ -3071,284 +3158,353 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
 
   const [page, setPage] = useState(0);
   const [activeFilter, setActiveFilter] = useState("All");
+  const [genderFilter, setGenderFilter] = useState("");
   const [sortBy, setSortBy] = useState("match");
   const [searchQ, setSearchQ] = useState("");
   const [priceFilter, setPriceFilter] = useState("all");
   const PER = 12;
 
-  // Derive unique category chips from recommendations (only show categories with 2+ items)
-  const categoryChips = useMemo(() => {
-    const cats = {};
-    recommendations.forEach(item => {
-      const c = (item.category || "").trim();
-      if (c) {
-        const key = c.charAt(0).toUpperCase() + c.slice(1).toLowerCase();
-        cats[key] = (cats[key] || 0) + 1;
-      }
-    });
-    const sorted = Object.entries(cats)
-      .filter(([_, count]) => count >= 2)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name]) => name)
-      .slice(0, 8);
-    return ["All", ...sorted];
-  }, [recommendations]);
-
   // Filter + sort
   const filteredData = useMemo(() => {
     let list = recommendations;
+
+    // Gender filter
+    if (genderFilter) {
+      const gf = genderFilter.toLowerCase();
+      list = list.filter(item => {
+        const ig = (item.gender || "").toLowerCase();
+        return ig === gf || ig === "unisex" || !ig;
+      });
+    }
+
+    // Category / Brand filter
     if (activeFilter !== "All") {
       const af = activeFilter.toLowerCase();
       list = list.filter(item => {
         const cat = (item.category || "").toLowerCase();
+        const brand = (item.brand || "").toLowerCase();
         const name = (item.name || "").toLowerCase();
-        return cat.includes(af) || cat === af || name.includes(af);
+        return cat.includes(af) || cat === af || brand === af || name.includes(af);
       });
     }
+
     if (searchQ.trim()) {
       const q = searchQ.trim().toLowerCase();
       list = list.filter(item =>
         (item.name||"").toLowerCase().includes(q) ||
         (item.category||"").toLowerCase().includes(q) ||
+        (item.brand||"").toLowerCase().includes(q) ||
         (item.style_tags||[]).some(t => t.toLowerCase().includes(q)) ||
         (item.description||"").toLowerCase().includes(q)
       );
     }
-    if (priceFilter === "under500")     list = list.filter(i => (resolvePrice(i)||0) < 50);
-    if (priceFilter === "500to5k")      list = list.filter(i => { const p = resolvePrice(i)||0; return p>=50 && p<=500; });
-    if (priceFilter === "500to2k")      list = list.filter(i => { const p = resolvePrice(i)||0; return p>=50 && p<200; });
-    if (priceFilter === "2kto5k")       list = list.filter(i => { const p = resolvePrice(i)||0; return p>=200 && p<=500; });
-    if (priceFilter === "above5k")      list = list.filter(i => (resolvePrice(i)||0) > 500);
+
+    // Price filters (in Rs.)
+    if (priceFilter === "under500")  list = list.filter(i => (resolvePrice(i)||0) < 500);
+    if (priceFilter === "500to2k")   list = list.filter(i => { const p = resolvePrice(i)||0; return p >= 500 && p < 2000; });
+    if (priceFilter === "2kto5k")    list = list.filter(i => { const p = resolvePrice(i)||0; return p >= 2000 && p <= 5000; });
+    if (priceFilter === "above5k")   list = list.filter(i => (resolvePrice(i)||0) > 5000);
+
     const sorted = [...list];
     if (sortBy === "price_asc")  sorted.sort((a, b) => (resolvePrice(a)||0) - (resolvePrice(b)||0));
     if (sortBy === "price_desc") sorted.sort((a, b) => (resolvePrice(b)||0) - (resolvePrice(a)||0));
     if (sortBy === "discount")   sorted.sort((a, b) => (b.discount_percent||0) - (a.discount_percent||0));
     if (sortBy === "match")      sorted.sort((a, b) => resolveScore(b) - resolveScore(a));
 
-    // If no results, show "You might also like" from all recommendations
     if (sorted.length === 0 && activeFilter !== "All") {
       const fallback = [...recommendations].sort(() => Math.random() - 0.5).slice(0, PER);
       return { items: fallback, isFallback: true };
     }
     return { items: sorted, isFallback: false };
-  }, [recommendations, activeFilter, sortBy, searchQ, priceFilter]);
+  }, [recommendations, activeFilter, genderFilter, sortBy, searchQ, priceFilter]);
 
   const filtered = filteredData.items;
-  // Show search result item if available, otherwise first from recs
-  const currentItem = searchItem || filtered[0];
   const totalItems = filtered.length;
 
-  if (!currentItem) {
+  // Build filter counts from all recommendations (not just filtered)
+  const allItems = fullRecs || recommendations;
+  const catCounts = {};
+  const brandCounts = {};
+  const colorCounts = {};
+  allItems.forEach(it => {
+    const c = (it.category || "").toLowerCase();
+    if (c) catCounts[c] = (catCounts[c] || 0) + 1;
+    const b = it.brand && it.brand.length > 1 ? it.brand : "";
+    if (b) brandCounts[b] = (brandCounts[b] || 0) + 1;
+    (it.available_colors || it.colors || []).forEach(clr => {
+      const cl = (clr || "").toLowerCase();
+      if (cl) colorCounts[cl] = (colorCounts[cl] || 0) + 1;
+    });
+  });
+  const topCats = Object.entries(catCounts).sort((a,b) => b[1]-a[1]).slice(0,10);
+  const topBrands = Object.entries(brandCounts).sort((a,b) => b[1]-a[1]).slice(0,8);
+  const topColors = Object.entries(colorCounts).sort((a,b) => b[1]-a[1]).slice(0,8);
+
+  // Color hex map for swatches
+  const colorHex = { black:"#000", white:"#fff", blue:"#2563eb", red:"#ef4444", green:"#22c55e", pink:"#ec4899", yellow:"#eab308", navy:"#1e3a5f", grey:"#9ca3af", gray:"#9ca3af", brown:"#92400e", beige:"#d4a574", purple:"#9333ea", orange:"#f97316", maroon:"#7f1d1d", cream:"#fffdd0", teal:"#14b8a6", coral:"#ff7f7f", lavender:"#e6e6fa", olive:"#808000", gold:"#ffd700", silver:"#c0c0c0", burgundy:"#800020", "light-blue":"#93c5fd", "sky-blue":"#7dd3fc", "dusty-rose":"#dcae96", "brown-black":"#3d2b1f" };
+
+  if (!allItems.length) {
     return (
-      <div style={{ minHeight: "100vh", background: "#f8f9fa", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100vh", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <style>{CSS}</style>
-        <p style={{ color: "#999", fontSize: 18, fontFamily: "'League Spartan'" }}>No recommendations yet. Try refreshing.</p>
+        <p style={{ color: "#535766", fontSize: 16, fontFamily: "'League Spartan'" }}>No recommendations yet. Try refreshing.</p>
       </div>
     );
   }
 
-  const img = currentItem.primary_image_url || currentItem.image || (currentItem.images?.[0]?.image_url) || "";
-  const price = resolvePrice(currentItem);
-  const sizes = currentItem.available_sizes || ["S","M","L","XL"];
-  const colors = (currentItem.available_colors || []).slice(0, 6);
-  const catLabel = (currentItem.category || "").toUpperCase();
-
   return (
-    <div style={{ minHeight: "100vh", background: "#fff", fontFamily: "'League Spartan', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "#fff", fontFamily: "'League Spartan', sans-serif", color: "#282c3f" }}>
       <style>{CSS}</style>
 
-      {/* Top nav */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 32px", borderBottom: "1px solid #f0f0f0" }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#1a1a1a" }}>HueIQ</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {/* Bag */}
-          <button onClick={() => setCartOpen(true)} style={{
-            background: "#fff", color: "#1a1a1a",
-            borderRadius: 50, padding: "8px 16px", border: "1px solid #e5e7eb",
-            display: "flex", alignItems: "center", gap: 6,
-            fontFamily: "'League Spartan'", fontWeight: 700, fontSize: 14,
-            cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-          }}>
-            🛍 {cartCount > 0 ? `Bag · ${cartCount}` : "Bag"}
+      {/* ─── Top Nav (Myntra style) ─── */}
+      <div style={{ display: "flex", alignItems: "center", padding: "10px 40px", borderBottom: "1px solid #f0f0f0", position: "sticky", top: 0, background: "#fff", zIndex: 100, boxShadow: "0 2px 8px rgba(0,0,0,0.04)", gap: 32 }}>
+        <div style={{ fontSize: 24, fontWeight: 800, color: "#282c3f", cursor: "pointer", letterSpacing: -0.5, flexShrink: 0 }}>HueIQ</div>
+
+        {/* Search bar */}
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "#f5f5f6", borderRadius: 4, padding: "10px 16px" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94969f" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" value={barQuery} onChange={(e) => setBarQuery(e.target.value)}
+            placeholder="Search for products, brands and more"
+            style={{ flex: 1, background: "transparent", border: "none", color: "#282c3f", fontSize: 15, outline: "none", fontFamily: "'League Spartan'" }}
+            onKeyDown={(e) => { if (e.key === "Enter" && barQuery.trim()) doBarSearch(barQuery.trim()); }}
+          />
+          <MicButton onResult={(text) => { setBarQuery(text); doBarSearch(text); }} />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 32, flexShrink: 0 }}>
+          <button onClick={() => setProfileOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Profile</span>
           </button>
-          {/* Profile */}
-          <button onClick={() => setProfileOpen(true)} style={{
-            width: 36, height: 36, borderRadius: "50%",
-            border: "1px solid #e5e7eb", background: "#fff",
-            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
-            </svg>
+          <button onClick={() => onToggleWishlist && null} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Wishlist</span>
           </button>
-          {/* Logout */}
+          <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, position: "relative" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+            {cartCount > 0 && <div style={{ position: "absolute", top: -4, right: -4, width: 16, height: 16, borderRadius: "50%", background: "#ff3f6c", color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{cartCount}</div>}
+            <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Bag</span>
+          </button>
           {onLogout && (
-            <button onClick={onLogout} style={{
-              width: 36, height: 36, borderRadius: "50%",
-              border: "1px solid #e5e7eb", background: "#fff",
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-            }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-              </svg>
+            <button onClick={onLogout} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Logout</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Main content: Product image left + details right */}
-      <div style={{ display: "flex", maxWidth: 900, margin: "0 auto", padding: "32px 24px", gap: 40 }}>
-        {/* Left: Product Image */}
-        <div style={{ flex: "0 0 380px" }}>
-          <div style={{ background: "#f8f9fa", borderRadius: 16, overflow: "hidden", aspectRatio: "3/4" }}>
-            <img src={img} alt={currentItem.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.src = "https://via.placeholder.com/400x500/f0f0f0/999?text=No+Image"; }} />
-          </div>
-          {/* Color dots */}
-          {colors.length > 0 && (
-            <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-              {colors.map((c, i) => (
-                <div key={i} style={{ width: 20, height: 20, borderRadius: "50%", background: c.toLowerCase().replace(/\s/g, ""), border: "2px solid #e5e7eb" }} title={c} />
-              ))}
-            </div>
-          )}
+      {/* ─── Breadcrumb + count ─── */}
+      <div style={{ padding: "14px 24px 8px", borderBottom: "1px solid #eaeaec", marginLeft: 230 }}>
+        <div style={{ fontSize: 12, color: "#94969f" }}>Home / Clothing / <span style={{ color: "#282c3f", fontWeight: 600 }}>Recommended For You</span></div>
+        <div style={{ fontSize: 14, color: "#282c3f", marginTop: 4 }}>
+          <span style={{ fontWeight: 700 }}>Recommended For You</span> <span style={{ color: "#535766" }}>- {totalItems} items</span>
         </div>
+      </div>
 
-        {/* Right: Product Details */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
-          {catLabel && <span style={{ fontSize: 11, fontWeight: 600, color: "#999", letterSpacing: 1.5, textTransform: "uppercase" }}>{catLabel}</span>}
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#1a1a1a", lineHeight: 1.3, margin: 0 }}>{currentItem.name}</h1>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "#1a1a1a" }}>${price.toFixed(2)}</div>
+      {/* ─── Left Sidebar (fixed position) ─── */}
+      <div style={{ position: "fixed", top: 56, left: 0, bottom: 0, width: 230, borderRight: "1px solid #eaeaec", padding: "16px 18px", overflowY: "auto", overflowX: "hidden", background: "#fff", zIndex: 50, scrollbarWidth: "thin" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Filters</span>
+            <button onClick={() => { setActiveFilter("All"); setGenderFilter(""); setPriceFilter("all"); setSortBy("match"); }} style={{ background: "none", border: "none", color: "#ff3f6c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>CLEAR ALL</button>
+          </div>
 
-          {/* Sizes */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {sizes.slice(0, 6).map(s => (
-              <button key={s} style={{
-                padding: "8px 16px", borderRadius: 8,
-                border: "1px solid #e5e7eb", background: "#fff",
-                color: "#1a1a1a", fontSize: 13, fontWeight: 500,
-                cursor: "pointer", fontFamily: "'League Spartan'",
-              }}>{s}</button>
+          {/* Gender */}
+          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Gender</div>
+            {["Men", "Women"].map(g => {
+              const gVal = g.toLowerCase() === "men" ? "men" : "women";
+              const isActive = genderFilter === gVal;
+              return (
+                <label key={g} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
+                  <input type="radio" name="gender" checked={isActive} onChange={() => setGenderFilter(isActive ? "" : gVal)} style={{ accentColor: "#ff3f6c" }} />
+                  {g}
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Categories */}
+          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Categories</div>
+            {topCats.map(([cat, count]) => {
+              const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+              const isActive = activeFilter === label;
+              return (
+                <label key={cat} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
+                  <input type="checkbox" checked={isActive} onChange={() => setActiveFilter(isActive ? "All" : label)} style={{ accentColor: "#ff3f6c" }} />
+                  {label} <span style={{ color: "#94969f", fontSize: 12 }}>({count})</span>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Brand */}
+          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Brand</div>
+            {topBrands.map(([brand, count]) => (
+              <label key={brand} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
+                <input type="checkbox" checked={activeFilter === brand} onChange={() => setActiveFilter(activeFilter === brand ? "All" : brand)} style={{ accentColor: "#ff3f6c" }} />
+                {brand} <span style={{ color: "#94969f", fontSize: 12 }}>({count})</span>
+              </label>
             ))}
           </div>
 
-          {/* Add to Cart */}
-          <button onClick={() => onAddToCart(currentItem)} style={{
-            width: "100%", padding: "14px 0", background: "#1a1a1a",
-            color: "#fff", border: "none", borderRadius: 10,
-            fontSize: 15, fontWeight: 700, cursor: "pointer",
-            fontFamily: "'League Spartan'", letterSpacing: 0.5,
-            marginTop: 8,
-          }}>ADD TO CART</button>
+          {/* Color */}
+          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Color</div>
+            {topColors.map(([clr, count]) => (
+              <label key={clr} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
+                <span style={{ width: 16, height: 16, borderRadius: "50%", background: colorHex[clr] || "#ccc", border: "1px solid #d4d5d9", flexShrink: 0 }} />
+                {clr.charAt(0).toUpperCase() + clr.slice(1)} <span style={{ color: "#94969f", fontSize: 12 }}>({count})</span>
+              </label>
+            ))}
+          </div>
 
-          {/* Wishlist */}
-          <button onClick={() => onToggleWishlist(currentItem)} style={{
-            width: "100%", padding: "12px 0", background: "#fff",
-            color: wishlist.has(currentItem.catalog_item_id || currentItem.id) ? "#ef4444" : "#555",
-            border: "1px solid #e5e7eb", borderRadius: 10,
-            fontSize: 14, fontWeight: 500, cursor: "pointer",
-            fontFamily: "'League Spartan'", display: "flex",
-            alignItems: "center", justifyContent: "center", gap: 8,
-          }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill={wishlist.has(currentItem.catalog_item_id || currentItem.id) ? "#ef4444" : "none"} stroke="currentColor" strokeWidth="2">
-              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-            </svg>
-            {wishlist.has(currentItem.catalog_item_id || currentItem.id) ? "Saved" : "Save to Wishlist"}
-          </button>
+          {/* Price */}
+          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Price</div>
+            {[
+              { val: "all", label: "All" },
+              { val: "under500", label: "Under Rs. 500" },
+              { val: "500to2k", label: "Rs. 500 - Rs. 2000" },
+              { val: "2kto5k", label: "Rs. 2000 - Rs. 5000" },
+              { val: "above5k", label: "Above Rs. 5000" },
+            ].map(p => (
+              <label key={p.val} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
+                <input type="radio" name="price" checked={priceFilter === p.val} onChange={() => setPriceFilter(p.val)} style={{ accentColor: "#ff3f6c" }} />
+                {p.label}
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* Complete the Look */}
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 100px" }}>
-        <CompleteTheLook
-          currentItem={currentItem}
-          allItems={fullRecs}
-          onAddToCart={onAddToCart}
-        />
-      </div>
+        {/* ─── Right: Product Grid ─── */}
+        <div style={{ marginLeft: 230 }}>
 
-      {/* AI Message */}
-      {aiMessage && (
-        <div style={{
-          position: "fixed", bottom: 64, left: "50%", transform: "translateX(-50%)",
-          background: "#1a1a1a", color: "#fff", padding: "8px 20px",
-          borderRadius: 20, fontSize: 13, fontFamily: "'League Spartan'",
-          zIndex: 101, boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-          maxWidth: 500, textAlign: "center",
-          animation: "fadeUp 0.3s ease",
-        }}>
-          {aiMessage}
-          <button onClick={() => setAiMessage("")} style={{ background: "none", border: "none", color: "#999", marginLeft: 8, cursor: "pointer", fontSize: 14 }}>x</button>
-        </div>
-      )}
-
-      {/* Bottom sticky bar */}
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0,
-        background: "#fff", borderTop: "1px solid #f0f0f0",
-        padding: "12px 24px", display: "flex",
-        alignItems: "center", gap: 16, zIndex: 100,
-        boxShadow: "0 -2px 10px rgba(0,0,0,0.05)",
-      }}>
-        <div style={{
-          flex: 1, display: "flex", alignItems: "center", gap: 10,
-          background: "#f8f9fa", borderRadius: 30, padding: "6px 6px 6px 16px",
-          border: "1px solid #e5e7eb",
-        }}>
-          <MicButton onResult={(text) => { setBarQuery(text); doBarSearch(text); }} />
-          <input
-            type="text"
-            value={barQuery}
-            onChange={(e) => setBarQuery(e.target.value)}
-            placeholder='Tell me: "Show me different shoes"'
-            style={{
-              flex: 1, background: "transparent", border: "none",
-              color: "#1a1a1a", fontSize: 14, outline: "none",
+          {/* Sort bar */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "10px 16px", borderBottom: "1px solid #eaeaec" }}>
+            <span style={{ fontSize: 13, color: "#535766", marginRight: 8 }}>Sort by :</span>
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
+              padding: "4px 8px", border: "1px solid #d4d5d9", borderRadius: 2,
+              fontSize: 14, fontWeight: 700, color: "#282c3f", cursor: "pointer", background: "#fff",
               fontFamily: "'League Spartan'",
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && barQuery.trim()) {
-                doBarSearch(barQuery.trim());
-              }
-            }}
-          />
-          {barQuery.trim() && (
-            <button onClick={() => doBarSearch(barQuery.trim())} style={{
-              background: "#1a1a1a", border: "none", borderRadius: "50%",
-              width: 32, height: 32, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0,
             }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
-                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-              </svg>
-            </button>
-          )}
-        </div>
-      </div>
+              <option value="match">Recommended</option>
+              <option value="price_asc">Price: Low to High</option>
+              <option value="price_desc">Price: High to Low</option>
+              <option value="discount">Better Discount</option>
+            </select>
+          </div>
 
-      {/* Recently Viewed */}
-      {recentlyViewed?.length > 0 && (
-        <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px 100px" }}>
-          <div style={{ fontSize: 16, fontWeight: 600, color: "#1a1a1a", marginBottom: 12, fontFamily: "'League Spartan'" }}>Recently Viewed</div>
-          <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8 }}>
-            {recentlyViewed.map((item, i) => {
-              const rImg = item.primary_image_url || item.image || "";
+          {/* Product grid */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
+            gap: 0,
+          }}>
+            {filtered.map((item, idx) => {
+              const itemImg = item.primary_image_url || item.image || (item.images?.[0]?.image_url) || "";
+              const itemPrice = resolvePrice(item);
+              const itemId = item.catalog_item_id || item.id;
+              const isWished = wishlist.has(itemId);
+              const brand = item.brand && item.brand.length > 1 ? item.brand : (item.name || "").split(/\s+/).slice(0, 2).join(" ");
+              const disc = item.discount_percent || 0;
+              const salePrice = item.sale_price || 0;
+              const score = resolveScore(item);
+              const reason = item.recommendation_reason || "";
+
               return (
-                <div key={item.catalog_item_id || i} onClick={() => onSelectItem(item)} style={{
-                  flexShrink: 0, width: 120, cursor: "pointer",
-                }}>
-                  <div style={{ width: 120, height: 150, borderRadius: 10, overflow: "hidden", background: "#f8f9fa" }}>
-                    <img src={rImg} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display = "none"; }} />
+                <div key={itemId || idx}
+                  onClick={() => onSelectItem(item)}
+                  style={{
+                    cursor: "pointer",
+                    borderRight: "1px solid #f0f0f0",
+                    borderBottom: "1px solid #f0f0f0",
+                    position: "relative",
+                    transition: "box-shadow 0.2s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.12)"; e.currentTarget.style.zIndex = "2"; }}
+                  onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.zIndex = "0"; }}
+                >
+                  {/* Wishlist heart */}
+                  <button onClick={(e) => { e.stopPropagation(); onToggleWishlist(item); }} style={{
+                    position: "absolute", top: 8, right: 8, zIndex: 3,
+                    width: 30, height: 30, borderRadius: "50%",
+                    background: "rgba(255,255,255,0.9)", border: "none",
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+                  }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill={isWished ? "#ff3f6c" : "none"} stroke={isWished ? "#ff3f6c" : "#535766"} strokeWidth="2">
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    </svg>
+                  </button>
+
+                  {/* Rating badge */}
+                  {score > 0 && (
+                    <div style={{
+                      position: "absolute", bottom: 125, left: 8, zIndex: 2,
+                      background: "rgba(255,255,255,0.95)", borderRadius: 2, padding: "2px 6px",
+                      display: "flex", alignItems: "center", gap: 3,
+                      fontSize: 12, fontWeight: 700, color: "#282c3f",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                    }}>
+                      {(score >= 70 ? (3.5 + (score-70)/30*1.5) : (2.5 + score/70)).toFixed(1)} <span style={{ color: "#14958f" }}>★</span>
+                    </div>
+                  )}
+
+                  {/* Product Image */}
+                  <div style={{ aspectRatio: "3/4", overflow: "hidden", background: "#f5f5f6" }}>
+                    <img src={itemImg} alt={item.name}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform 0.3s" }}
+                      onError={e => { e.target.src = "https://via.placeholder.com/300x400/f5f5f6/ccc?text=No+Image"; }}
+                      onMouseOver={e => { e.target.style.transform = "scale(1.05)"; }}
+                      onMouseOut={e => { e.target.style.transform = "scale(1)"; }}
+                    />
                   </div>
-                  <div style={{ fontSize: 11, color: "#555", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {(item.name || "").split(" ").slice(0, 3).join(" ")}
+
+                  {/* Product Info */}
+                  <div style={{ padding: "10px 10px 14px" }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#282c3f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {brand}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#535766", fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
+                      {(item.name || "").replace(brand, "").trim() || item.name}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginTop: 6 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "#282c3f" }}>
+                        Rs. {disc > 0 && salePrice > 0 ? Math.round(salePrice) : Math.round(itemPrice)}
+                      </span>
+                      {disc > 0 && (
+                        <>
+                          <span style={{ fontSize: 12, color: "#7e818c", textDecoration: "line-through" }}>Rs. {Math.round(itemPrice)}</span>
+                          <span style={{ fontSize: 12, color: "#ff905a", fontWeight: 600 }}>({Math.round(disc)}% OFF)</span>
+                        </>
+                      )}
+                    </div>
+                    {reason && (
+                      <div style={{ fontSize: 11, color: "#ff3f6c", fontWeight: 500, marginTop: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {reason}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
+        </div>
+
+      {/* AI Message toast */}
+      {aiMessage && (
+        <div style={{
+          position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          background: "#282c3f", color: "#fff", padding: "10px 24px",
+          borderRadius: 4, fontSize: 14, fontFamily: "'League Spartan'",
+          zIndex: 101, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+          maxWidth: 500, textAlign: "center",
+        }}>
+          {aiMessage}
+          <button onClick={() => setAiMessage("")} style={{ background: "none", border: "none", color: "#94969f", marginLeft: 10, cursor: "pointer", fontSize: 16 }}>×</button>
         </div>
       )}
     </div>
@@ -4633,10 +4789,14 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
   const [loading, setLoading] = useState(false);
   const [recs, setRecs] = useState(initialRecs || []);
   const [err, setErr] = useState("");
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(() => {
+    try { const s = localStorage.getItem("hueiq_cart"); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
   const [cartFlash, setCartFlash] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
-  const [wishlist, setWishlist] = useState(new Set());
+  const [wishlist, setWishlist] = useState(() => {
+    try { const s = localStorage.getItem("hueiq_wishlist"); return s ? new Set(JSON.parse(s)) : new Set(); } catch { return new Set(); }
+  });
   const [likedOpen, setLikedOpen] = useState(false);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
   const [chatQuery, setChatQuery] = useState("");
@@ -4649,7 +4809,12 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
 
   const toggleWishlist = (item) => {
     const id = item?.catalog_item_id||item?.id;
-    setWishlist(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+    setWishlist(prev => {
+      const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id);
+      // Backup to localStorage
+      localStorage.setItem("hueiq_wishlist", JSON.stringify([...s]));
+      return s;
+    });
     // Sync with backend
     const email = profile?.email;
     if (email && id) {
@@ -4667,8 +4832,12 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     const id = item.catalog_item_id || item.id;
     setCart(prev => {
       const exists = prev.find(x => (x.catalog_item_id || x.id) === id);
-      return exists ? prev.map(x => (x.catalog_item_id || x.id) === id ? { ...x, qty: (x.qty || 1) + 1 } : x)
-                    : [...prev, { ...item, qty: 1 }];
+      const updated = exists
+        ? prev.map(x => (x.catalog_item_id || x.id) === id ? { ...x, qty: (x.qty || 1) + 1 } : x)
+        : [...prev, { ...item, qty: 1 }];
+      // Backup to localStorage
+      localStorage.setItem("hueiq_cart", JSON.stringify(updated));
+      return updated;
     });
     setCartFlash(true);
     setTimeout(() => setCartFlash(false), 600);
@@ -4682,24 +4851,36 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       }).catch(() => {});
     }
   };
-  const [profile, setProfile] = useState(initialProfile ? {
-    email: initialProfile.email || "",
-    name: initialProfile.name || "",
-    gender: initialProfile.gender || "",
-    age: initialProfile.age || "",
-    city: initialProfile.city || "",
-    color: (initialProfile.colors && initialProfile.colors[0]) || "Pink",
-    colors: initialProfile.colors || [],
-    fit: initialProfile.fit || "Regular",
-    size: "M",
-    categories: initialProfile.categories || [],
-    height: initialProfile.height || "",
-    weight: initialProfile.weight || "",
-    shoulder: "",
-    shirtSize: "",
-    pantsSize: "",
-    bodyType: initialProfile.bodyType || "",
-    notes: "",
+  // Load saved profile from localStorage (persists across browser sessions)
+  const savedProfile = (() => {
+    try {
+      const s = localStorage.getItem("hueiq_profile");
+      return s ? JSON.parse(s) : null;
+    } catch { return null; }
+  })();
+  const initP = initialProfile || savedProfile;
+  const [profile, setProfile] = useState(initP ? {
+    email: initP.email || "",
+    name: initP.name || "",
+    gender: initP.gender || "",
+    age: initP.age || "",
+    city: initP.city || "",
+    color: (initP.colors && initP.colors[0]) || "Pink",
+    colors: initP.colors || [],
+    fit: initP.fit || "Regular",
+    size: initP.size || "M",
+    categories: initP.categories || [],
+    height: initP.height || "",
+    weight: initP.weight || "",
+    shoulder: initP.shoulder || "",
+    shirtSize: initP.shirtSize || "",
+    pantsSize: initP.pantsSize || "",
+    bodyType: initP.bodyType || "",
+    styleIdentity: initP.styleIdentity || "",
+    budgetId: initP.budgetId || "any",
+    budgetMin: initP.budgetMin || 0,
+    budgetMax: initP.budgetMax || 50000,
+    notes: initP.notes || "",
   } : {
     email: "",
     name: "",
@@ -4717,8 +4898,19 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     shirtSize: "",
     pantsSize: "",
     bodyType: "",
+    styleIdentity: "",
+    budgetId: "any",
+    budgetMin: 0,
+    budgetMax: 50000,
     notes: "",
   });
+
+  // Persist profile to localStorage whenever it changes
+  useEffect(() => {
+    if (profile.email) {
+      localStorage.setItem("hueiq_profile", JSON.stringify(profile));
+    }
+  }, [profile]);
 
   // Load wishlist + cart from backend on mount
   useEffect(() => {
@@ -4804,6 +4996,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           return [];
         })(),
         style_preferences: [
+          profile.styleIdentity || "",
           profile.fit ? profile.fit.toLowerCase() : "",
           profile.color ? profile.color.toLowerCase() : "",
         ].filter(Boolean),
@@ -4823,32 +5016,62 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       );
     }
     const data = await r.json();
-    if (data.token) sessionStorage.setItem("hueiq_token", data.token);
+    if (data.token) {
+      sessionStorage.setItem("hueiq_token", data.token);
+      localStorage.setItem("hueiq_token", data.token);
+    }
+    if (data.user?.user_id) {
+      sessionStorage.setItem("hueiq_user_id", String(data.user.user_id));
+      localStorage.setItem("hueiq_user_id", String(data.user.user_id));
+    }
     return data;
   };
 
   const fetchRecs = async () => {
-    const email = encodeURIComponent(profile.email.trim());
-    const token = sessionStorage.getItem("hueiq_token");
-    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-    // Try personalized recommendations (with retry for slow catalog warm-up)
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const r = await fetch(
-          `${API}/api/recommendations/${email}?limit=48&include_breakdown=true`,
-          { headers: authHeaders, signal: AbortSignal.timeout(180000) },
-        );
-        if (r.ok) {
-          const d = await r.json();
-          const a = d.recommendations || d.items || [];
-          if (a.length) return a;
-        }
-      } catch (e) {
-        console.warn(`recs attempt ${attempt + 1}:`, e.message);
-      }
-    }
+    // Build payload from user profile — sends preferences to POST /api/recommendations
+    const payload = {
+      user_id: parseInt(sessionStorage.getItem("hueiq_user_id") || localStorage.getItem("hueiq_user_id") || "1", 10),
+      session_id: `session_${Date.now()}`,
+      gender: profile.gender || "",
+      style_preferences: {
+        selected_styles: profile.styleIdentity ? [profile.styleIdentity] : [],
+        selected_colors: (profile.colors?.length ? profile.colors : profile.color ? [profile.color] : []).map(c => c.toLowerCase()),
+        selected_categories: (profile.categories || []).map(c => c.toLowerCase()),
+      },
+      fit_preferences: {
+        fit_preference: profile.fit || "regular",
+        body_type: profile.bodyType || "",
+        size: profile.size || "M",
+        pants_size: profile.pantsSize || "",
+        shoe_size: "",
+      },
+      body_measurements: {
+        height: parseFloat(profile.height) || 0,
+        chest: 0,
+        waist: 0,
+        weight: parseFloat(profile.weight) || 0,
+      },
+      context_preferences: {
+        mood: "",
+        occasion: "",
+      },
+      budget: { min_price: profile.budgetMin || 0, max_price: profile.budgetMax || 50000 },
+      favorite_stores: [],
+      browsing_history: [],
+      purchase_history: [],
+      liked_items: [...(wishlist || [])],
+      disliked_items: [],
+      exclude_items: [],
+      location: { city: profile.city || "", country: "IN" },
+      rec_type: "for_you",
+    };
+
+    // Try POST /api/recommendations with user preferences
     try {
-      const r = await fetch(`${API}/api/recommendations/trending?limit=2500`, {
+      const r = await fetch(`${API}/api/recommendations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(180000),
       });
       if (r.ok) {
@@ -4857,28 +5080,25 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
         if (a.length) return a;
       }
     } catch (e) {
-      console.warn(e.message);
+      console.warn("POST /api/recommendations failed:", e.message);
     }
-    return Array.from({ length: 8 }, (_, i) => ({
-      catalog_item_id: `mock-${i}`,
-      name: `Fashion Item ${i + 1}`,
-      category: "dresses",
-      style_tags: ["casual", "summer"],
-      base_price: 99.9 + i * 15,
-      score: 0.8 - i * 0.03,
-      match_score: 0.8 - i * 0.03,
-      recommendation_reason: "Popular right now",
-      discount_percent: 0,
-      images: [
-        {
-          image_url: `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&fit=crop&sig=${i}`,
-          is_primary: true,
-        },
-      ],
-      primary_image_url: `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&fit=crop&sig=${i}`,
-      available_sizes: ["S", "M", "L", "XL"],
-      is_new: i < 2,
-    }));
+
+    // Fallback: trending (no preferences)
+    try {
+      const params = new URLSearchParams({ limit: "500" });
+      if (profile.gender) params.set("gender", profile.gender);
+      const r = await fetch(`${API}/api/recommendations/trending?${params}`, {
+        signal: AbortSignal.timeout(180000),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const a = d.recommendations || d.items || [];
+        if (a.length) return a;
+      }
+    } catch (e) {
+      console.warn("trending fallback failed:", e.message);
+    }
+    return [];
   };
 
   // Auto-fetch recommendations on mount when skipping wizard
@@ -5013,7 +5233,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           )}
         </div>
       )}
-      {step === 3 && (
+      {step === 3 && view === "detail" && (
         <>
           {/* Fullscreen chat results panel */}
           {(chatResults || chatLoading) && (
@@ -5453,9 +5673,14 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       {profileOpen && (
         <UserProfile
           profile={profile}
-          onUpdate={(updatedProfile) => {
+          onUpdate={async (updatedProfile) => {
             setProfile(updatedProfile);
             onProfileUpdate && onProfileUpdate(updatedProfile);
+            // Re-fetch recommendations with updated profile
+            try {
+              const items = await fetchRecs();
+              if (items.length) setRecs(items);
+            } catch (e) { console.warn("Re-fetch recs failed:", e.message); }
           }}
           onClose={() => setProfileOpen(false)}
         />

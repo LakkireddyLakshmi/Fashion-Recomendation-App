@@ -49,12 +49,29 @@ function App() {
           const categories = categoryMap[answers.style] || ["shirt", "jeans"];
           const fit = fitMap[answers.fit] || "regular";
 
+          // Budget mapping
+          const budgetMap = {
+            "Under ₹1,000":       { budgetId: "under1000", budgetMin: 0,     budgetMax: 1000  },
+            "₹1,000 – ₹3,000":   { budgetId: "1k_3k",    budgetMin: 1000,  budgetMax: 3000  },
+            "₹3,000 – ₹5,000":   { budgetId: "3k_5k",    budgetMin: 3000,  budgetMax: 5000  },
+            "₹5,000 – ₹10,000":  { budgetId: "5k_10k",   budgetMin: 5000,  budgetMax: 10000 },
+            "₹10,000+":           { budgetId: "above10k",  budgetMin: 10000, budgetMax: 50000 },
+            "No Preference":       { budgetId: "any",       budgetMin: 0,     budgetMax: 50000 },
+          };
+          const budget = budgetMap[answers.budget] || budgetMap["No Preference"];
+
           dispatch(setProfile({
+            gender: answers.gender || "",
+            age: answers.age || "",
+            height: answers.height || "",
+            weight: answers.weight || "",
             style: answers.style,
+            styleIdentity: (answers.style || "").toLowerCase(),
             occasion: answers.occasion,
             fit,
             colors,
             categories,
+            ...budget,
           }));
         }}
       />
@@ -77,7 +94,11 @@ function App() {
         weight: profileData?.weight || "",
         bodyType: profileData?.bodyType || "",
         style: profileData?.style || "",
+        styleIdentity: profileData?.styleIdentity || "",
         occasion: profileData?.occasion || "",
+        budgetId: profileData?.budgetId || "any",
+        budgetMin: profileData?.budgetMin || 0,
+        budgetMax: profileData?.budgetMax || 50000,
       }}
       initialRecs={[]}
       skipWizard={true}

@@ -557,12 +557,208 @@ def _physics_profile(item: Dict) -> Optional[str]:
     return None
 
 
+# ── Load CSV catalog (Xpectrum) ───────────────────────────────────
+def _load_csv_catalog() -> List[Dict]:
+    """
+    Load catalog_for_xpectrum.csv and convert each row into a catalog
+    item dict compatible with rank_catalog().  Returns items with real
+    names, prices, brands — Myntra-quality product data.
+    Images are pulled from the Boss API disk cache by matching category.
+    """
+    import csv as _csv
+    import hashlib
+    from collections import defaultdict
+
+    csv_path = os.path.join(os.path.dirname(__file__), "..", "catalog_for_xpectrum.csv")
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join(os.path.dirname(__file__), "catalog_for_xpectrum.csv")
+    if not os.path.exists(csv_path):
+        log.warning("CSV catalog not found — skipping CSV load")
+        return []
+
+    # ── Load images from Boss API disk cache ──────────────────────
+    # Boss items have real product images (Azure blob) but bad metadata.
+    # CSV items have good metadata but no images.  We match by category.
+    cat_images: Dict[str, List[Dict]] = defaultdict(list)
+    _img_cache_path = os.path.join(os.path.dirname(__file__), "_catalog_cache.json")
+    try:
+        if os.path.exists(_img_cache_path):
+            with open(_img_cache_path, encoding="utf-8") as f:
+                boss_items = json.load(f)
+            for bi in boss_items:
+                imgs = bi.get("images") or []
+                if not imgs:
+                    continue
+                # Get the first valid image URL
+                img_url = ""
+                img_list = []
+                for img in imgs:
+                    url = img.get("image_url") or img.get("url") or ""
+                    if url:
+                        if not img_url:
+                            img_url = url
+                        img_list.append(img)
+                if img_url:
+                    boss_cat = (bi.get("category") or "").lower().strip()
+                    cat_images[boss_cat].append({
+                        "primary_url": img_url,
+                        "images":      img_list,
+                    })
+            log.info("Loaded images from disk cache: %d categories, %d total image sets",
+                     len(cat_images), sum(len(v) for v in cat_images.values()))
+    except Exception as e:
+        log.warning("Could not load images from disk cache: %s", e)
+
+    # Category mapping: CSV category -> Boss category (for image lookup)
+    # CSV has specific categories, Boss uses broader ones
+    _img_cat_map = {
+        "dresses": ["dresses", "women dresses", "women's dresses"],
+        "tops": ["tops", "women tops", "women's tops"],
+        "t-shirts": ["t-shirts", "women t-shirts", "women's t-shirts", "men's t-shirts", "tops"],
+        "jeans": ["jeans", "pants"],
+        "shirts": ["shirts", "men's shirts", "tops"],
+        "trousers": ["trousers", "pants", "mens bottomwear", "men's bottomwear", "women's bottomwear"],
+        "kurta-sets": ["kurta-sets"],
+        "kurtas": ["kurtas", "kurta-sets"],
+        "jumpsuits": ["jumpsuits", "women jumpsuits"],
+        "co-ord-sets": ["co-ord-sets", "co-ord sets"],
+        "track-pants": ["track-pants", "pants"],
+        "joggers": ["joggers", "track-pants", "pants"],
+        "shrugs": ["shrugs", "outerwear"],
+        "blouses": ["blouses", "tops"],
+        "blazers": ["blazers", "outerwear"],
+        "ethnic-wear": ["women's ethnic wear", "kurta-sets"],
+        "winterwear": ["men's winterwear", "outerwear"],
+        "outerwear": ["men's outerwear", "outerwear"],
+        "innerwear": ["men's innerwear"],
+    }
+    # Track which images have been assigned to avoid duplicates
+    _used_img_idx: Dict[str, int] = defaultdict(int)
+
+    def _pick_image(category: str) -> tuple:
+        """Pick next unused image for this category. Returns (primary_url, images_list)."""
+        # Try mapped categories first, then exact match, then 'tops' fallback
+        cats_to_try = _img_cat_map.get(category, [category]) + [category]
+        for try_cat in cats_to_try:
+            img_pool = cat_images.get(try_cat, [])
+            if img_pool:
+                idx = _used_img_idx[try_cat] % len(img_pool)
+                _used_img_idx[try_cat] += 1
+                return img_pool[idx]["primary_url"], img_pool[idx]["images"]
+        # Ultimate fallback: use any available image from 'dresses' or 'tops'
+        for fb in ["dresses", "tops", "pants"]:
+            img_pool = cat_images.get(fb, [])
+            if img_pool:
+                idx = _used_img_idx[fb] % len(img_pool)
+                _used_img_idx[fb] += 1
+                return img_pool[idx]["primary_url"], img_pool[idx]["images"]
+        return "", []
+
+    # ── Parse CSV rows ────────────────────────────────────────────
+    items: List[Dict] = []
+    try:
+        with open(csv_path, encoding="utf-8") as f:
+            reader = _csv.DictReader(f)
+            for i, row in enumerate(reader):
+                name     = (row.get("Name") or "").strip()
+                if not name:
+                    continue
+                cat_raw  = (row.get("Category") or "").strip()
+                # Normalise category to lowercase simple form
+                cat_map  = {
+                    "dresses": "dresses", "women dresses": "dresses",
+                    "women's dresses": "dresses",
+                    "tops": "tops", "women tops": "tops", "women's tops": "tops",
+                    "t-shirts": "t-shirts", "women t-shirts": "t-shirts",
+                    "women's t-shirts": "t-shirts", "men's t-shirts": "t-shirts",
+                    "jeans": "jeans", "shirts": "shirts", "men's shirts": "shirts",
+                    "trousers": "trousers", "cargo trousers": "trousers",
+                    "jogger trousers": "trousers", "cargo pants": "trousers",
+                    "mens bottomwear": "trousers", "men's bottomwear": "trousers",
+                    "women's bottomwear": "trousers",
+                    "kurta-sets": "kurta-sets", "kurtas": "kurtas",
+                    "jumpsuits": "jumpsuits", "women jumpsuits": "jumpsuits",
+                    "co-ord-sets": "co-ord-sets", "co-ord sets": "co-ord-sets",
+                    "track-pants": "track-pants", "joggers": "joggers",
+                    "shrugs": "shrugs", "blouses": "blouses", "blazers": "blazers",
+                    "women's ethnic wear": "ethnic-wear",
+                    "men's winterwear": "winterwear",
+                    "men's outerwear": "outerwear",
+                    "men's innerwear": "innerwear",
+                }
+                category = cat_map.get(cat_raw.lower(), cat_raw.lower().replace(" ", "-"))
+
+                price    = float(row.get("Price") or 0)
+                colors   = [c.strip().lower() for c in (row.get("Colors") or "").split(",") if c.strip()]
+                sizes    = [s.strip() for s in (row.get("Sizes") or "").split(",") if s.strip()]
+                gender_r = (row.get("Gender") or "").strip().lower()
+                # Infer gender from category/name if missing
+                if not gender_r:
+                    low = (cat_raw + " " + name).lower()
+                    if "women" in low or "ladies" in low:
+                        gender_r = "women"
+                    elif "men's" in low or "mens " in low:
+                        gender_r = "men"
+                gender   = _norm_gender(gender_r) if gender_r else ""
+                occasion = [o.strip().lower() for o in (row.get("Occasion") or "").split(",") if o.strip()]
+                brand    = (row.get("Brand") or "").strip()
+                # Extract brand from name if missing
+                if not brand and name:
+                    brand = name.split()[0] if name.split() else ""
+                fit      = (row.get("Fit") or "").strip()
+                desc     = (row.get("Description") or "").strip()
+
+                # Generate stable ID from row index + name hash
+                iid = hashlib.md5(f"xpectrum_{i}_{name}".encode()).hexdigest()
+                catalog_item_id = f"{iid[:8]}-{iid[8:12]}-{iid[12:16]}-{iid[16:20]}-{iid[20:32]}"
+
+                # Pick a real product image from Boss API by category
+                primary_url, img_list = _pick_image(category)
+
+                items.append({
+                    "catalog_item_id": catalog_item_id,
+                    "id":              catalog_item_id,
+                    "name":            name,
+                    "description":     desc,
+                    "category":        category,
+                    "subcategory":     "",
+                    "gender":          gender,
+                    "brand":           brand,
+                    "base_price":      price,
+                    "sale_price":      price,
+                    "discount_percent": 0,
+                    "primary_image_url": primary_url,
+                    "images":          img_list,
+                    "variants":        [],
+                    "available_sizes": sizes,
+                    "available_colors": colors,
+                    "in_stock":        True,
+                    "style_tags":      {"tags": occasion + ([fit] if fit else [])},
+                    "extra_metadata":  {
+                        "occasion": ", ".join(occasion),
+                        "gender":   gender,
+                        "fit":      fit,
+                    },
+                    "physics_profile": {"fit": fit} if fit else {},
+                    "stock_info":      {"total_quantity": 100},
+                    "colors":          colors,
+                    "tags":            occasion + ([fit] if fit else []),
+                })
+
+        img_count = sum(1 for it in items if it["primary_image_url"])
+        log.info("CSV catalog loaded: %d items (%d with images)", len(items), img_count)
+    except Exception as e:
+        log.warning("Failed to load CSV catalog: %s", e)
+    return items
+
+
 # ── Catalog fetch from Boss PostgreSQL API ────────────────────────
 # Loading strategy:
-#   1. On startup: load from disk cache (instant) if fresh enough
-#   2. Fetch pages in PARALLEL (4 at a time) instead of sequentially
-#   3. Write full catalog to disk after fetch so next restart is instant
+#   1. On startup: load CSV catalog (real product data) first
+#   2. Then load from disk cache / Boss API as supplement
+#   3. CSV items take priority — they have real names, prices, brands
 _full_catalog_cache: List[Dict] = []
+_csv_catalog_items: List[Dict] = []   # preserved CSV items — never overwritten by Boss API
 _catalog_loading: bool = False
 
 # ── Demo catalog (shown when Boss API is unreachable) ─────────────
@@ -775,13 +971,16 @@ async def _load_all_pages_bg():
                 all_items.extend(pg)
         skip += PARALLEL * PAGE_SIZE
 
-        # Update cache with first batch immediately (only if real items found)
+        # Update cache with first batch — merge with CSV items (CSV takes priority)
         filtered = _filter_real_items(all_items)
-        if filtered:
-            _full_catalog_cache = filtered
-            _cset("cat:full", filtered, 3600)
-            log.info("Background: first batch %d items fetched, %d real (%.0fs)",
-                     len(all_items), len(filtered), time.time() - t0)
+        csv_ids = {it.get("catalog_item_id") for it in _csv_catalog_items}
+        merged = _csv_catalog_items[:] + [it for it in filtered
+                                          if (it.get("catalog_item_id") or it.get("id") or "") not in csv_ids]
+        if merged:
+            _full_catalog_cache = merged
+            _cset("cat:full", merged, 3600)
+            log.info("Background: first batch %d items fetched, %d real, %d total with CSV (%.0fs)",
+                     len(all_items), len(filtered), len(merged), time.time() - t0)
         else:
             log.info("Background: first batch %d items fetched, 0 real yet — continuing (%.0fs)",
                      len(all_items), time.time() - t0)
@@ -798,11 +997,13 @@ async def _load_all_pages_bg():
             if not got_any:
                 break
 
-            # Update live cache after each parallel batch
+            # Update live cache after each parallel batch — merge with CSV
             filtered = _filter_real_items(all_items)
             if filtered:
-                _full_catalog_cache = filtered
-                _cset("cat:full", filtered, 3600)
+                merged = _csv_catalog_items[:] + [it for it in filtered
+                                                  if (it.get("catalog_item_id") or it.get("id") or "") not in csv_ids]
+                _full_catalog_cache = merged
+                _cset("cat:full", merged, 3600)
             skip += PARALLEL * PAGE_SIZE
             log.info("Background: %d items fetched, %d real (%.0fs)",
                      len(all_items), len(filtered), time.time() - t0)
@@ -1701,18 +1902,513 @@ async def dify_boost(gender: str, color: str,
         return set()
 
 
+# ══════════════════════════════════════════════════════════════════
+# ADVANCED RECOMMENDATION ENGINE (Amazon/Myntra/Flipkart grade)
+# 22 signals + semantic embeddings + outfit compatibility +
+# trend velocity + repeat purchase prediction
+# ══════════════════════════════════════════════════════════════════
+
+# ── Semantic Embedding Engine ─────────────────────────────────────
+# Replaces TF-IDF with deep sentence embeddings for understanding
+# "casual blue summer dress" ≈ "relaxed navy warm-weather frock"
+_embedding_model = None
+_item_embeddings: Dict[str, Any] = {}     # item_id -> numpy array
+_embeddings_built = False
+
+def _get_embedding_model():
+    """Lazy-load sentence transformer model (runs once, ~500MB download first time)."""
+    global _embedding_model
+    if _embedding_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+            log.info("Semantic embedding model loaded (all-MiniLM-L6-v2)")
+        except Exception as e:
+            log.warning("Could not load embedding model: %s — falling back to TF-IDF", e)
+    return _embedding_model
+
+def _build_item_text(item: Dict) -> str:
+    """Build rich text representation of an item for embedding."""
+    parts = []
+    parts.append(item.get("name") or "")
+    parts.append(item.get("category") or "")
+    parts.append(item.get("brand") or "")
+    parts.append(item.get("description") or "")
+    parts.append(item.get("gender") or "")
+    colors = item.get("available_colors") or item.get("colors") or []
+    parts.extend(colors[:4])
+    tags = item.get("tags") or []
+    if isinstance(tags, dict):
+        tags = tags.get("tags", [])
+    parts.extend(t for t in (tags or [])[:6] if isinstance(t, str) and len(t) < 30)
+    occ = ((item.get("extra_metadata") or {}).get("occasion") or "")
+    parts.append(occ)
+    fit = ((item.get("extra_metadata") or {}).get("fit") or "")
+    parts.append(fit)
+    return " ".join(p for p in parts if p).strip()
+
+def _build_embeddings(catalog: List[Dict]):
+    """Pre-compute embeddings for all catalog items."""
+    global _item_embeddings, _embeddings_built
+    if _embeddings_built:
+        return
+    model = _get_embedding_model()
+    if not model:
+        _embeddings_built = True
+        return
+    try:
+        import numpy as np
+        texts = []
+        ids = []
+        for item in catalog:
+            iid = item.get("catalog_item_id") or item.get("id") or ""
+            if not iid:
+                continue
+            txt = _build_item_text(item)
+            if txt:
+                texts.append(txt)
+                ids.append(iid)
+        if texts:
+            embeddings = model.encode(texts, batch_size=64, show_progress_bar=False,
+                                       normalize_embeddings=True)
+            for i, iid in enumerate(ids):
+                _item_embeddings[iid] = embeddings[i]
+            log.info("Semantic embeddings built: %d items", len(ids))
+    except Exception as e:
+        log.warning("Embedding build failed: %s", e)
+    _embeddings_built = True
+
+def _semantic_score(query_text: str, item_id: str) -> float:
+    """Compute semantic similarity between query and item using embeddings."""
+    model = _get_embedding_model()
+    if not model or item_id not in _item_embeddings:
+        return 0.0
+    try:
+        import numpy as np
+        q_emb = model.encode([query_text], normalize_embeddings=True)[0]
+        item_emb = _item_embeddings[item_id]
+        return float(np.dot(q_emb, item_emb))  # cosine sim (already normalized)
+    except Exception:
+        return 0.0
+
+def _semantic_scores_batch(query_text: str, item_ids: List[str]) -> Dict[str, float]:
+    """Batch semantic similarity for all items against user query."""
+    model = _get_embedding_model()
+    if not model or not _item_embeddings:
+        return {}
+    try:
+        import numpy as np
+        q_emb = model.encode([query_text], normalize_embeddings=True)[0]
+        scores = {}
+        for iid in item_ids:
+            if iid in _item_embeddings:
+                scores[iid] = float(np.dot(q_emb, _item_embeddings[iid]))
+        return scores
+    except Exception:
+        return {}
+
+
+# ── Outfit Compatibility Engine ───────────────────────────────────
+# "This top goes well with these pants" — cross-category pairing
+# Based on color harmony, style coherence, and occasion matching.
+_OUTFIT_PAIRS = {
+    # category -> compatible categories
+    "tops":       ["pants", "trousers", "jeans", "skirts", "shorts"],
+    "t-shirts":   ["jeans", "trousers", "shorts", "joggers", "cargo"],
+    "shirts":     ["trousers", "jeans", "chinos", "pants"],
+    "blouses":    ["skirts", "trousers", "jeans"],
+    "dresses":    ["outerwear", "blazers", "shrugs", "accessories"],
+    "pants":      ["tops", "t-shirts", "shirts", "blouses"],
+    "trousers":   ["shirts", "tops", "t-shirts", "blazers"],
+    "jeans":      ["t-shirts", "shirts", "tops", "outerwear"],
+    "skirts":     ["tops", "blouses", "t-shirts"],
+    "blazers":    ["shirts", "trousers", "dresses", "jeans"],
+    "outerwear":  ["t-shirts", "shirts", "dresses", "jeans"],
+    "kurtas":     ["trousers", "pants", "churidar"],
+    "kurta-sets": ["trousers", "pants"],
+}
+
+# Color harmony rules (complementary + analogous)
+_COLOR_HARMONY = {
+    "blue":   ["white", "black", "grey", "beige", "navy", "cream"],
+    "black":  ["white", "red", "grey", "cream", "pink", "blue"],
+    "white":  ["blue", "black", "navy", "red", "green", "pink"],
+    "red":    ["black", "white", "navy", "grey", "cream"],
+    "green":  ["white", "black", "beige", "cream", "brown"],
+    "navy":   ["white", "cream", "beige", "pink", "grey"],
+    "grey":   ["blue", "black", "white", "pink", "navy"],
+    "brown":  ["white", "cream", "beige", "blue", "green"],
+    "pink":   ["black", "white", "grey", "navy", "cream"],
+    "beige":  ["blue", "navy", "brown", "white", "black"],
+    "cream":  ["navy", "blue", "brown", "black", "maroon"],
+    "yellow": ["blue", "navy", "black", "grey", "white"],
+    "maroon": ["cream", "beige", "white", "grey", "gold"],
+}
+
+def _outfit_compatibility(item: Dict, history_items: List[Dict]) -> float:
+    """
+    Score how well this item pairs with items the user already likes/owns.
+    Considers category pairing + color harmony + occasion coherence.
+    """
+    if not history_items:
+        return 0.5
+    item_cat = (item.get("category") or "").lower()
+    item_colors = {c.lower() for c in (item.get("available_colors") or item.get("colors") or [])}
+    item_occ = set(((item.get("extra_metadata") or {}).get("occasion") or "").lower().split(","))
+    item_occ = {o.strip() for o in item_occ if o.strip()}
+
+    best_score = 0.0
+    for hist in history_items:
+        score = 0.0
+        h_cat = (hist.get("category") or "").lower()
+        h_colors = {c.lower() for c in (hist.get("available_colors") or hist.get("colors") or [])}
+        h_occ = set(((hist.get("extra_metadata") or {}).get("occasion") or "").lower().split(","))
+        h_occ = {o.strip() for o in h_occ if o.strip()}
+
+        # Category pairing (does this item complement the history item?)
+        compatible_cats = _OUTFIT_PAIRS.get(h_cat, [])
+        if item_cat in compatible_cats or any(c in item_cat for c in compatible_cats):
+            score += 0.4
+        elif item_cat == h_cat:
+            score += 0.1  # same category = less complementary
+
+        # Color harmony
+        for hc in h_colors:
+            harmonious = _COLOR_HARMONY.get(hc, [])
+            if item_colors & set(harmonious):
+                score += 0.35
+                break
+
+        # Occasion coherence (same occasion = goes together)
+        if item_occ & h_occ:
+            score += 0.25
+
+        best_score = max(best_score, score)
+
+    return min(best_score, 1.0)
+
+
+# ── Trend Velocity Engine ─────────────────────────────────────────
+# Not just "popular" but "gaining popularity FAST" — items with
+# accelerating interest across users. Like Twitter trending.
+_interaction_log: List[Dict] = []  # global interaction timeline
+
+def _log_interaction_ts(item_id: str, event: str):
+    """Log timestamped interaction for trend detection."""
+    from datetime import datetime, timezone
+    _interaction_log.append({
+        "item_id": item_id,
+        "event": event,
+        "ts": datetime.now(timezone.utc),
+    })
+    # Keep only last 10K interactions to save memory
+    if len(_interaction_log) > 10000:
+        _interaction_log[:] = _interaction_log[-8000:]
+
+def _trend_velocity() -> Dict[str, float]:
+    """
+    Calculate trend velocity: items gaining interactions faster in
+    the last 24h vs the previous 7 days.
+    Returns item_id -> velocity score (0-1).
+    """
+    from datetime import datetime, timezone, timedelta
+    if not _interaction_log:
+        return {}
+
+    now = datetime.now(timezone.utc)
+    h24 = now - timedelta(hours=24)
+    d7 = now - timedelta(days=7)
+
+    # Count interactions in last 24h vs 7d
+    recent: Dict[str, int] = {}   # last 24h
+    older: Dict[str, int] = {}    # last 7d (excluding 24h)
+    for log in _interaction_log:
+        iid = log["item_id"]
+        ts = log["ts"]
+        if ts >= h24:
+            recent[iid] = recent.get(iid, 0) + 1
+        elif ts >= d7:
+            older[iid] = older.get(iid, 0) + 1
+
+    # Velocity = recent_rate / older_rate (normalized)
+    velocities: Dict[str, float] = {}
+    all_items = set(recent.keys()) | set(older.keys())
+    for iid in all_items:
+        r = recent.get(iid, 0)
+        o = older.get(iid, 0) / 6.0  # normalize to per-day (7d - 1d = 6d)
+        if r > 0:
+            if o > 0:
+                vel = r / o  # acceleration ratio
+            else:
+                vel = r * 2.0  # new item with only recent activity = high velocity
+            velocities[iid] = vel
+
+    # Normalize to 0-1
+    if velocities:
+        mx = max(velocities.values())
+        return {k: min(v / mx, 1.0) for k, v in velocities.items()}
+    return {}
+
+
+# ── Repeat Purchase Prediction ────────────────────────────────────
+# Basics/consumables the user might want to rebuy.
+# E.g., user bought black t-shirts twice → suggest more black t-shirts
+_REPURCHASE_CATEGORIES = {
+    "t-shirts", "tops", "shirts", "innerwear", "socks",
+    "basics", "underwear", "sleepwear", "loungewear",
+}
+
+def _repeat_purchase_score(item: Dict, purchase_history: List[Dict]) -> float:
+    """
+    If user repeatedly buys similar items (same category + similar attributes),
+    boost those items. Detects "staple" items the user rebuys.
+    """
+    if not purchase_history:
+        return 0.0
+
+    item_cat = (item.get("category") or "").lower()
+    # Only predict repeats for repurchasable categories
+    if not any(rc in item_cat for rc in _REPURCHASE_CATEGORIES):
+        return 0.0
+
+    item_brand = (item.get("brand") or "").lower()
+    item_colors = {c.lower() for c in (item.get("available_colors") or item.get("colors") or [])}
+
+    # Count how many past purchases match this item's pattern
+    matches = 0
+    for ph in purchase_history:
+        h_cat = (ph.get("category") or "").lower()
+        h_brand = (ph.get("brand") or "").lower()
+        h_colors = {c.lower() for c in (ph.get("available_colors") or ph.get("colors") or [])}
+
+        cat_match = any(rc in h_cat for rc in _REPURCHASE_CATEGORIES) and any(rc in item_cat for rc in _REPURCHASE_CATEGORIES)
+        brand_match = item_brand and item_brand == h_brand
+        color_match = bool(item_colors & h_colors)
+
+        if cat_match:
+            score = 0.3
+            if brand_match:
+                score += 0.4  # same brand = strong repurchase signal
+            if color_match:
+                score += 0.3
+            matches += score
+
+    return min(matches / 2.0, 1.0)  # normalize, cap at 1.0
+
+
+# ── Item-to-Item Similarity Matrix ────────────────────────────────
+# Pre-computes cosine similarity between items using feature vectors
+# (category, brand, color, price_tier, tags). Used for "Similar items"
+# and collaborative filtering boost.
+_item_similarity_cache: Dict[str, Dict[str, float]] = {}
+_item_vectors: Dict[str, Dict[str, float]] = {}
+_sim_cache_built = False
+
+def _build_item_vector(item: Dict) -> Dict[str, float]:
+    """Convert item to sparse feature vector for similarity."""
+    vec: Dict[str, float] = {}
+    # Category features (weight 3x)
+    cat = (item.get("category") or "").lower()
+    if cat:
+        vec[f"cat:{cat}"] = 3.0
+    # Brand features (weight 2x)
+    brand = (item.get("brand") or "").lower()
+    if brand:
+        vec[f"brand:{brand}"] = 2.0
+    # Color features
+    for c in (item.get("available_colors") or item.get("colors") or []):
+        vec[f"color:{c.lower()}"] = 1.5
+    # Price tier
+    price = item.get("base_price") or 0
+    if price > 0:
+        tier = "budget" if price < 500 else "mid" if price < 2000 else "premium" if price < 5000 else "luxury"
+        vec[f"price:{tier}"] = 1.0
+    # Tag features
+    tags = item.get("tags") or []
+    if isinstance(tags, dict):
+        tags = tags.get("tags", [])
+    for t in (tags or [])[:8]:
+        tl = t.lower().strip()
+        if tl and len(tl) < 30:
+            vec[f"tag:{tl}"] = 0.8
+    # Gender
+    g = (item.get("gender") or "").lower()
+    if g:
+        vec[f"gender:{g}"] = 1.5
+    # Occasion
+    occ = ((item.get("extra_metadata") or {}).get("occasion") or "").lower()
+    for o in occ.split(",")[:4]:
+        o = o.strip()
+        if o:
+            vec[f"occ:{o}"] = 0.6
+    return vec
+
+def _cosine_sim(v1: Dict[str, float], v2: Dict[str, float]) -> float:
+    """Sparse cosine similarity between two feature vectors."""
+    if not v1 or not v2:
+        return 0.0
+    common = set(v1.keys()) & set(v2.keys())
+    if not common:
+        return 0.0
+    dot = sum(v1[k] * v2[k] for k in common)
+    import math
+    mag1 = math.sqrt(sum(v * v for v in v1.values()))
+    mag2 = math.sqrt(sum(v * v for v in v2.values()))
+    if mag1 == 0 or mag2 == 0:
+        return 0.0
+    return dot / (mag1 * mag2)
+
+def _build_similarity_index(catalog: List[Dict]):
+    """Build item-to-item similarity vectors (called once at startup or first request)."""
+    global _item_vectors, _sim_cache_built
+    if _sim_cache_built:
+        return
+    for item in catalog:
+        iid = item.get("catalog_item_id") or item.get("id") or ""
+        if iid:
+            _item_vectors[iid] = _build_item_vector(item)
+    _sim_cache_built = True
+    log.info("Item similarity index built: %d items vectorized", len(_item_vectors))
+
+def _get_similar_items(item_id: str, top_n: int = 20) -> List[tuple]:
+    """Get top-N most similar items to a given item. Returns [(item_id, score)]."""
+    if item_id in _item_similarity_cache:
+        return _item_similarity_cache[item_id][:top_n]
+    v1 = _item_vectors.get(item_id)
+    if not v1:
+        return []
+    scores = []
+    for iid2, v2 in _item_vectors.items():
+        if iid2 == item_id:
+            continue
+        sim = _cosine_sim(v1, v2)
+        if sim > 0.1:
+            scores.append((iid2, sim))
+    scores.sort(key=lambda x: x[1], reverse=True)
+    _item_similarity_cache[item_id] = scores[:50]
+    return scores[:top_n]
+
+
+# ── Collaborative Filtering ──────────────────────────────────────
+# "Users who liked X also liked Y" — based on co-occurrence in
+# wishlists, carts, and purchases across all users.
+def _collaborative_scores(user_items: set, top_n: int = 50) -> Dict[str, float]:
+    """
+    Given items a user interacted with, find items that co-occur
+    frequently in OTHER users' interactions.
+    """
+    if not user_items:
+        return {}
+    # Gather all other users' item sets
+    all_user_sets: List[Set[str]] = []
+    for wl in _user_wishlists.values():
+        if wl:
+            all_user_sets.append(set(wl))
+    for cart in _user_carts.values():
+        if cart:
+            all_user_sets.append({c.get("item_id","") for c in cart if c.get("item_id")})
+    # Count co-occurrences: for each item in other users' sets that
+    # also contains items the current user liked
+    cooccur: Dict[str, float] = {}
+    for uset in all_user_sets:
+        overlap = user_items & uset
+        if not overlap:
+            continue
+        # Items in this user's set that current user hasn't seen
+        new_items = uset - user_items
+        boost = len(overlap)  # more overlap = stronger signal
+        for nid in new_items:
+            cooccur[nid] = cooccur.get(nid, 0) + boost
+    # Normalize
+    if cooccur:
+        mx = max(cooccur.values())
+        return {k: v / mx for k, v in sorted(cooccur.items(), key=lambda x: -x[1])[:top_n]}
+    return {}
+
+
+# ── Session Context ──────────────────────────────────────────────
+def _session_context_boost() -> Dict[str, float]:
+    """
+    Time-of-day and day-of-week context.
+    Morning = workwear/formal. Evening = party/casual. Weekend = casual/street.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    hour = now.hour
+    weekday = now.weekday()  # 0=Mon, 6=Sun
+    is_weekend = weekday >= 5
+
+    boosts: Dict[str, float] = {}
+    # Time-based occasion boost
+    if 6 <= hour < 10:
+        boosts.update({"office": 0.3, "formal": 0.3, "workwear": 0.2, "college": 0.2})
+    elif 10 <= hour < 17:
+        boosts.update({"casual": 0.2, "daily wear": 0.2, "office": 0.15})
+    elif 17 <= hour < 21:
+        boosts.update({"party": 0.3, "evening": 0.3, "casual": 0.15, "date": 0.2})
+    else:
+        boosts.update({"loungewear": 0.3, "casual": 0.2, "sleepwear": 0.2})
+
+    if is_weekend:
+        boosts.update({"casual": boosts.get("casual", 0) + 0.2, "weekend": 0.3,
+                       "streetwear": 0.2, "brunch": 0.15, "outing": 0.15})
+    return boosts
+
+
+# ── Exploration / Serendipity ────────────────────────────────────
+def _exploration_candidates(scored: List[Dict], top_k: int) -> List[Dict]:
+    """
+    Mix in 10-15% serendipity items — high-quality items from categories
+    the user hasn't explicitly asked for, to help discover new styles.
+    Amazon calls this "You might also like".
+    """
+    import random
+    if len(scored) < 10:
+        return scored
+
+    explore_count = max(1, int(top_k * 0.12))  # 12% exploration
+    main_count = top_k - explore_count
+
+    # Main items (top scored)
+    main = scored[:main_count]
+
+    # Exploration: pick from items ranked 50-200 with some randomness
+    # These are decent items but not top-ranked — might surprise the user
+    explore_pool = scored[50:200] if len(scored) > 200 else scored[main_count:]
+    if explore_pool:
+        # Weight by score so we don't show garbage
+        weights = [max(it.get("score", 0), 0.01) for it in explore_pool]
+        try:
+            explores = random.choices(explore_pool, weights=weights, k=min(explore_count, len(explore_pool)))
+        except ValueError:
+            explores = explore_pool[:explore_count]
+        # Deduplicate
+        main_ids = {it.get("catalog_item_id") or it.get("id") for it in main}
+        explores = [e for e in explores if (e.get("catalog_item_id") or e.get("id")) not in main_ids]
+        # Mark as exploration
+        for e in explores:
+            e["recommendation_reason"] = "You might also like"
+            e["is_exploration"] = True
+        main.extend(explores[:explore_count])
+
+    return main
+
+
 # ── Main ranking function ─────────────────────────────────────────
 async def rank_catalog(user_doc: Dict, top_k: int = 500,
                        override: Optional[Dict] = None) -> List[Dict]:
     """
-    Fetches catalog and ranks by 7 weighted signals:
-      1. Color match     0.30  (preferred_colors vs item color_variants — family + exact)
-      2. Fit             0.20  (physics_profile JSONB vs body_measurements / BMI)
-      3. Gender          0.15  (exact match or unisex; wrong-gender gets 0.5× penalty)
+    Fetches catalog and ranks by 10 weighted signals:
+      1. Color match     0.25  (preferred_colors vs item color_variants — family + exact)
+      2. Fit             0.15  (physics_profile JSONB vs body_measurements / BMI)
+      3. Gender          0.12  (exact match or unisex; wrong-gender gets 0.5× penalty)
       4. Category        0.12  (graduated: exact > partial > tag match)
-      5. Season          0.10  (keyword + color season match)
-      6. TF-IDF content  0.08  (style tags + description similarity)
-      7. Dify AI boost   0.05  (external AI recommendation boost)
+      5. Season          0.08  (keyword + color season match)
+      6. TF-IDF content  0.06  (style tags + description similarity)
+      7. Dify AI boost   0.02  (external AI recommendation boost)
+      8. Brand affinity  0.05  (boost items from brands user browsed/liked/bought)
+      9. Price affinity  0.05  (closer to user's avg spend = higher)
+     10. Behavior boost  0.10  (browsing + wishlist + purchase history similarity)
     No duplicate items in output (dedup by catalog_item_id).
     """
     pj = user_doc.get("profile_data_json") or {}
@@ -1723,6 +2419,13 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     season     = override.get("season")     if override else pj.get("preferred_season", "")
     body_meas  = pj.get("body_measurements", {})
     uid        = user_doc.get("user_id", "anon")
+
+    # ── Advanced signals: history-based ───────────────────────────
+    browsing_ids  = set(override.get("browsing_history", []))  if override else set()
+    purchase_ids  = set(override.get("purchase_history", []))  if override else set()
+    liked_ids     = set(override.get("liked_items", []))       if override else set()
+    disliked_ids  = set(override.get("disliked_items", []))    if override else set()
+    fav_stores    = [s.lower() for s in (override.get("favorite_stores", []) if override else [])]
 
     if isinstance(colors, str):     colors     = [colors]
     if isinstance(categories, str): categories = [categories]
@@ -1758,6 +2461,35 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     # TF-IDF content scores (runs in thread pool — non-blocking)
     con_sc = await _content_scores(catalog, categories or [], colors or [], season or "")
 
+    # Build item similarity index (once, then cached)
+    _build_similarity_index(catalog)
+
+    # Build semantic embeddings (once, then cached)
+    _build_embeddings(catalog)
+
+    # Collaborative filtering: "users who liked X also liked Y"
+    collab_scores = _collaborative_scores(browsing_ids | liked_ids | purchase_ids)
+
+    # Item-to-item similarity boost from history
+    sim_boost: Dict[str, float] = {}
+    for hist_id in (liked_ids | purchase_ids):
+        for sim_id, sim_score in _get_similar_items(hist_id, 30):
+            sim_boost[sim_id] = max(sim_boost.get(sim_id, 0), sim_score)
+
+    # Session context: time-of-day / weekend boosts
+    session_boosts = _session_context_boost()
+
+    # Trend velocity: items gaining popularity fast
+    trend_vel = _trend_velocity()
+
+    # Gather history items for outfit compatibility scoring
+    history_item_objs = [ci for ci in catalog
+                         if (ci.get("catalog_item_id") or ci.get("id") or "") in (liked_ids | purchase_ids)]
+
+    # Gather purchased item objects for repeat purchase detection
+    purchase_item_objs = [ci for ci in catalog
+                          if (ci.get("catalog_item_id") or ci.get("id") or "") in purchase_ids]
+
     # ── Pre-compute constants that don't change per item ──────────────
     # body build: prefer explicit 'build' field (set by frontend from user's fit choice),
     # fall back to BMI inference if not provided
@@ -1767,6 +2499,68 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
 
     colors_list  = colors or []
     cats_list    = categories or []
+
+    # Semantic query for embedding similarity
+    semantic_query = " ".join(filter(None, [
+        gender or "",
+        " ".join(colors_list),
+        " ".join(cats_list),
+        season or "",
+        " ".join(pj.get("style_preferences") or []),
+    ])).strip()
+    sem_scores: Dict[str, float] = {}
+    if semantic_query and _item_embeddings:
+        all_item_ids = [item.get("catalog_item_id") or item.get("id") or ""
+                        for item in catalog if item.get("catalog_item_id") or item.get("id")]
+        sem_scores = _semantic_scores_batch(semantic_query, all_item_ids)
+
+    # ── Pre-compute popularity counts (cross-user signals) ───────
+    _pop_counts: Dict[str, int] = {}
+    for wl in _user_wishlists.values():
+        for wid in wl:
+            _pop_counts[wid] = _pop_counts.get(wid, 0) + 2
+    for cart_items in _user_carts.values():
+        for ci in cart_items:
+            cid = ci.get("item_id") or ""
+            _pop_counts[cid] = _pop_counts.get(cid, 0) + 3
+    for ratings in _user_ratings.values():
+        for rid, stars in ratings.items():
+            _pop_counts[rid] = _pop_counts.get(rid, 0) + stars
+    for orders in _user_orders.values():
+        for order in orders:
+            for oi in (order.get("items") or []):
+                oid = oi.get("item_id") or ""
+                _pop_counts[oid] = _pop_counts.get(oid, 0) + 5
+    _max_pop = max(_pop_counts.values()) if _pop_counts else 1
+
+    # ── Build behavior profile from history ──────────────────────
+    # Analyze browsed/liked/purchased items to extract brand + price + category affinity
+    history_ids = browsing_ids | liked_ids | purchase_ids
+    history_brands: Dict[str, float] = {}    # brand -> affinity score
+    history_cats: Dict[str, float] = {}      # category -> affinity score
+    history_prices: List[float] = []
+    if history_ids and catalog:
+        for ci in catalog:
+            cid = ci.get("catalog_item_id") or ci.get("id") or ""
+            if cid not in history_ids:
+                continue
+            # Weight: purchased > liked > browsed
+            w = 3.0 if cid in purchase_ids else (2.0 if cid in liked_ids else 1.0)
+            b = (ci.get("brand") or "").lower()
+            c = (ci.get("category") or "").lower()
+            p = ci.get("base_price") or 0
+            if b:
+                history_brands[b] = history_brands.get(b, 0) + w
+            if c:
+                history_cats[c] = history_cats.get(c, 0) + w
+            if p > 0:
+                history_prices.append(p)
+    # Add favorite stores as brand affinity
+    for fs in fav_stores:
+        history_brands[fs] = history_brands.get(fs, 0) + 2.0
+    # Compute avg price from history
+    avg_price = sum(history_prices) / len(history_prices) if history_prices else 0
+    max_brand_aff = max(history_brands.values()) if history_brands else 1
 
     # If user explicitly selected specific categories (≤4), treat as HARD preference:
     # items that don't match any selected category get a floor score of 0.1 instead of 0.5.
@@ -1793,7 +2587,16 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     cat_variant_sets: List[Set[str]] = []
     for c in cats_list:
         cl = c.lower()
-        base_set = {cl} | _CAT_EXPAND.get(cl, set())
+        # Try exact match, then singular, then plural
+        base_set = {cl}
+        base_set |= _CAT_EXPAND.get(cl, set())
+        # Handle plural/singular mismatch: "tops"->"top", "pants"->"pant", "dresses"->"dress"
+        singular = cl.rstrip("s") if cl.endswith("s") and not cl.endswith("ss") else cl
+        plural = cl + "s" if not cl.endswith("s") else cl
+        base_set |= _CAT_EXPAND.get(singular, set())
+        base_set |= _CAT_EXPAND.get(plural, set())
+        base_set.add(singular)
+        base_set.add(plural)
         cat_variant_sets.append(base_set)
 
     # Score each item — strict dedup by catalog_item_id
@@ -1836,7 +2639,7 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         # Normalize by (num_categories × 3) so matching all = 1.0
         s_cat = min(_cat_hits / (len(cats_list) * 3.0), 1.0) if cats_list else 0.5
 
-        # ── Other scores ───────────────────────────────────────────────
+        # ── Core scores ───────────────────────────────────────────────
         s_color  = _color_score(item, colors_list)
         s_fit    = _fit_score_prebuilt(item, user_build)
         s_season = _season_score(item, season or "")
@@ -1844,34 +2647,234 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         s_dify   = 0.85 if iid in dify_ids else 0.0
         s_stock  = _stock_score(item)
 
-        # ── Weighted score ─────────────────────────────────────────────
-        # When user explicitly picked categories (strict_cats=True), raise category
-        # weight to 45% so their choice dominates. Items that matched at least one
-        # category get s_cat > 0; items with zero matches get s_cat=0.
+        # ── Signal 8: Brand affinity ─────────────────────────────────
+        item_brand = (item.get("brand") or "").lower()
+        s_brand = 0.0
+        if item_brand and history_brands:
+            s_brand = min(history_brands.get(item_brand, 0) / max_brand_aff, 1.0)
+
+        # ── Signal 9: Price affinity ──────────────────────────────────
+        bp_item = item.get("base_price") or 0
+        s_price = 0.5   # neutral default
+        if avg_price > 0 and bp_item > 0:
+            ratio = bp_item / avg_price
+            # Gaussian-like: peaks at 1.0 when price = avg, drops smoothly
+            import math
+            s_price = math.exp(-2.0 * (ratio - 1.0) ** 2)
+
+        # ── Signal 10: Behavior boost (collaborative) ─────────────────
+        s_behavior = 0.0
+        if history_ids:
+            if iid in history_ids:
+                s_behavior = 0.0   # don't re-recommend what user already saw
+            else:
+                # Multi-factor: category affinity + brand affinity from history
+                cat_aff = history_cats.get(item_cat, 0)
+                brand_aff = history_brands.get(item_brand, 0) if item_brand else 0
+                max_cat_aff = max(history_cats.values()) if history_cats else 1
+                cat_score = min(cat_aff / max_cat_aff, 1.0) if max_cat_aff > 0 else 0.0
+                brand_score = min(brand_aff / max_brand_aff, 1.0) if max_brand_aff > 0 else 0.0
+                s_behavior = 0.6 * cat_score + 0.4 * brand_score
+
+        # ── Signal 11: Recency boost ──────────────────────────────────
+        # Newer items get a slight boost (decays over 90 days)
+        s_recency = 0.5
+        created = item.get("created_at") or ""
+        if created:
+            try:
+                from datetime import datetime, timezone
+                if "+" in created or created.endswith("Z"):
+                    ct = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                else:
+                    ct = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
+                age_days = (datetime.now(timezone.utc) - ct).days
+                s_recency = max(0.0, 1.0 - (age_days / 90.0))  # 1.0 = brand new, 0 = 90+ days old
+            except Exception:
+                pass
+
+        # ── Signal 12: Size availability ──────────────────────────────
+        # Boost items where user's size is actually in stock
+        s_size_avail = 0.5  # neutral
+        user_size = (body_meas.get("shirt_size") or "").upper()
+        user_pants = (body_meas.get("pants_size") or "").upper()
+        item_sizes = [s.upper() for s in (item.get("available_sizes") or [])]
+        item_variants = item.get("variants") or []
+        if item_sizes:
+            if user_size and user_size in item_sizes:
+                s_size_avail = 1.0
+            elif user_pants and user_pants in item_sizes:
+                s_size_avail = 1.0
+            elif not user_size and not user_pants:
+                s_size_avail = 0.5  # no preference = neutral
+            else:
+                s_size_avail = 0.2  # user's size not available
+        elif item_variants:
+            # Check variants for size availability
+            for v in item_variants:
+                vs = (v.get("size") or "").upper()
+                vq = v.get("quantity") or v.get("stock") or 0
+                if vs and vq > 0 and (vs == user_size or vs == user_pants):
+                    s_size_avail = 1.0
+                    break
+
+        # ── Signal 13: Occasion match ─────────────────────────────────
+        # Match item's occasion tags with user's mood/occasion
+        s_occasion = 0.5
+        user_occasion = (override.get("season") or "").lower() if override else ""
+        user_mood = ""
+        if override:
+            user_mood = (override.get("mood") or "").lower()
+        item_occasion = ((item.get("extra_metadata") or {}).get("occasion") or "").lower()
+        if user_occasion and item_occasion:
+            if user_occasion in item_occasion:
+                s_occasion = 1.0
+            elif any(o in item_occasion for o in [user_occasion, user_mood] if o):
+                s_occasion = 0.8
+        elif item_tags and user_occasion:
+            if user_occasion in item_tags:
+                s_occasion = 0.9
+
+        # ── Signal 14: Popularity (cross-user) ────────────────────────
+        # Items wishlisted/carted/purchased by many users rank higher
+        s_popularity = 0.0
+        pop = _pop_counts.get(iid, 0)
+        if pop > 0 and _max_pop > 0:
+            s_popularity = min(pop / _max_pop, 1.0)
+
+        # ── Signal 15: Discount attractiveness ────────────────────────
+        disc = _discount_percent(item)
+        s_discount = min(disc / 50.0, 1.0) if disc > 0 else 0.0  # 50%+ off = max score
+
+        # ── Signal 16: Collaborative filtering ────────────────────────
+        # "Users who liked similar items also liked this"
+        s_collab = collab_scores.get(iid, 0.0)
+
+        # ── Signal 17: Item-to-item similarity ────────────────────────
+        # Boost items similar to what user liked/purchased
+        s_similar = sim_boost.get(iid, 0.0)
+
+        # ── Signal 18: Session context ────────────────────────────────
+        s_session = 0.0
+        if session_boosts:
+            item_occ = ((item.get("extra_metadata") or {}).get("occasion") or "").lower()
+            for occ_key, occ_boost in session_boosts.items():
+                if occ_key in item_occ or occ_key in item_tags:
+                    s_session = max(s_session, occ_boost)
+
+        # ── Signal 19: Semantic similarity (deep embeddings) ──────────
+        s_semantic = sem_scores.get(iid, 0.0)
+
+        # ── Signal 20: Outfit compatibility ───────────────────────────
+        s_outfit = _outfit_compatibility(item, history_item_objs) if history_item_objs else 0.5
+
+        # ── Signal 21: Trend velocity ─────────────────────────────────
+        s_trend = trend_vel.get(iid, 0.0)
+
+        # ── Signal 22: Repeat purchase prediction ─────────────────────
+        s_repeat = _repeat_purchase_score(item, purchase_item_objs)
+
+        # ── Dislike penalty ───────────────────────────────────────────
+        if iid in disliked_ids:
+            continue   # skip disliked items entirely
+
+        # ── Weighted score (22 signals) ───────────────────────────────
+        has_history = bool(history_ids)
         if strict_cats:
-            base = (
-                0.45 * s_cat    +   # user explicitly chose this type → highest priority
-                0.22 * s_color  +   # color preference
-                0.12 * s_fit    +   # body fit
-                0.08 * s_season +   # seasonal relevance
-                0.08 * s_con    +   # content similarity (TF-IDF)
-                0.03 * s_gender +   # gender signal
-                0.02 * s_dify       # AI boost
-            )
-            # Hard penalty: items that match zero selected categories score max 0.25
-            # so they always rank below any category-matching item
+            if has_history:
+                base = (
+                    0.15 * s_cat       +   #  1. category match
+                    0.08 * s_color     +   #  2. color preference
+                    0.05 * s_fit       +   #  3. body fit
+                    0.02 * s_season    +   #  4. seasonal
+                    0.02 * s_con       +   #  5. TF-IDF content
+                    0.02 * s_gender    +   #  6. gender
+                    0.01 * s_dify      +   #  7. AI boost
+                    0.05 * s_brand     +   #  8. brand affinity
+                    0.03 * s_price     +   #  9. price affinity
+                    0.06 * s_behavior  +   # 10. behavior
+                    0.02 * s_recency   +   # 11. recency
+                    0.04 * s_size_avail+   # 12. size availability
+                    0.03 * s_occasion  +   # 13. occasion match
+                    0.03 * s_popularity+   # 14. popularity
+                    0.02 * s_discount  +   # 15. discount
+                    0.08 * s_collab    +   # 16. collaborative filtering
+                    0.06 * s_similar   +   # 17. item-to-item similarity
+                    0.03 * s_session   +   # 18. session context
+                    0.08 * s_semantic  +   # 19. semantic embedding
+                    0.05 * s_outfit    +   # 20. outfit compatibility
+                    0.04 * s_trend     +   # 21. trend velocity
+                    0.03 * s_repeat        # 22. repeat purchase
+                )
+            else:
+                base = (
+                    0.22 * s_cat       +
+                    0.14 * s_color     +
+                    0.07 * s_fit       +
+                    0.04 * s_season    +
+                    0.03 * s_con       +
+                    0.02 * s_gender    +
+                    0.02 * s_dify      +
+                    0.02 * s_recency   +
+                    0.04 * s_size_avail+
+                    0.03 * s_occasion  +
+                    0.03 * s_popularity+
+                    0.02 * s_discount  +
+                    0.04 * s_session   +
+                    0.04 * s_similar   +
+                    0.10 * s_semantic  +
+                    0.04 * s_outfit    +
+                    0.05 * s_trend     +
+                    0.05 * s_similar
+                )
             if s_cat == 0.0:
                 base = min(base, 0.25)
         else:
-            base = (
-                0.30 * s_cat    +   # category match
-                0.25 * s_color  +   # color preference
-                0.15 * s_fit    +   # body fit
-                0.12 * s_season +   # seasonal relevance
-                0.10 * s_con    +   # content similarity (TF-IDF)
-                0.05 * s_gender +   # gender signal
-                0.03 * s_dify       # AI boost
-            )
+            if has_history:
+                base = (
+                    0.10 * s_cat       +
+                    0.08 * s_color     +
+                    0.05 * s_fit       +
+                    0.03 * s_season    +
+                    0.03 * s_con       +
+                    0.02 * s_gender    +
+                    0.01 * s_dify      +
+                    0.06 * s_brand     +
+                    0.03 * s_price     +
+                    0.06 * s_behavior  +
+                    0.02 * s_recency   +
+                    0.03 * s_size_avail+
+                    0.03 * s_occasion  +
+                    0.03 * s_popularity+
+                    0.02 * s_discount  +
+                    0.10 * s_collab    +
+                    0.08 * s_similar   +
+                    0.03 * s_session   +
+                    0.08 * s_semantic  +
+                    0.04 * s_outfit    +
+                    0.04 * s_trend     +
+                    0.03 * s_repeat
+                )
+            else:
+                base = (
+                    0.18 * s_cat       +
+                    0.14 * s_color     +
+                    0.08 * s_fit       +
+                    0.05 * s_season    +
+                    0.05 * s_con       +
+                    0.03 * s_gender    +
+                    0.02 * s_dify      +
+                    0.03 * s_recency   +
+                    0.04 * s_size_avail+
+                    0.03 * s_occasion  +
+                    0.03 * s_popularity+
+                    0.02 * s_discount  +
+                    0.04 * s_session   +
+                    0.04 * s_similar   +
+                    0.10 * s_semantic  +
+                    0.04 * s_outfit    +
+                    0.05 * s_trend     +
+                    0.03 * s_repeat
+                )
         # Stock multiplier: out-of-stock items score at most 60% of base
         stock_mult = 0.6 + 0.4 * s_stock
         final = min(base * stock_mult, 1.0)
@@ -1905,18 +2908,47 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
             "physics_profile":   _physics_profile(item),
             "score":             round(final, 4),
             "score_detail": {
-                "color":    round(s_color,  3),
-                "fit":      round(s_fit,    3),
-                "gender":   round(s_gender, 3),
-                "category": round(s_cat,    3),
-                "season":   round(s_season, 3),
-                "content":  round(s_con,    3),
-                "dify":     round(s_dify,   3),
+                "category":       round(s_cat,        3),
+                "color":          round(s_color,      3),
+                "fit":            round(s_fit,        3),
+                "gender":         round(s_gender,     3),
+                "season":         round(s_season,     3),
+                "content_tfidf":  round(s_con,        3),
+                "ai_boost":       round(s_dify,       3),
+                "brand_affinity": round(s_brand,      3),
+                "price_affinity": round(s_price,      3),
+                "behavior":       round(s_behavior,   3),
+                "recency":        round(s_recency,    3),
+                "size_avail":     round(s_size_avail, 3),
+                "occasion":       round(s_occasion,   3),
+                "popularity":     round(s_popularity, 3),
+                "discount":       round(s_discount,   3),
+                "collaborative":  round(s_collab,     3),
+                "similar_items":  round(s_similar,    3),
+                "session_ctx":    round(s_session,    3),
+                "semantic":       round(s_semantic,   3),
+                "outfit_compat":  round(s_outfit,     3),
+                "trend_velocity": round(s_trend,      3),
+                "repeat_purchase":round(s_repeat,     3),
             },
             "recommendation_reason": (
                 "Perfect match for your style"                          if s_cat > 0.8 and s_color > 0.8           else
+                "Completes your outfit perfectly"                       if s_outfit > 0.8 and history_item_objs    else
+                "People with similar taste love this"                   if s_collab > 0.6                          else
+                "Similar to items you've purchased"                     if s_similar > 0.7                         else
+                "Buy again - your go-to style"                          if s_repeat > 0.6                          else
+                f"Because you like {item_brand.title()}"                if s_brand > 0.7 and item_brand            else
+                "Trending fast right now"                               if s_trend > 0.7                           else
+                "Goes great with items you own"                         if s_outfit > 0.6 and history_item_objs    else
+                "Similar to items you've liked"                         if s_behavior > 0.6                        else
                 f"Matches your {colors_list[0]} colour preference"      if s_color > 0.6 and colors_list           else
                 "Great fit for your body type"                          if s_fit > 0.7 and body_meas               else
+                "Your size is available"                                if s_size_avail > 0.9 and user_size        else
+                f"Perfect for {item_occasion.split(',')[0].strip()}"    if s_occasion > 0.7 and item_occasion      else
+                "Trending right now"                                    if s_popularity > 0.5                      else
+                "New arrival"                                           if s_recency > 0.8                         else
+                f"{round(disc)}% OFF deal"                              if disc > 20                               else
+                "Customers also bought this"                            if s_collab > 0.3                          else
                 "AI-powered pick for you"                               if s_dify > 0                              else
                 f"Top pick for {season}"                                if s_season > 0.4 and season               else
                 f"Recommended in {item_cat or 'your style'}"            if s_cat > 0.5                             else
@@ -1971,13 +3003,19 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
 
         # Re-sort by score so best items still appear first within the diverse set
         diverse.sort(key=lambda x: x["score"], reverse=True)
-        log.info("Ranked %d unique items (diverse from %d cats) | top scores: %s",
-                 len(diverse), len(cat_lists), [s["score"] for s in diverse[:5]])
-        return diverse
+        result = _exploration_candidates(diverse, top_k) if has_history else diverse
+        log.info("Ranked %d unique items (diverse from %d cats, %d exploration) | top scores: %s",
+                 len(result), len(cat_lists),
+                 sum(1 for r in result if r.get("is_exploration")),
+                 [s["score"] for s in result[:5]])
+        return result
     else:
-        log.info("Ranked %d unique items | top scores: %s",
-                 len(scored), [s["score"] for s in scored[:5]])
-        return scored[:top_k]
+        result = _exploration_candidates(scored[:top_k], top_k) if has_history else scored[:top_k]
+        log.info("Ranked %d unique items (%d exploration) | top scores: %s",
+                 len(result),
+                 sum(1 for r in result if r.get("is_exploration")),
+                 [s["score"] for s in result[:5]])
+        return result
 
 
 # ── Pydantic models ───────────────────────────────────────────────
@@ -2009,16 +3047,7 @@ class ProfileUpdateIn(BaseModel):
     location:             Optional[str]  = None
     body_measurements:    Dict[str, Any] = Field(default_factory=dict)
 
-class RecRequest(BaseModel):
-    gender:     Optional[str]       = None
-    colors:     Optional[List[str]] = None
-    categories: Optional[List[str]] = None
-    season:     Optional[str]       = None
-    top_k:      int                 = Field(default=20, ge=1, le=500)
-    include_score_detail: bool      = False
-
-
-# ── V2 Recommendation models (structured preferences) ───────────
+# ── Recommendation models (structured preferences) ───────────────
 class StylePreferences(BaseModel):
     selected_styles:     List[str] = Field(default_factory=list)
     selected_colors:     List[str] = Field(default_factory=list)
@@ -2045,7 +3074,11 @@ class BudgetIn(BaseModel):
     min_price: float = 0
     max_price: float = 50000
 
-class RecRequestV2(BaseModel):
+class LocationIn(BaseModel):
+    city:    Optional[str] = None
+    country: Optional[str] = None
+
+class RecRequest(BaseModel):
     user_id:              int
     session_id:           Optional[str]        = None
     gender:               Optional[str]        = None
@@ -2055,7 +3088,13 @@ class RecRequestV2(BaseModel):
     context_preferences:  ContextPreferences   = Field(default_factory=ContextPreferences)
     budget:               BudgetIn             = Field(default_factory=BudgetIn)
     favorite_stores:      List[str]            = Field(default_factory=list)
-    top_k:                int                  = Field(default=10, ge=1, le=500)
+    browsing_history:     List[str]            = Field(default_factory=list)
+    purchase_history:     List[str]            = Field(default_factory=list)
+    liked_items:          List[str]            = Field(default_factory=list)
+    disliked_items:       List[str]            = Field(default_factory=list)
+    exclude_items:        List[str]            = Field(default_factory=list)
+    location:             LocationIn           = Field(default_factory=LocationIn)
+    rec_type:             Optional[str]        = Field(default="for_you")
 
 
 # ── FastAPI ───────────────────────────────────────────────────────
@@ -2366,51 +3405,13 @@ async def get_recommendations(
 
 
 @app.post("/api/recommendations", tags=["Recommendations"],
-          summary="POST recommendations with custom overrides")
-async def post_recommendations(
-    req:  RecRequest,
-    auth: Optional[Dict] = Depends(current_user),
-):
-    if not auth:
-        raise HTTPException(401, "Login required")
-    user = await db_get_by_id(auth["user_id"])
-    if not user:
-        raise HTTPException(404, "User not found")
-
-    override: Dict[str, Any] = {}
-    if req.gender:     override["gender"]     = req.gender
-    if req.colors:     override["colors"]     = req.colors
-    if req.categories: override["categories"] = req.categories
-    if req.season:     override["season"]     = req.season
-
-    items = await rank_catalog(user, top_k=req.top_k,
-                               override=override if override else None)
-    if not req.include_score_detail:
-        for item in items:
-            item.pop("score_detail", None)
-
-    pj = user.get("profile_data_json") or {}
-    return {
-        "user_id": user["user_id"],
-        "total":   len(items),
-        "items":   items,
-        "filters_used": override or {
-            "gender":     pj.get("gender", ""),
-            "colors":     pj.get("preferred_colors", []),
-            "categories": pj.get("preferred_categories", []),
-            "season":     pj.get("preferred_season", ""),
-        },
-    }
-
-
-# ── V2: Structured preference-based recommendations ─────────────
-@app.post("/api/v2/recommendations", tags=["Recommendations"],
-          summary="V2 — structured preference-based recommendations")
-async def recommendations_v2(req: RecRequestV2):
+          summary="Structured preference-based recommendations")
+async def post_recommendations(req: RecRequest):
     """
-    Accepts structured user preferences (style, fit, body, context)
-    and returns scored recommendations.  No JWT required — user_id
-    is passed in the body.
+    Accepts structured user preferences (style, fit, body, context,
+    history, location) and returns scored recommendations with full
+    item details.  No JWT required — user_id is passed in the body.
+    Returns as many items as match filters (up to top_k).
     """
     sp = req.style_preferences
     fp = req.fit_preferences
@@ -2440,38 +3441,302 @@ async def recommendations_v2(req: RecRequestV2):
         },
     }
 
-    # Override: pass occasion/mood as season-like hint for scoring
-    override: Dict[str, Any] = {}
+    # Override: pass occasion/mood + history for advanced scoring
+    override: Dict[str, Any] = {
+        "browsing_history":  req.browsing_history,
+        "purchase_history":  req.purchase_history,
+        "liked_items":       req.liked_items,
+        "disliked_items":    req.disliked_items,
+        "favorite_stores":   req.favorite_stores,
+    }
+    if req.gender:
+        override["gender"] = _norm_gender(req.gender)
     if cp.occasion:
         override["season"] = cp.occasion.lower()
 
-    # Run the ranker (request extra items so we have enough after price filtering)
-    items = await rank_catalog(user_doc, top_k=req.top_k * 3,
-                               override=override if override else None)
+    # Run the ranker — fetch 500 items, return all that pass filters
+    items = await rank_catalog(user_doc, top_k=500, override=override)
 
-    # Filter by budget (price range)
+    # ── Post-filters ──────────────────────────────────────────────
+
+    # Category filter — keep only items matching requested categories
+    req_cats = [c.lower() for c in sp.selected_categories]
+    if req_cats:
+        _expand = {
+            "tops": ["tops", "top", "t-shirts", "t-shirt", "shirts", "shirt", "blouse", "blouses", "women tops"],
+            "pants": ["pants", "pant", "trousers", "jeans", "bottomwear", "chinos", "track-pants", "joggers", "cargo"],
+            "dresses": ["dresses", "dress", "women dresses", "gown", "maxi"],
+            "shirts": ["shirts", "shirt", "tops", "button-down"],
+            "jeans": ["jeans", "denim", "pants"],
+        }
+        allowed = set()
+        for rc in req_cats:
+            allowed.add(rc)
+            allowed.add(rc.rstrip("s") if rc.endswith("s") else rc)
+            allowed.add(rc + "s" if not rc.endswith("s") else rc)
+            allowed.update(_expand.get(rc, []))
+        cat_matched = [it for it in items if (it.get("category") or "").lower() in allowed]
+        if cat_matched:
+            items = cat_matched
+
+    # Color preference — rank color-matched items higher
+    req_colors = [c.lower() for c in sp.selected_colors]
+    if req_colors:
+        color_yes, color_no = [], []
+        for it in items:
+            ic = [c.lower() for c in (it.get("available_colors") or it.get("colors") or [])]
+            nm = (it.get("name") or "").lower()
+            if any(rc in ic or rc in nm for rc in req_colors):
+                color_yes.append(it)
+            else:
+                color_no.append(it)
+        items = color_yes + color_no
+
+    # Budget filter
     min_p = req.budget.min_price
     max_p = req.budget.max_price
     if min_p > 0 or max_p < 50000:
         items = [it for it in items
                  if min_p <= (it.get("base_price") or 0) <= max_p]
 
-    # Filter by favorite stores (brand name substring match)
+    # Favorite stores / brands — boost matching items to the top
     fav = [s.lower() for s in req.favorite_stores]
     if fav:
         store_matched = [
             it for it in items
-            if any(f in (it.get("name") or "").lower() for f in fav)
+            if any(f in (it.get("brand") or it.get("name") or "").lower()
+                   for f in fav)
         ]
-        # If store filter yields results, prefer them; otherwise keep all
+        if store_matched:
+            items = store_matched
+
+    # Remove excluded items
+    if req.exclude_items:
+        ex = set(req.exclude_items)
+        items = [it for it in items
+                 if (it.get("catalog_item_id") or it.get("id") or "") not in ex]
+
+    # Remove disliked items
+    if req.disliked_items:
+        dl = set(req.disliked_items)
+        items = [it for it in items
+                 if (it.get("catalog_item_id") or it.get("id") or "") not in dl]
+
+    # Boost liked items so they float higher
+    if req.liked_items:
+        liked = set(req.liked_items)
+        for it in items:
+            if (it.get("catalog_item_id") or it.get("id") or "") in liked:
+                it["score"] = min(it.get("score", 0) * 1.15, 1.0)
+
+    # ── Myntra-style popularity boost ─────────────────────────────
+    # Count how many users wishlisted / carted / rated each item
+    pop_counts: Dict[str, int] = {}
+    for wl in _user_wishlists.values():
+        for wid in wl:
+            pop_counts[wid] = pop_counts.get(wid, 0) + 2      # wishlist = 2 pts
+    for cart_items in _user_carts.values():
+        for ci in cart_items:
+            cid = ci.get("item_id") or ""
+            pop_counts[cid] = pop_counts.get(cid, 0) + 3      # cart = 3 pts
+    for ratings in _user_ratings.values():
+        for rid, stars in ratings.items():
+            pop_counts[rid] = pop_counts.get(rid, 0) + stars   # rating = star pts
+    for orders in _user_orders.values():
+        for order in orders:
+            for oi in (order.get("items") or []):
+                oid = oi.get("item_id") or ""
+                pop_counts[oid] = pop_counts.get(oid, 0) + 5   # purchase = 5 pts
+
+    if pop_counts:
+        max_pop = max(pop_counts.values()) or 1
+        for it in items:
+            iid = it.get("catalog_item_id") or it.get("id") or ""
+            pop = pop_counts.get(iid, 0)
+            if pop > 0:
+                # Popularity adds up to 10% bonus
+                pop_boost = 0.10 * (pop / max_pop)
+                it["score"] = min(it.get("score", 0) + pop_boost, 1.0)
+                it["popularity_score"] = round(pop / max_pop, 2)
+
+    # Re-sort after boosting — return all matching items, no hard cap
+    items.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+    # ── Build rich response ───────────────────────────────────────
+    recs = []
+    for it in items:
+        iid = it.get("catalog_item_id") or it.get("id") or ""
+        recs.append({
+            "catalog_item_id":      iid,
+            "name":                 it.get("name") or "",
+            "description":          it.get("description") or "",
+            "category":             it.get("category") or "",
+            "subcategory":          it.get("subcategory") or "",
+            "gender":               it.get("gender") or "",
+            "brand":                it.get("brand") or (it.get("name") or "").split()[0] if it.get("name") else "",
+            "base_price":           it.get("base_price") or 0,
+            "sale_price":           it.get("sale_price") or it.get("base_price") or 0,
+            "discount_percent":     it.get("discount_percent") or 0,
+            "primary_image_url":    it.get("primary_image_url") or it.get("image") or "",
+            "images":               it.get("images") or [],
+            "available_sizes":      it.get("available_sizes") or [],
+            "available_colors":     it.get("available_colors") or it.get("colors") or [],
+            "in_stock":             it.get("in_stock", True),
+            "style_tags":           it.get("style_tags") or it.get("tags") or [],
+            "occasion":             it.get("occasion") or "",
+            "season":               it.get("season") or "",
+            "fabric":               it.get("fabric") or "",
+            "score":                round(it.get("score", 0), 2),
+            "boosted":              (it.get("score_detail") or {}).get("dify", 0) > 0,
+            "popularity_score":     it.get("popularity_score") or 0,
+            "recommendation_reason": it.get("recommendation_reason") or "Recommended for you",
+        })
+
+    return {
+        "recommendations": recs,
+        "total":           len(recs),
+        "session_id":      req.session_id or "",
+        "preferences_used": {
+            "gender":           req.gender or "",
+            "styles":           sp.selected_styles,
+            "color_preferences": sp.selected_colors,
+            "categories":       sp.selected_categories,
+            "fit_preference":   fp.fit_preference or "",
+            "body_type":        fp.body_type or "",
+            "size":             fp.size or "",
+            "pants_size":       fp.pants_size or "",
+            "shoe_size":        fp.shoe_size or "",
+            "height":           bm.height or 0,
+            "chest":            bm.chest or 0,
+            "waist":            bm.waist or 0,
+            "weight":           bm.weight or 0,
+            "mood":             cp.mood or "",
+            "occasion":         cp.occasion or "",
+            "budget_min":       req.budget.min_price,
+            "budget_max":       req.budget.max_price,
+            "favorite_stores":  req.favorite_stores,
+            "browsing_history": req.browsing_history,
+            "purchase_history": req.purchase_history,
+            "liked_items":      req.liked_items,
+            "disliked_items":   req.disliked_items,
+            "exclude_items":    req.exclude_items,
+            "location":         {"city": req.location.city or "", "country": req.location.country or ""},
+            "rec_type":         req.rec_type or "for_you",
+        },
+    }
+
+
+# ── V2: Clean recommendation API (exact spec for external integration) ──
+
+class RecRequestV2(BaseModel):
+    user_id:              int
+    session_id:           Optional[str]        = None
+    gender:               Optional[str]        = None
+    style_preferences:    StylePreferences     = Field(default_factory=StylePreferences)
+    fit_preferences:      FitPreferences       = Field(default_factory=FitPreferences)
+    body_measurements:    BodyMeasurementsIn   = Field(default_factory=BodyMeasurementsIn)
+    context_preferences:  ContextPreferences   = Field(default_factory=ContextPreferences)
+    favorite_stores:      List[str]            = Field(default_factory=list)
+    top_k:                int                  = Field(default=10, ge=1, le=500)
+
+@app.post("/api/v2/recommendations", tags=["Recommendations"],
+          summary="V2 — clean recommendation API for external integration")
+async def recommendations_v2(req: RecRequestV2):
+    """
+    Clean recommendation endpoint matching the exact external spec.
+    Input:  user_id, session_id, style/fit/body/context preferences, favorite_stores, top_k
+    Output: catalog_item_id + score + boosted only (no rich item data)
+    """
+    sp = req.style_preferences
+    fp = req.fit_preferences
+    bm = req.body_measurements
+    cp = req.context_preferences
+
+    gender = _norm_gender(req.gender or "") if req.gender else ""
+
+    user_doc: Dict[str, Any] = {
+        "user_id": str(req.user_id),
+        "name":    "",
+        "email":   "",
+        "profile_data_json": {
+            "gender":               gender,
+            "preferred_colors":     [c.lower() for c in sp.selected_colors],
+            "preferred_categories": [c.lower() for c in sp.selected_categories],
+            "preferred_season":     "",
+            "style_preferences":    [s.lower() for s in sp.selected_styles],
+            "body_measurements": {
+                "height":      bm.height or 0,
+                "weight":      bm.weight or 0,
+                "chest":       bm.chest or 0,
+                "waist":       bm.waist or 0,
+                "build":       (fp.body_type or "").lower(),
+                "shirt_size":  fp.size or "",
+                "pants_size":  fp.pants_size or "",
+            },
+        },
+    }
+
+    override: Dict[str, Any] = {
+        "favorite_stores": req.favorite_stores,
+    }
+    if gender:
+        override["gender"] = gender
+    if cp.occasion:
+        override["season"] = cp.occasion.lower()
+
+    # Fetch more items to have enough after filtering
+    items = await rank_catalog(user_doc, top_k=500,
+                               override=override)
+
+    # Post-filter: only keep items matching requested categories
+    req_cats = [c.lower() for c in sp.selected_categories]
+    if req_cats:
+        # Expand categories for matching
+        _expand = {
+            "tops": ["tops", "top", "t-shirts", "t-shirt", "shirts", "shirt", "blouse", "blouses", "women tops"],
+            "pants": ["pants", "pant", "trousers", "jeans", "bottomwear", "chinos", "track-pants", "joggers", "cargo"],
+            "dresses": ["dresses", "dress", "women dresses", "gown", "maxi"],
+            "shirts": ["shirts", "shirt", "tops", "button-down"],
+            "jeans": ["jeans", "denim", "pants"],
+        }
+        allowed_cats = set()
+        for rc in req_cats:
+            allowed_cats.add(rc)
+            allowed_cats.add(rc.rstrip("s") if rc.endswith("s") else rc)
+            allowed_cats.add(rc + "s" if not rc.endswith("s") else rc)
+            allowed_cats.update(_expand.get(rc, []))
+        items = [it for it in items
+                 if (it.get("category") or "").lower() in allowed_cats]
+
+    # Post-filter: prefer items matching requested colors, but don't exclude if not enough
+    req_colors = [c.lower() for c in sp.selected_colors]
+    if req_colors:
+        color_matched = []
+        color_rest = []
+        for it in items:
+            item_colors = [c.lower() for c in (it.get("available_colors") or it.get("colors") or [])]
+            item_name = (it.get("name") or "").lower()
+            item_desc = (it.get("description") or "").lower()
+            if any(rc in item_colors or rc in item_name or rc in item_desc for rc in req_colors):
+                color_matched.append(it)
+            else:
+                color_rest.append(it)
+        # Color-matched items first, then fill remaining from non-matched
+        items = color_matched + color_rest
+
+    # Favorite stores filter
+    fav = [s.lower() for s in req.favorite_stores]
+    if fav:
+        store_matched = [
+            it for it in items
+            if any(f in (it.get("brand") or it.get("name") or "").lower() for f in fav)
+        ]
         if store_matched:
             items = store_matched
 
     items = items[:req.top_k]
 
-    # Build response in the expected schema
     recs = []
-    dify_ids: Set[str] = set()
     for it in items:
         iid = it.get("catalog_item_id") or it.get("id") or ""
         recs.append({
@@ -2499,8 +3764,6 @@ async def recommendations_v2(req: RecRequestV2):
             "weight":           bm.weight or 0,
             "mood":             cp.mood or "",
             "occasion":         cp.occasion or "",
-            "budget_min":       req.budget.min_price,
-            "budget_max":       req.budget.max_price,
             "favorite_stores":  req.favorite_stores,
         },
     }
@@ -2795,6 +4058,7 @@ async def update_wishlist(email: str, body: dict = Body(...)):
     if action == "add" or (action == "toggle" and item_id not in wl):
         wl.add(item_id)
         asyncio.create_task(_boss_log_interaction(uid, item_id, "like"))
+        _log_interaction_ts(item_id, "like")
     elif action == "remove" or (action == "toggle" and item_id in wl):
         wl.discard(item_id)
         # Boss API doesn't support unlike — we track it locally
@@ -2803,8 +4067,26 @@ async def update_wishlist(email: str, body: dict = Body(...)):
 
 @app.get("/api/user/{email}/cart", tags=["User Data"])
 async def get_cart(email: str):
-    items = _user_carts.get(email, [])
-    return {"email": email, "items": items, "count": len(items)}
+    # Try in-memory first
+    if email in _user_carts and _user_carts[email]:
+        items = _user_carts[email]
+        return {"email": email, "items": items, "count": len(items)}
+    # Load from Boss API
+    uid = _get_user_id(email)
+    interactions = await _boss_get_interactions(uid, "click")
+    cart_items = []
+    seen = set()
+    for i in interactions:
+        ev = i.get("event_value") or {}
+        if ev.get("action") == "add_to_cart":
+            cid = i.get("catalog_item_id", "")
+            key = f"{cid}_{ev.get('size','')}_{ev.get('color','')}"
+            if cid and key not in seen:
+                seen.add(key)
+                cart_items.append({"item_id": cid, "size": ev.get("size",""), "color": ev.get("color",""), "qty": 1})
+    if cart_items:
+        _user_carts[email] = cart_items
+    return {"email": email, "items": cart_items, "count": len(cart_items)}
 
 
 @app.post("/api/user/{email}/cart", tags=["User Data"])
@@ -2825,6 +4107,7 @@ async def update_cart(email: str, body: dict = Body(...)):
         else:
             cart.append({"item_id": item_id, "size": size, "color": color, "qty": qty})
         asyncio.create_task(_boss_log_interaction(uid, item_id, "click", {"action": "add_to_cart", "size": size, "color": color}))
+        _log_interaction_ts(item_id, "cart")
     elif action == "remove":
         cart[:] = [c for c in cart if c["item_id"] != item_id]
     elif action == "clear":
@@ -2834,7 +4117,20 @@ async def update_cart(email: str, body: dict = Body(...)):
 
 @app.get("/api/user/{email}/ratings", tags=["User Data"])
 async def get_ratings(email: str):
-    ratings = _user_ratings.get(email, {})
+    # Try in-memory first
+    if email in _user_ratings and _user_ratings[email]:
+        ratings = _user_ratings[email]
+        return {"email": email, "ratings": ratings, "count": len(ratings)}
+    # Load from Boss API
+    uid = _get_user_id(email)
+    interactions = await _boss_get_interactions(uid, "click")
+    ratings = {}
+    for i in interactions:
+        ev = i.get("event_value") or {}
+        if ev.get("action") == "rating" and i.get("catalog_item_id"):
+            ratings[i["catalog_item_id"]] = ev.get("stars", 0)
+    if ratings:
+        _user_ratings[email] = ratings
     return {"email": email, "ratings": ratings, "count": len(ratings)}
 
 
@@ -2851,6 +4147,7 @@ async def update_rating(email: str, body: dict = Body(...)):
     _user_ratings[email][item_id] = stars
     uid = _get_user_id(email)
     asyncio.create_task(_boss_log_interaction(uid, item_id, "click", {"action": "rating", "stars": stars}))
+    _log_interaction_ts(item_id, "rating")
     return {"email": email, "item_id": item_id, "stars": stars}
 
 
@@ -3125,16 +4422,27 @@ async def get_orders(email: str):
 async def startup():
     global _full_catalog_cache
     log.info("HueIQ Engine v9.0 starting (backend: Boss PostgreSQL API)...")
-    # Load disk cache immediately so first request is instant
-    disk = _load_disk_cache()
-    if disk:
-        filtered_disk = _filter_real_items(disk)
-        if filtered_disk:
-            _full_catalog_cache = filtered_disk
-            _cset("cat:full", filtered_disk, 3600)
-            log.info("Startup: %d real items ready from disk cache (%d total)", len(filtered_disk), len(disk))
-        else:
-            log.info("Startup: disk cache has %d items but 0 real — will fetch from API", len(disk))
+
+    global _csv_catalog_items
+    # 1. Load CSV catalog FIRST — real product data with names/prices/brands
+    csv_items = _load_csv_catalog()
+    if csv_items:
+        _csv_catalog_items = csv_items
+        _full_catalog_cache = csv_items[:]
+        _cset("cat:full", csv_items, 86400)  # 24h TTL — CSV is the source of truth
+        log.info("Startup: %d items loaded from CSV catalog (primary source)", len(csv_items))
+    else:
+        # Fallback to disk cache if no CSV
+        disk = _load_disk_cache()
+        if disk:
+            filtered_disk = _filter_real_items(disk)
+            if filtered_disk:
+                _full_catalog_cache = filtered_disk
+                _cset("cat:full", filtered_disk, 3600)
+                log.info("Startup: %d real items ready from disk cache (%d total)", len(filtered_disk), len(disk))
+            else:
+                log.info("Startup: disk cache has %d items but 0 real — will fetch from API", len(disk))
+
     # Connect to Boss API and refresh catalog in background
     asyncio.create_task(_init())
 
