@@ -22,7 +22,7 @@ CATALOG SOURCE:
   Boss PostgreSQL: https://hueiq-core-api.purplesand-63becfba.westus2.azurecontainerapps.io/api/stores/1/catalog
   Auth: Bearer token required
   Pagination: cursor-based (20 items per page)
-  Total: ~598 products from Shopify store (synced to Boss DB)
+  Total: ~598 products stored in Boss PostgreSQL database
 """
 
 # ============================================================
@@ -313,16 +313,12 @@ ARCHITECTURE = """
 │                     ARCHITECTURE                             │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  Shopify Store (shop-urbanity.myshopify.com)                │
-│       │                                                     │
-│       │ syncs products                                      │
-│       ▼                                                     │
-│  Boss PostgreSQL DB                                         │
+│  Boss PostgreSQL DB (single source of truth)                │
 │  (hueiq-core-api.purplesand-...azurecontainerapps.io)       │
 │       │                                                     │
 │       │ GET /api/stores/1/catalog (598 items, paginated)    │
 │       ▼                                                     │
-│  Fashion AI Backend (this API)                              │
+│  Fashion AI Backend (recommendation engine)                 │
 │  (fashion-ai-backend.purplesand-...azurecontainerapps.io)   │
 │       │                                                     │
 │       │ 22-signal scoring engine                            │
@@ -334,7 +330,6 @@ ARCHITECTURE = """
 │  → Returns top_k items with scores                          │
 │                                                             │
 │  Users/Auth/Interactions stored in Boss PostgreSQL DB        │
-│  Catalog images from Shopify CDN                            │
 │  3D meshes from Azure Blob Storage                          │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
