@@ -2502,7 +2502,7 @@ function LikedDrawer({ items, wishlist, onClose, onSelectItem, onAddToCart, onTo
                 style={{ display:"flex", gap:12, background:"rgba(255,255,255,0.04)", borderRadius:14, overflow:"hidden", border:"1px solid rgba(255,255,255,0.08)", cursor:"pointer", transition:"background 0.15s" }}
                 onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.08)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}>
                 <div style={{ width:80, height:80, flexShrink:0, background:"#f7f7f9", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <img src={img || "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=200&fit=crop"} alt={name} style={{ width:"100%", height:"100%", objectFit:"contain", padding:4 }} />
+                  <img src={img || "https://via.placeholder.com/400x500/1a1a2e/444?text=No+Image?w=200&fit=crop"} alt={name} style={{ width:"100%", height:"100%", objectFit:"contain", padding:4 }} />
                 </div>
                 <div style={{ flex:1, padding:"10px 12px 10px 0", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
                   <div>
@@ -2557,7 +2557,7 @@ function ProductCard({ item, onClick, compact = false, onAddToCart, wishlisted =
   const [hovered, setHovered] = useState(false);
   const [selSize, setSelSize] = useState(null);
   const img = resolveImg(item);
-  const fb = `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&fit=crop&sig=${item?.catalog_item_id || "x"}`;
+  const fb = `https://via.placeholder.com/400x500/1a1a2e/444?text=No+Image?w=400&fit=crop&sig=${item?.catalog_item_id || "x"}`;
   const name = cleanName(item);
   const price = resolvePrice(item);
   const rawTags = resolveTags(item);
@@ -2835,7 +2835,7 @@ function CartDrawer({ cart, onClose, onUpdateQty, onRemove, onCheckout }) {
               <div style={{ fontSize:13, marginTop:6 }}>Add items from your recommendations</div>
             </div>
           ) : cart.map((item, idx) => {
-            const img = resolveImg(item) || `https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=120&fit=crop`;
+            const img = resolveImg(item) || `https://via.placeholder.com/400x500/1a1a2e/444?text=No+Image?w=120&fit=crop`;
             const price = resolvePrice(item) || 999;
             return (
               <div key={item.catalog_item_id||idx} style={{ display:"flex", gap:12, background:"rgba(255,255,255,0.05)", borderRadius:14, padding:"12px", border:"1px solid rgba(255,255,255,0.07)" }}>
@@ -2925,6 +2925,7 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
   const [aiMessage, setAiMessage] = useState("");
   const [searchActive, setSearchActive] = useState(false);
   const [searchItem, setSearchItem] = useState(null);
+  const [wishlistOpen, setWishlistOpen] = useState(false);
 
   // Auto-dismiss AI message after 3 seconds
   useEffect(() => {
@@ -3199,11 +3200,11 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
       );
     }
 
-    // Price filters (in Rs.)
-    if (priceFilter === "under500")  list = list.filter(i => (resolvePrice(i)||0) < 500);
-    if (priceFilter === "500to2k")   list = list.filter(i => { const p = resolvePrice(i)||0; return p >= 500 && p < 2000; });
-    if (priceFilter === "2kto5k")    list = list.filter(i => { const p = resolvePrice(i)||0; return p >= 2000 && p <= 5000; });
-    if (priceFilter === "above5k")   list = list.filter(i => (resolvePrice(i)||0) > 5000);
+    // Price filters (USD)
+    if (priceFilter === "under50")   list = list.filter(i => (resolvePrice(i)||0) < 50);
+    if (priceFilter === "50to100")   list = list.filter(i => { const p = resolvePrice(i)||0; return p >= 50 && p < 100; });
+    if (priceFilter === "100to200")  list = list.filter(i => { const p = resolvePrice(i)||0; return p >= 100 && p <= 200; });
+    if (priceFilter === "above200")  list = list.filter(i => (resolvePrice(i)||0) > 200);
 
     const sorted = [...list];
     if (sortBy === "price_asc")  sorted.sort((a, b) => (resolvePrice(a)||0) - (resolvePrice(b)||0));
@@ -3252,156 +3253,193 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
     );
   }
 
+  const wishCount = wishlist ? wishlist.size : 0;
+
   return (
-    <div style={{ minHeight: "100vh", background: "#fff", fontFamily: "'League Spartan', sans-serif", color: "#282c3f" }}>
-      <style>{CSS}</style>
+    <div style={{ minHeight: "100vh", background: "linear-gradient(160deg, #0a0a1a 0%, #0f1028 40%, #0a0f1e 100%)", fontFamily: "'League Spartan', sans-serif", color: "#e2e8f0" }}>
+      <style>{CSS}{`
+        .hq-card{transition:all 0.3s cubic-bezier(0.4,0,0.2,1);border:1px solid rgba(255,255,255,0.06);}
+        .hq-card:hover{transform:translateY(-6px);box-shadow:0 20px 40px rgba(0,0,0,0.4),0 0 30px rgba(124,58,237,0.1);border-color:rgba(124,58,237,0.25);}
+        .hq-card:hover .hq-img{transform:scale(1.08);}
+        .hq-heart{transition:all 0.25s;}
+        .hq-heart:hover{transform:scale(1.2);background:rgba(255,255,255,0.15) !important;}
+        .hq-nav-btn{transition:all 0.2s;opacity:0.7;}
+        .hq-nav-btn:hover{opacity:1;transform:translateY(-2px);}
+        .hq-filter-item{transition:all 0.15s;padding:6px 8px;border-radius:8px;margin:-2px -8px;cursor:pointer;}
+        .hq-filter-item:hover{background:rgba(124,58,237,0.1);}
+        .hq-sidebar::-webkit-scrollbar{width:3px;}
+        .hq-sidebar::-webkit-scrollbar-thumb{background:rgba(124,58,237,0.3);border-radius:2px;}
+        .hq-tag{animation:chipIn 0.3s ease both;}
+        @keyframes glow{0%,100%{box-shadow:0 0 15px rgba(124,58,237,0.15)}50%{box-shadow:0 0 25px rgba(124,58,237,0.3)}}
+      `}</style>
 
-      {/* ─── Top Nav (Myntra style) ─── */}
-      <div style={{ display: "flex", alignItems: "center", padding: "10px 40px", borderBottom: "1px solid #f0f0f0", position: "sticky", top: 0, background: "#fff", zIndex: 100, boxShadow: "0 2px 8px rgba(0,0,0,0.04)", gap: 32 }}>
-        <div style={{ fontSize: 24, fontWeight: 800, color: "#282c3f", cursor: "pointer", letterSpacing: -0.5, flexShrink: 0 }}>HueIQ</div>
+      {/* ─── Top Nav (Glass) ─── */}
+      <div style={{ display: "flex", alignItems: "center", padding: "12px 32px", position: "sticky", top: 0, background: "rgba(10,10,26,0.85)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", zIndex: 100, borderBottom: "1px solid rgba(255,255,255,0.06)", gap: 24 }}>
+        <div style={{ fontSize: 26, fontWeight: 800, background: "linear-gradient(135deg, #a855f7, #6366f1)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", cursor: "pointer", letterSpacing: -1, flexShrink: 0 }}>HueIQ</div>
 
-        {/* Search bar */}
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "#f5f5f6", borderRadius: 4, padding: "10px 16px" }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94969f" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        {/* Search bar glass */}
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: "rgba(255,255,255,0.06)", backdropFilter: "blur(10px)", borderRadius: 14, padding: "10px 18px", border: "1px solid rgba(255,255,255,0.08)", transition: "border-color 0.3s" }}
+          onFocus={e => e.currentTarget.style.borderColor = "rgba(124,58,237,0.4)"}
+          onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input type="text" value={barQuery} onChange={(e) => setBarQuery(e.target.value)}
             placeholder="Search for products, brands and more"
-            style={{ flex: 1, background: "transparent", border: "none", color: "#282c3f", fontSize: 15, outline: "none", fontFamily: "'League Spartan'" }}
+            style={{ flex: 1, background: "transparent", border: "none", color: "#e2e8f0", fontSize: 15, outline: "none", fontFamily: "'League Spartan'", fontWeight: 300 }}
             onKeyDown={(e) => { if (e.key === "Enter" && barQuery.trim()) doBarSearch(barQuery.trim()); }}
           />
           <MicButton onResult={(text) => { setBarQuery(text); doBarSearch(text); }} />
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 32, flexShrink: 0 }}>
-          <button onClick={() => setProfileOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Profile</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 28, flexShrink: 0 }}>
+          <button className="hq-nav-btn" onClick={() => setProfileOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600, letterSpacing: 0.5 }}>Profile</span>
           </button>
-          <button onClick={() => onToggleWishlist && null} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-            <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Wishlist</span>
+          <button className="hq-nav-btn" onClick={() => setWishlistOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, position: "relative" }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f472b6" strokeWidth="1.5"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            {wishCount > 0 && <div style={{ position: "absolute", top: -4, right: -6, width: 16, height: 16, borderRadius: "50%", background: "#ec4899", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{wishCount}</div>}
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600, letterSpacing: 0.5 }}>Wishlist</span>
           </button>
-          <button onClick={() => setCartOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, position: "relative" }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>
-            {cartCount > 0 && <div style={{ position: "absolute", top: -4, right: -4, width: 16, height: 16, borderRadius: "50%", background: "#ff3f6c", color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{cartCount}</div>}
-            <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Bag</span>
+          <button className="hq-nav-btn" onClick={() => setCartOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, position: "relative" }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+            {cartCount > 0 && <div style={{ position: "absolute", top: -4, right: -6, width: 16, height: 16, borderRadius: "50%", background: "#10b981", color: "#fff", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{cartCount}</div>}
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600, letterSpacing: 0.5 }}>Bag</span>
           </button>
           {onLogout && (
-            <button onClick={onLogout} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#282c3f" strokeWidth="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-              <span style={{ fontSize: 11, color: "#282c3f", fontWeight: 600 }}>Logout</span>
+            <button className="hq-nav-btn" onClick={onLogout} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontWeight: 600, letterSpacing: 0.5 }}>Logout</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* ─── Breadcrumb + count ─── */}
-      <div style={{ padding: "14px 24px 8px", borderBottom: "1px solid #eaeaec", marginLeft: 230 }}>
-        <div style={{ fontSize: 12, color: "#94969f" }}>Home / Clothing / <span style={{ color: "#282c3f", fontWeight: 600 }}>Recommended For You</span></div>
-        <div style={{ fontSize: 14, color: "#282c3f", marginTop: 4 }}>
-          <span style={{ fontWeight: 700 }}>Recommended For You</span> <span style={{ color: "#535766" }}>- {totalItems} items</span>
+      {/* ─── Breadcrumb ─── */}
+      <div style={{ padding: "14px 24px 10px", borderBottom: "1px solid rgba(255,255,255,0.05)", marginLeft: 240 }}>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>Home / Clothing / <span style={{ color: "#c4b5fd", fontWeight: 600 }}>Recommended For You</span></div>
+        <div style={{ fontSize: 15, color: "#e2e8f0", marginTop: 4 }}>
+          <span style={{ fontWeight: 700 }}>Curated For You</span> <span style={{ color: "rgba(255,255,255,0.4)" }}>- {totalItems} items</span>
         </div>
       </div>
 
-      {/* ─── Left Sidebar (fixed position) ─── */}
-      <div style={{ position: "fixed", top: 56, left: 0, bottom: 0, width: 230, borderRight: "1px solid #eaeaec", padding: "16px 18px", overflowY: "auto", overflowX: "hidden", background: "#fff", zIndex: 50, scrollbarWidth: "thin" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Filters</span>
-            <button onClick={() => { setActiveFilter("All"); setGenderFilter(""); setPriceFilter("all"); setSortBy("match"); }} style={{ background: "none", border: "none", color: "#ff3f6c", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>CLEAR ALL</button>
+      {/* ─── Left Sidebar (Glass, Fixed) ─── */}
+      <div className="hq-sidebar" style={{ position: "fixed", top: 62, left: 0, bottom: 0, width: 240, background: "rgba(15,15,35,0.95)", backdropFilter: "blur(20px)", borderRight: "1px solid rgba(255,255,255,0.06)", padding: "20px 18px", overflowY: "auto", overflowX: "hidden", zIndex: 50 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: "rgba(255,255,255,0.6)" }}>Filters</span>
+            <button onClick={() => { setActiveFilter("All"); setGenderFilter(""); setPriceFilter("all"); setSortBy("match"); }} style={{ background: "none", border: "none", color: "#a855f7", fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5 }}>CLEAR ALL</button>
           </div>
 
           {/* Gender */}
-          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Gender</div>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 0" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 1.5, color: "rgba(255,255,255,0.4)" }}>Gender</div>
             {["Men", "Women"].map(g => {
               const gVal = g.toLowerCase() === "men" ? "men" : "women";
               const isActive = genderFilter === gVal;
               return (
-                <label key={g} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
-                  <input type="radio" name="gender" checked={isActive} onChange={() => setGenderFilter(isActive ? "" : gVal)} style={{ accentColor: "#ff3f6c" }} />
+                <div key={g} className="hq-filter-item" onClick={() => setGenderFilter(isActive ? "" : gVal)} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, cursor: "pointer", fontSize: 14, color: isActive ? "#c4b5fd" : "rgba(255,255,255,0.7)" }}>
+                  <div style={{ width: 16, height: 16, borderRadius: "50%", border: isActive ? "2px solid #a855f7" : "2px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {isActive && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#a855f7" }} />}
+                  </div>
                   {g}
-                </label>
+                </div>
               );
             })}
           </div>
 
           {/* Categories */}
-          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Categories</div>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 0" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 1.5, color: "rgba(255,255,255,0.4)" }}>Categories</div>
             {topCats.map(([cat, count]) => {
               const label = cat.charAt(0).toUpperCase() + cat.slice(1);
               const isActive = activeFilter === label;
               return (
-                <label key={cat} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
-                  <input type="checkbox" checked={isActive} onChange={() => setActiveFilter(isActive ? "All" : label)} style={{ accentColor: "#ff3f6c" }} />
-                  {label} <span style={{ color: "#94969f", fontSize: 12 }}>({count})</span>
+                <label key={cat} className="hq-filter-item" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, cursor: "pointer", fontSize: 14, color: isActive ? "#c4b5fd" : "rgba(255,255,255,0.7)" }}
+                  onClick={() => setActiveFilter(isActive ? "All" : label)}>
+                  <div style={{ width: 16, height: 16, borderRadius: 4, border: isActive ? "2px solid #a855f7" : "2px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", background: isActive ? "rgba(168,85,247,0.2)" : "transparent" }}>
+                    {isActive && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                  {label} <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginLeft: "auto" }}>{count}</span>
                 </label>
               );
             })}
           </div>
 
           {/* Brand */}
-          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Brand</div>
-            {topBrands.map(([brand, count]) => (
-              <label key={brand} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
-                <input type="checkbox" checked={activeFilter === brand} onChange={() => setActiveFilter(activeFilter === brand ? "All" : brand)} style={{ accentColor: "#ff3f6c" }} />
-                {brand} <span style={{ color: "#94969f", fontSize: 12 }}>({count})</span>
-              </label>
-            ))}
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 0" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 1.5, color: "rgba(255,255,255,0.4)" }}>Brand</div>
+            {topBrands.map(([brand, count]) => {
+              const isActive = activeFilter === brand;
+              return (
+                <label key={brand} className="hq-filter-item" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, cursor: "pointer", fontSize: 14, color: isActive ? "#c4b5fd" : "rgba(255,255,255,0.7)" }}
+                  onClick={() => setActiveFilter(isActive ? "All" : brand)}>
+                  <div style={{ width: 16, height: 16, borderRadius: 4, border: isActive ? "2px solid #a855f7" : "2px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", background: isActive ? "rgba(168,85,247,0.2)" : "transparent" }}>
+                    {isActive && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                  {brand} <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginLeft: "auto" }}>{count}</span>
+                </label>
+              );
+            })}
           </div>
 
           {/* Color */}
-          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Color</div>
-            {topColors.map(([clr, count]) => (
-              <label key={clr} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
-                <span style={{ width: 16, height: 16, borderRadius: "50%", background: colorHex[clr] || "#ccc", border: "1px solid #d4d5d9", flexShrink: 0 }} />
-                {clr.charAt(0).toUpperCase() + clr.slice(1)} <span style={{ color: "#94969f", fontSize: 12 }}>({count})</span>
-              </label>
-            ))}
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 0" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 1.5, color: "rgba(255,255,255,0.4)" }}>Color</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {topColors.map(([clr]) => (
+                <div key={clr} title={clr} style={{ width: 28, height: 28, borderRadius: "50%", background: colorHex[clr] || "#666", border: "2px solid rgba(255,255,255,0.1)", cursor: "pointer", transition: "all 0.2s", boxShadow: `0 0 8px ${colorHex[clr] || "#666"}44` }}
+                  onClick={() => setActiveFilter(activeFilter === clr ? "All" : clr)} />
+              ))}
+            </div>
           </div>
 
           {/* Price */}
-          <div style={{ borderTop: "1px solid #eaeaec", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 0.5 }}>Price</div>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "16px 0" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: 1.5, color: "rgba(255,255,255,0.4)" }}>Price</div>
             {[
               { val: "all", label: "All" },
-              { val: "under500", label: "Under Rs. 500" },
-              { val: "500to2k", label: "Rs. 500 - Rs. 2000" },
-              { val: "2kto5k", label: "Rs. 2000 - Rs. 5000" },
-              { val: "above5k", label: "Above Rs. 5000" },
-            ].map(p => (
-              <label key={p.val} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer", fontSize: 14, color: "#282c3f" }}>
-                <input type="radio" name="price" checked={priceFilter === p.val} onChange={() => setPriceFilter(p.val)} style={{ accentColor: "#ff3f6c" }} />
-                {p.label}
-              </label>
-            ))}
+              { val: "under50", label: "Under $50" },
+              { val: "50to100", label: "$50 - $100" },
+              { val: "100to200", label: "$100 - $200" },
+              { val: "above200", label: "Above $200" },
+            ].map(p => {
+              const isActive = priceFilter === p.val;
+              return (
+                <label key={p.val} className="hq-filter-item" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, cursor: "pointer", fontSize: 13, color: isActive ? "#c4b5fd" : "rgba(255,255,255,0.6)" }}
+                  onClick={() => setPriceFilter(p.val)}>
+                  <div style={{ width: 16, height: 16, borderRadius: "50%", border: isActive ? "2px solid #a855f7" : "2px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {isActive && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#a855f7" }} />}
+                  </div>
+                  {p.label}
+                </label>
+              );
+            })}
           </div>
         </div>
 
         {/* ─── Right: Product Grid ─── */}
-        <div style={{ marginLeft: 230 }}>
+        <div style={{ marginLeft: 240 }}>
 
           {/* Sort bar */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "10px 16px", borderBottom: "1px solid #eaeaec" }}>
-            <span style={{ fontSize: 13, color: "#535766", marginRight: 8 }}>Sort by :</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "10px 20px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginRight: 8 }}>Sort by :</span>
             <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
-              padding: "4px 8px", border: "1px solid #d4d5d9", borderRadius: 2,
-              fontSize: 14, fontWeight: 700, color: "#282c3f", cursor: "pointer", background: "#fff",
-              fontFamily: "'League Spartan'",
+              padding: "6px 12px", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8,
+              fontSize: 13, fontWeight: 600, color: "#c4b5fd", cursor: "pointer",
+              background: "rgba(255,255,255,0.05)", fontFamily: "'League Spartan'",
             }}>
-              <option value="match">Recommended</option>
-              <option value="price_asc">Price: Low to High</option>
-              <option value="price_desc">Price: High to Low</option>
-              <option value="discount">Better Discount</option>
+              <option value="match" style={{ background: "#1a1a2e" }}>Recommended</option>
+              <option value="price_asc" style={{ background: "#1a1a2e" }}>Price: Low to High</option>
+              <option value="price_desc" style={{ background: "#1a1a2e" }}>Price: High to Low</option>
+              <option value="discount" style={{ background: "#1a1a2e" }}>Better Discount</option>
             </select>
           </div>
 
           {/* Product grid */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
-            gap: 0,
+            gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+            gap: 16,
+            padding: 16,
           }}>
             {filtered.map((item, idx) => {
               const itemImg = item.primary_image_url || item.image || (item.images?.[0]?.image_url) || "";
@@ -3413,77 +3451,94 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
               const salePrice = item.sale_price || 0;
               const score = resolveScore(item);
               const reason = item.recommendation_reason || "";
+              const rating = (score >= 70 ? (3.5 + (score-70)/30*1.5) : (2.5 + score/70)).toFixed(1);
 
               return (
-                <div key={itemId || idx}
+                <div key={itemId || idx} className="hq-card"
                   onClick={() => onSelectItem(item)}
                   style={{
                     cursor: "pointer",
-                    borderRight: "1px solid #f0f0f0",
-                    borderBottom: "1px solid #f0f0f0",
+                    borderRadius: 16,
+                    overflow: "hidden",
+                    background: "rgba(255,255,255,0.04)",
+                    backdropFilter: "blur(10px)",
                     position: "relative",
-                    transition: "box-shadow 0.2s",
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.12)"; e.currentTarget.style.zIndex = "2"; }}
-                  onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.zIndex = "0"; }}
-                >
-                  {/* Wishlist heart */}
-                  <button onClick={(e) => { e.stopPropagation(); onToggleWishlist(item); }} style={{
-                    position: "absolute", top: 8, right: 8, zIndex: 3,
-                    width: 30, height: 30, borderRadius: "50%",
-                    background: "rgba(255,255,255,0.9)", border: "none",
-                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+                    animation: `cardIn 0.4s ease both`,
+                    animationDelay: `${Math.min(idx * 0.04, 0.6)}s`,
                   }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill={isWished ? "#ff3f6c" : "none"} stroke={isWished ? "#ff3f6c" : "#535766"} strokeWidth="2">
+                  {/* Wishlist heart */}
+                  <button className="hq-heart" onClick={(e) => { e.stopPropagation(); onToggleWishlist(item); }} style={{
+                    position: "absolute", top: 10, right: 10, zIndex: 3,
+                    width: 34, height: 34, borderRadius: "50%",
+                    background: isWished ? "rgba(236,72,153,0.2)" : "rgba(0,0,0,0.4)",
+                    backdropFilter: "blur(8px)",
+                    border: isWished ? "1px solid rgba(236,72,153,0.4)" : "1px solid rgba(255,255,255,0.1)",
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill={isWished ? "#ec4899" : "none"} stroke={isWished ? "#ec4899" : "rgba(255,255,255,0.7)"} strokeWidth="2">
                       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                     </svg>
                   </button>
 
-                  {/* Rating badge */}
-                  {score > 0 && (
+                  {/* Discount badge */}
+                  {disc > 0 && (
                     <div style={{
-                      position: "absolute", bottom: 125, left: 8, zIndex: 2,
-                      background: "rgba(255,255,255,0.95)", borderRadius: 2, padding: "2px 6px",
-                      display: "flex", alignItems: "center", gap: 3,
-                      fontSize: 12, fontWeight: 700, color: "#282c3f",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                    }}>
-                      {(score >= 70 ? (3.5 + (score-70)/30*1.5) : (2.5 + score/70)).toFixed(1)} <span style={{ color: "#14958f" }}>★</span>
-                    </div>
+                      position: "absolute", top: 10, left: 10, zIndex: 2,
+                      background: "linear-gradient(135deg, #ec4899, #f43f5e)", color: "#fff",
+                      fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 8,
+                      boxShadow: "0 2px 8px rgba(236,72,153,0.4)",
+                    }}>{Math.round(disc)}% OFF</div>
                   )}
 
                   {/* Product Image */}
-                  <div style={{ aspectRatio: "3/4", overflow: "hidden", background: "#f5f5f6" }}>
-                    <img src={itemImg} alt={item.name}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform 0.3s" }}
-                      onError={e => { e.target.src = "https://via.placeholder.com/300x400/f5f5f6/ccc?text=No+Image"; }}
-                      onMouseOver={e => { e.target.style.transform = "scale(1.05)"; }}
-                      onMouseOut={e => { e.target.style.transform = "scale(1)"; }}
+                  <div style={{ aspectRatio: "3/4", overflow: "hidden", background: "linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%)", position: "relative" }}>
+                    <img className="hq-img" src={itemImg} alt={item.name}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform 0.5s cubic-bezier(0.4,0,0.2,1)" }}
+                      onError={e => { e.target.src = "https://via.placeholder.com/300x400/1a1a2e/333?text="; }}
                     />
+                    {/* Bottom gradient overlay */}
+                    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 60, background: "linear-gradient(transparent, rgba(0,0,0,0.6))" }} />
+                    {/* Rating badge */}
+                    {score > 0 && (
+                      <div style={{
+                        position: "absolute", bottom: 8, left: 8,
+                        background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)",
+                        borderRadius: 8, padding: "3px 8px",
+                        display: "flex", alignItems: "center", gap: 4,
+                        fontSize: 12, fontWeight: 700, color: "#fff",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                      }}>
+                        {rating} <span style={{ color: "#fbbf24" }}>★</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Product Info */}
-                  <div style={{ padding: "10px 10px 14px" }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#282c3f", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div style={{ padding: "12px 14px 16px" }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {brand}
                     </div>
-                    <div style={{ fontSize: 13, color: "#535766", fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
+                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", fontWeight: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 3 }}>
                       {(item.name || "").replace(brand, "").trim() || item.name}
                     </div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 5, marginTop: 6 }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "#282c3f" }}>
-                        Rs. {disc > 0 && salePrice > 0 ? Math.round(salePrice) : Math.round(itemPrice)}
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 8 }}>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>
+                        ${disc > 0 && salePrice > 0 ? Math.round(salePrice).toLocaleString() : Math.round(itemPrice).toLocaleString()}
                       </span>
                       {disc > 0 && (
                         <>
-                          <span style={{ fontSize: 12, color: "#7e818c", textDecoration: "line-through" }}>Rs. {Math.round(itemPrice)}</span>
-                          <span style={{ fontSize: 12, color: "#ff905a", fontWeight: 600 }}>({Math.round(disc)}% OFF)</span>
+                          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textDecoration: "line-through" }}>${Math.round(itemPrice).toLocaleString()}</span>
+                          <span style={{ fontSize: 12, color: "#34d399", fontWeight: 600 }}>({Math.round(disc)}% off)</span>
                         </>
                       )}
                     </div>
                     {reason && (
-                      <div style={{ fontSize: 11, color: "#ff3f6c", fontWeight: 500, marginTop: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <div style={{
+                        fontSize: 11, color: "#a855f7", fontWeight: 500, marginTop: 8,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        background: "rgba(168,85,247,0.1)", padding: "4px 10px", borderRadius: 6,
+                        border: "1px solid rgba(168,85,247,0.15)",
+                      }}>
                         {reason}
                       </div>
                     )}
@@ -3494,17 +3549,31 @@ function StepFinish({ profile, recommendations, allRecommendations, onSelectItem
           </div>
         </div>
 
+      {/* Wishlist Drawer */}
+      {wishlistOpen && (
+        <LikedDrawer
+          items={fullRecs.filter(it => wishlist.has(it.catalog_item_id || it.id))}
+          wishlist={wishlist}
+          onClose={() => setWishlistOpen(false)}
+          onSelectItem={(item) => { setWishlistOpen(false); onSelectItem(item); }}
+          onAddToCart={onAddToCart}
+          onToggleWishlist={onToggleWishlist}
+        />
+      )}
+
       {/* AI Message toast */}
       {aiMessage && (
         <div style={{
-          position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
-          background: "#282c3f", color: "#fff", padding: "10px 24px",
-          borderRadius: 4, fontSize: 14, fontFamily: "'League Spartan'",
-          zIndex: 101, boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+          position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+          background: "rgba(15,15,35,0.95)", backdropFilter: "blur(20px)",
+          color: "#e2e8f0", padding: "12px 28px",
+          borderRadius: 16, fontSize: 14, fontFamily: "'League Spartan'",
+          zIndex: 101, boxShadow: "0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(124,58,237,0.15)",
           maxWidth: 500, textAlign: "center",
+          border: "1px solid rgba(255,255,255,0.08)",
         }}>
           {aiMessage}
-          <button onClick={() => setAiMessage("")} style={{ background: "none", border: "none", color: "#94969f", marginLeft: 10, cursor: "pointer", fontSize: 16 }}>×</button>
+          <button onClick={() => setAiMessage("")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", marginLeft: 12, cursor: "pointer", fontSize: 16 }}>x</button>
         </div>
       )}
     </div>
@@ -3517,7 +3586,7 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
   const [tryOnOpen, setTryOnOpen] = useState(false);
   const [selectedOutfit, setSelectedOutfit] = useState(0);
   const fb =
-    "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&fit=crop";
+    "https://via.placeholder.com/400x500/1a1a2e/444?text=No+Image?w=600&fit=crop";
   const fallbackImg = item?.primary_image_url || fb;
   // Group images into sets of 3 (front/back/side per variant)
   const imgSets = (() => {
@@ -3568,7 +3637,6 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
   return (
     <Screen bg={BG1} style={{ justifyContent: "flex-start" }}>
       <style>{CSS}</style>
-      <StepBar step={3} />
       <div style={{
         width: "100%", maxWidth: 1100,
         animation: "fadeUp 0.4s ease both",
@@ -3831,7 +3899,7 @@ function ProductDetail({ item, onBack, allRecs = [], onAddToCart, wishlist = new
                   fontFamily: "'League Spartan'", fontWeight: 700, fontSize: 36, color: "#fff",
                   letterSpacing: -0.5,
                 }}>
-                  {"\u20B9"}{price > 0 ? price.toLocaleString("en-US") : "999"}
+                  ${price > 0 ? price.toLocaleString("en-US") : "999"}
                 </span>
                 {disc > 0 && (
                   <span style={{
@@ -4468,7 +4536,7 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
 
       // Fetch from API
       const r = await fetch(`${API}/api/recommendations/trending?${params}`, {
-        signal: AbortSignal.timeout(90000),
+        signal: AbortSignal.timeout(20000),
       });
       if (r.ok) {
         const d = await r.json();
@@ -4490,7 +4558,7 @@ function AIChat({ profile, baseRecs, wishlist = new Set(), onToggleWishlist, onS
 
       // Final fallback: trending
       if (!items.length) {
-        const r2 = await fetch(`${API}/api/recommendations/trending?limit=20`, { signal: AbortSignal.timeout(90000) });
+        const r2 = await fetch(`${API}/api/recommendations/trending?limit=20`, { signal: AbortSignal.timeout(20000) });
         if (r2.ok) { const d = await r2.json(); items = _applyFilters(d.recommendations || d.items || [], intent); }
       }
 
@@ -4879,7 +4947,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     styleIdentity: initP.styleIdentity || "",
     budgetId: initP.budgetId || "any",
     budgetMin: initP.budgetMin || 0,
-    budgetMax: initP.budgetMax || 50000,
+    budgetMax: initP.budgetMax || 5000,
     notes: initP.notes || "",
   } : {
     email: "",
@@ -4901,13 +4969,13 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     styleIdentity: "",
     budgetId: "any",
     budgetMin: 0,
-    budgetMax: 50000,
+    budgetMax: 5000,
     notes: "",
   });
 
   // Persist profile to localStorage whenever it changes
   useEffect(() => {
-    if (profile.email) {
+    if (profile.email || profile.gender || profile.height) {
       localStorage.setItem("hueiq_profile", JSON.stringify(profile));
     }
   }, [profile]);
@@ -4946,7 +5014,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
     const r = await fetch(`${API}/api/save-profile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
         email,
         password: derivePassword(email),
@@ -5034,9 +5102,9 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       session_id: `session_${Date.now()}`,
       gender: profile.gender || "",
       style_preferences: {
-        selected_styles: profile.styleIdentity ? [profile.styleIdentity] : [],
-        selected_colors: (profile.colors?.length ? profile.colors : profile.color ? [profile.color] : []).map(c => c.toLowerCase()),
-        selected_categories: (profile.categories || []).map(c => c.toLowerCase()),
+        selected_styles: profile.styleIdentity ? [profile.styleIdentity.toLowerCase()] : [],
+        selected_colors: (Array.isArray(profile.colors) && profile.colors.length ? profile.colors : profile.color ? [profile.color] : []).map(c => String(c).toLowerCase()),
+        selected_categories: (Array.isArray(profile.categories) ? profile.categories : []).map(c => String(c).toLowerCase()),
       },
       fit_preferences: {
         fit_preference: profile.fit || "regular",
@@ -5053,26 +5121,27 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       },
       context_preferences: {
         mood: "",
-        occasion: "",
+        occasion: profile.occasion || "",
       },
-      budget: { min_price: profile.budgetMin || 0, max_price: profile.budgetMax || 50000 },
+      budget: { min_price: parseFloat(profile.budgetMin) || 0, max_price: parseFloat(profile.budgetMax) || 5000 },
       favorite_stores: [],
       browsing_history: [],
       purchase_history: [],
-      liked_items: [...(wishlist || [])],
+      liked_items: wishlist ? Array.from(wishlist) : [],
       disliked_items: [],
       exclude_items: [],
-      location: { city: profile.city || "", country: "IN" },
+      location: { city: profile.city || "", country: "" },
       rec_type: "for_you",
     };
 
+    console.log("[HueIQ] fetchRecs payload:", JSON.stringify({gender: payload.gender, cats: payload.style_preferences.selected_categories, colors: payload.style_preferences.selected_colors, budget: payload.budget}));
     // Try POST /api/recommendations with user preferences
     try {
       const r = await fetch(`${API}/api/recommendations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(180000),
+        signal: AbortSignal.timeout(30000),
       });
       if (r.ok) {
         const d = await r.json();
@@ -5088,7 +5157,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
       const params = new URLSearchParams({ limit: "500" });
       if (profile.gender) params.set("gender", profile.gender);
       const r = await fetch(`${API}/api/recommendations/trending?${params}`, {
-        signal: AbortSignal.timeout(180000),
+        signal: AbortSignal.timeout(30000),
       });
       if (r.ok) {
         const d = await r.json();
@@ -5233,7 +5302,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           )}
         </div>
       )}
-      {step === 3 && view === "detail" && (
+      {false && step === 3 && view === "detail" && (
         <>
           {/* Fullscreen chat results panel */}
           {(chatResults || chatLoading) && (
@@ -5506,7 +5575,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
                   if (color) params.set("color", color);
                   if (gender) params.set("gender", gender);
 
-                  const r = await fetch(`${API}/api/recommendations/trending?${params}`, { signal: AbortSignal.timeout(90000) });
+                  const r = await fetch(`${API}/api/recommendations/trending?${params}`, { signal: AbortSignal.timeout(20000) });
                   let items = [];
                   if (r.ok) { const d = await r.json(); items = d.recommendations || d.items || []; }
 
@@ -5690,6 +5759,7 @@ export default function App({ initialProfile, initialRecs, skipWizard, onLogout,
           allItems={recs}
           onClose={() => setOutfitBuilderOpen(false)}
           userEmail={profile?.email}
+          onAddToBag={(items) => { items.forEach(item => handleAddToCart(item)); }}
         />
       )}
       {checkoutOpen && cart.length > 0 && (

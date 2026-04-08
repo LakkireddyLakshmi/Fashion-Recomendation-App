@@ -557,7 +557,399 @@ def _physics_profile(item: Dict) -> Optional[str]:
     return None
 
 
-# ── Load CSV catalog (Xpectrum) ───────────────────────────────────
+# ── Load Shopify catalog (PRIMARY SOURCE) ─────────────────────────
+SHOPIFY_STORE = os.getenv("SHOPIFY_STORE", "shop-urbanity.myshopify.com")
+SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
+SHOPIFY_API_VERSION = "2024-01"
+
+_KNOWN_SIZES = {"XXS","XS","S","M","L","XL","XXL","2XL","3XL","4XL","5XL",
+                "6","6.5","7","7.5","8","8.5","9","9.5","10","10.5","11","11.5","12","13","14",
+                "28","29","30","31","32","33","34","36","38","40","42",
+                "ONE SIZE","OS","OSFA"}
+_KNOWN_COLORS = {"black","white","red","blue","green","navy","grey","gray","pink","yellow",
+                 "orange","purple","brown","beige","cream","olive","teal","coral","maroon",
+                 "burgundy","tan","sand","khaki","charcoal","ivory","gold","silver","wine",
+                 "lavender","mint","sage","rust","slate","denim","indigo","forest","plum",
+                 "military green","baby blue","light blue","sky blue","dark blue","royal blue",
+                 "hot pink","dusty rose","off white","heather grey","black wash","stone wash",
+                 "acid wash","light wash","dark wash","medium wash"}
+
+def _is_size(val: str) -> bool:
+    """Check if a variant option looks like a size."""
+    v = val.strip().upper()
+    if v in _KNOWN_SIZES:
+        return True
+    # Check for shoe sizes like "8.5"
+    try:
+        f = float(v)
+        return 4 <= f <= 15  # shoe size range
+    except ValueError:
+        pass
+    return False
+
+def _is_color(val: str) -> bool:
+    """Check if a variant option looks like a color."""
+    return val.strip().lower() in _KNOWN_COLORS
+
+def _shopify_category(product_type: str) -> str:
+    """Normalize Shopify product_type to our category system."""
+    pt = (product_type or "").lower().strip()
+    cat_map = {
+        "tops - t-shirts": "t-shirts", "tops - shirts": "shirts",
+        "tops - hoodies": "outerwear", "tops - sweaters": "outerwear",
+        "tops - jackets": "outerwear", "tops - tanks": "tops",
+        "tops - polos": "shirts", "tops": "tops",
+        "bottoms - jeans": "jeans", "bottoms - pants": "trousers",
+        "bottoms - shorts": "shorts", "bottoms - joggers": "joggers",
+        "bottoms - sweatpants": "track-pants", "bottoms": "trousers",
+        "dresses": "dresses", "outerwear": "outerwear",
+        "footwear": "shoes", "accessories": "accessories",
+        "activewear": "activewear", "swimwear": "swimwear",
+        "sets": "co-ord-sets", "jumpsuits": "jumpsuits",
+    }
+    for key, val in cat_map.items():
+        if key in pt:
+            return val
+    return pt.replace(" ", "-") if pt else "uncategorized"
+
+def _shopify_gender(tags: str, title: str) -> str:
+    """Infer gender from Shopify tags/title."""
+    combined = f"{tags} {title}".lower()
+    if any(w in combined for w in ["women", "woman", "ladies", "female", "her "]):
+        return "women"
+    if any(w in combined for w in ["men's", "mens", "male", "his ", " men"]):
+        return "men"
+    return "unisex"
+
+async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
+    """Fetch ALL products from Boss store catalog endpoint with cursor pagination."""
+    items: List[Dict] = []
+    cursor = None
+    page = 0
+
+    # Get a store auth token
+    boss_store_token = os.getenv("BOSS_STORE_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwidXNlcl90eXBlIjoic3RvcmUiLCJleHAiOjE3NzU1NTgzOTV9.pRapRcguDI9QBAEZnDCK3cPrYFyqjN9CSl2aRIAuD_4")
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            while True:
+                page += 1
+                url = f"{BOSS_URL}/api/stores/{store_id}/catalog"
+                if cursor:
+                    url += f"?cursor={cursor}"
+
+                r = await client.get(url, headers={
+                    "Authorization": f"Bearer {boss_store_token}",
+                    "Content-Type": "application/json",
+                })
+
+                if r.status_code != 200:
+                    log.warning("Boss store catalog error: HTTP %d", r.status_code)
+                    break
+
+                data = r.json()
+                page_items = data.get("items", [])
+                if not page_items:
+                    break
+
+                for p in page_items:
+                    title = p.get("title") or ""
+                    if not title:
+                        continue
+
+                    pid = str(p.get("id", ""))
+                    category = _shopify_category(p.get("category") or "")
+                    tags_str = ", ".join(p.get("tags") or [])
+                    gender = _shopify_gender(tags_str, title)
+                    base_price = float(p.get("base_price") or 0)
+                    thumbnail = p.get("thumbnail_url") or p.get("texture_url") or ""
+
+                    # Parse size_options for sizes and colors
+                    size_options = p.get("size_options") or {}
+                    sizes = []
+                    colors = []
+                    for variant_id, variant in size_options.items():
+                        selected = variant.get("selectedOptions") or []
+                        for opt in selected:
+                            if not opt:
+                                continue
+                            name = (opt.get("name") or "").lower()
+                            value = opt.get("value") or ""
+                            if not value or value == "Default Title":
+                                continue
+                            if "option2" in name or "size" in name:
+                                if value not in sizes:
+                                    sizes.append(value)
+                            elif "option1" in name or "color" in name:
+                                if value.lower() not in [c.lower() for c in colors]:
+                                    colors.append(value)
+
+                    # Extract brand from tags
+                    tag_list = [t.strip() for t in (p.get("tags") or []) if t.strip()]
+                    brand = ""
+                    noisy_tags = {"age_tagged", "mortar", "flash", "fw2025"}
+                    for t in tag_list:
+                        tl = t.lower()
+                        if tl not in noisy_tags and "catalog" not in tl and len(t) > 1:
+                            if t == t.upper() or (t[0].isupper() and " " not in t):
+                                brand = t
+                                break
+
+                    clean_tags = [t.lower() for t in tag_list
+                                  if t.lower() not in noisy_tags and "catalog" not in t.lower()]
+
+                    items.append({
+                        "catalog_item_id": f"boss-{pid}",
+                        "id": f"boss-{pid}",
+                        "name": title,
+                        "description": p.get("description") or "",
+                        "category": category,
+                        "subcategory": p.get("category") or "",
+                        "gender": gender,
+                        "brand": brand,
+                        "base_price": base_price,
+                        "sale_price": base_price,
+                        "discount_percent": 0,
+                        "primary_image_url": thumbnail,
+                        "images": [{"image_id": pid, "image_url": thumbnail, "is_primary": True}] if thumbnail else [],
+                        "variants": [{"size": s, "color": colors[0] if colors else "", "price": base_price}
+                                     for s in sizes] if sizes else [],
+                        "available_sizes": sizes,
+                        "available_colors": [c.lower() for c in colors],
+                        "in_stock": True,
+                        "style_tags": {"tags": clean_tags},
+                        "extra_metadata": {
+                            "occasion": ", ".join(clean_tags[:4]),
+                            "gender": gender,
+                            "product_type": p.get("category") or "",
+                        },
+                        "physics_profile": {},
+                        "stock_info": {"total_quantity": 100},
+                        "colors": [c.lower() for c in colors],
+                        "tags": clean_tags,
+                        "created_at": p.get("created_at") or "",
+                        "mesh_key": p.get("mesh_key") or "",
+                        "texture_url": p.get("texture_url") or "",
+                    })
+
+                # Check for next page
+                next_cursor = data.get("next_cursor")
+                if next_cursor and next_cursor != cursor:
+                    cursor = next_cursor
+                else:
+                    break
+
+        # Filter out items with no image or no price
+        before = len(items)
+        items = [it for it in items if it.get("primary_image_url") and (it.get("base_price") or 0) > 0]
+        log.info("Boss store catalog loaded: %d products (%d with images+price) from store %d (%d pages)",
+                 before, len(items), store_id, page)
+    except Exception as e:
+        log.warning("Boss store catalog fetch failed: %s", e)
+
+    return items
+
+
+async def _fetch_shopify_catalog() -> List[Dict]:
+    """Fetch ALL products from Shopify Admin API with pagination. LEGACY — kept as fallback."""
+    if not SHOPIFY_TOKEN:
+        log.warning("No SHOPIFY_ACCESS_TOKEN — skipping Shopify catalog")
+        return []
+
+    items: List[Dict] = []
+    base_url = f"https://{SHOPIFY_STORE}/admin/api/{SHOPIFY_API_VERSION}/products.json"
+    page_info = None
+    page = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            while True:
+                page += 1
+                if page_info:
+                    url = f"{base_url}?limit=250&page_info={page_info}"
+                else:
+                    url = f"{base_url}?limit=250&status=active"
+
+                r = await client.get(url, headers={
+                    "X-Shopify-Access-Token": SHOPIFY_TOKEN,
+                    "Content-Type": "application/json",
+                })
+
+                if r.status_code != 200:
+                    log.warning("Shopify API error: HTTP %d — %s", r.status_code, r.text[:200])
+                    break
+
+                data = r.json()
+                products = data.get("products", [])
+                if not products:
+                    break
+
+                for p in products:
+                    pid = str(p.get("id", ""))
+                    title = p.get("title", "")
+                    product_type = p.get("product_type", "")
+                    vendor = p.get("vendor", "")
+                    tags_str = p.get("tags", "")
+                    description = (p.get("body_html") or "")
+                    # Strip HTML tags from description
+                    import re
+                    description = re.sub(r"<[^>]+>", " ", description).strip()[:300]
+
+                    category = _shopify_category(product_type)
+                    gender = _shopify_gender(tags_str, title)
+
+                    # Parse options metadata to know which option is Color vs Size
+                    options_meta = p.get("options", [])
+                    color_opt_pos = None
+                    size_opt_pos = None
+                    for om in options_meta:
+                        nm = (om.get("name") or "").lower()
+                        pos = om.get("position", 0)
+                        if "color" in nm or "colour" in nm:
+                            color_opt_pos = pos
+                        elif "size" in nm:
+                            size_opt_pos = pos
+                    if len(items) < 3 or (color_opt_pos is None and size_opt_pos is None):
+                        log.info("DEBUG opt parse: title=%s color_pos=%s size_pos=%s options=%s",
+                                 title[:30], color_opt_pos, size_opt_pos,
+                                 [(o.get("name"), o.get("position")) for o in options_meta])
+
+                    # Parse variants for sizes, colors, prices
+                    variants = p.get("variants", [])
+                    sizes = []
+                    colors = []
+                    prices = []
+                    for v in variants:
+                        price = float(v.get("price") or 0)
+                        if price > 0:
+                            prices.append(price)
+                        # Use option metadata to map correctly
+                        for pos in [1, 2, 3]:
+                            opt = v.get(f"option{pos}")
+                            if not opt or opt == "Default Title":
+                                continue
+                            if pos == size_opt_pos:
+                                if opt not in sizes:
+                                    sizes.append(opt)
+                            elif pos == color_opt_pos:
+                                if opt.lower() not in [c.lower() for c in colors]:
+                                    colors.append(opt)
+                            elif _is_size(opt):
+                                if opt not in sizes:
+                                    sizes.append(opt)
+                            else:
+                                if opt.lower() not in [c.lower() for c in colors]:
+                                    colors.append(opt)
+
+                    base_price = min(prices) if prices else 0
+                    compare_price = float(variants[0].get("compare_at_price") or 0) if variants else 0
+                    disc = round((1 - base_price / compare_price) * 100, 1) if compare_price > base_price > 0 else 0
+
+                    # Images
+                    raw_images = p.get("images", [])
+                    image_list = []
+                    primary_url = ""
+                    for idx_img, img in enumerate(raw_images):
+                        img_url = img.get("src", "")
+                        if img_url:
+                            if not primary_url:
+                                primary_url = img_url
+                            image_list.append({
+                                "image_id": str(img.get("id", "")),
+                                "catalog_item_id": pid,
+                                "image_url": img_url,
+                                "image_type": "front" if idx_img == 0 else "back" if idx_img == 1 else "side",
+                                "color_variant": colors[0].lower() if colors else "default",
+                                "is_primary": idx_img == 0,
+                            })
+
+                    # Tags
+                    tag_list = [t.strip().lower() for t in tags_str.split(",") if t.strip() and len(t.strip()) < 30]
+                    # Remove noisy tags
+                    tag_list = [t for t in tag_list if t not in ("age_tagged", "mortar", "flash") and "catalog" not in t]
+
+                    items.append({
+                        "catalog_item_id": f"shopify-{pid}",
+                        "id": f"shopify-{pid}",
+                        "name": title,
+                        "description": description,
+                        "category": category,
+                        "subcategory": product_type,
+                        "gender": gender,
+                        "brand": vendor,
+                        "base_price": base_price,
+                        "sale_price": base_price,
+                        "discount_percent": disc,
+                        "compare_at_price": compare_price,
+                        "primary_image_url": primary_url,
+                        "images": image_list,
+                        "variants": [{"size": v.get(f"option{size_opt_pos}","") if size_opt_pos else "",
+                                      "color": v.get(f"option{color_opt_pos}","") if color_opt_pos else "",
+                                      "price": float(v.get("price",0)), "quantity": v.get("inventory_quantity",0),
+                                      "sku": v.get("sku","")} for v in variants],
+                        "available_sizes": sizes,
+                        "available_colors": [c.lower() for c in colors],
+                        "in_stock": any(v.get("inventory_quantity", 0) > 0 for v in variants) if variants else True,
+                        "style_tags": {"tags": tag_list},
+                        "extra_metadata": {
+                            "occasion": ", ".join(tag_list[:4]),
+                            "gender": gender,
+                            "product_type": product_type,
+                            "vendor": vendor,
+                        },
+                        "physics_profile": {},
+                        "stock_info": {"total_quantity": sum(v.get("inventory_quantity", 0) for v in variants)},
+                        "colors": [c.lower() for c in colors],
+                        "tags": tag_list,
+                        "created_at": p.get("created_at", ""),
+                        "shopify_handle": p.get("handle", ""),
+                    })
+                    # Debug verify first few items
+                    if len(items) <= 3:
+                        it = items[-1]
+                        log.info("VERIFY item: %s sizes=%s colors=%s",
+                                 it["name"][:30], it["available_sizes"][:3], it["available_colors"][:3])
+
+                # Pagination: check Link header for next page
+                link_header = r.headers.get("Link", "")
+                if 'rel="next"' in link_header:
+                    import re as _re
+                    # Find the URL with rel="next"
+                    parts = link_header.split(",")
+                    next_url = None
+                    for part in parts:
+                        if 'rel="next"' in part:
+                            match = _re.search(r'<([^>]+)>', part)
+                            if match:
+                                next_url = match.group(1)
+                            break
+                    if next_url:
+                        # Extract page_info from the full URL
+                        pi_match = _re.search(r'page_info=([^&]+)', next_url)
+                        if pi_match:
+                            new_page_info = pi_match.group(1)
+                            if new_page_info == page_info:
+                                break  # same page_info = infinite loop, stop
+                            page_info = new_page_info
+                        else:
+                            break
+                    else:
+                        break
+                else:
+                    break
+
+        # Filter out items with no image or no price
+        before = len(items)
+        items = [it for it in items if it.get("primary_image_url") and (it.get("base_price") or 0) > 0]
+        log.info("Shopify catalog loaded: %d products (%d with images+price) from %s (%d pages)",
+                 before, len(items), SHOPIFY_STORE, page)
+    except Exception as e:
+        log.warning("Shopify catalog fetch failed: %s", e)
+
+    return items
+
+
+# ── Load CSV catalog (Xpectrum) — LEGACY, kept as fallback ────────
 def _load_csv_catalog() -> List[Dict]:
     """
     Load catalog_for_xpectrum.csv and convert each row into a catalog
@@ -760,6 +1152,7 @@ def _load_csv_catalog() -> List[Dict]:
 _full_catalog_cache: List[Dict] = []
 _csv_catalog_items: List[Dict] = []   # preserved CSV items — never overwritten by Boss API
 _catalog_loading: bool = False
+_shopify_is_source: bool = False  # When True, Boss API catalog loading is skipped
 
 # ── Demo catalog (shown when Boss API is unreachable) ─────────────
 _DEMO_CATALOG: List[Dict] = [
@@ -915,8 +1308,12 @@ async def _scout_real_items():
     Jump straight to skip=2800 where real catalog items are known to exist.
     Called at startup so real items appear within ~10s instead of waiting 2 minutes
     for the sequential background loader to crawl through 56 pages of UUID placeholders.
+    SKIPPED when Shopify is the catalog source.
     """
     global _full_catalog_cache
+    if _shopify_is_source:
+        log.info("Scout skipped — Shopify is catalog source")
+        return
     SCOUT_SKIPS = [2800, 2850, 2900, 2950, 3000, 3050, 2750, 2700]
     try:
         pages = await asyncio.gather(*[_fetch_page(s) for s in SCOUT_SKIPS])
@@ -937,10 +1334,12 @@ async def _scout_real_items():
 async def _load_all_pages_bg():
     """
     Background task: fetch all catalog pages in PARALLEL batches of 4.
-    Instead of: page0 (50s) → page1 (50s) → page2 (50s)  = 150s total
-    Now:        [page0, page1, page2, page3] all at once   = ~50s total
+    SKIPPED when Shopify is the catalog source.
     """
     global _full_catalog_cache, _catalog_loading
+    if _shopify_is_source:
+        log.info("Background Boss catalog load skipped — Shopify is catalog source")
+        return
     if _catalog_loading:
         return
     _catalog_loading = True
@@ -1055,6 +1454,10 @@ async def fetch_catalog(
     """
     global _full_catalog_cache
 
+    # When Shopify is source, always return in-memory Shopify catalog
+    if _shopify_is_source and _full_catalog_cache:
+        return _full_catalog_cache
+
     # 1. In-memory full cache (fastest — zero latency)
     full = _cget("cat:full")
     if full is not None and len(full) > 0:
@@ -1071,7 +1474,6 @@ async def fetch_catalog(
     if disk:
         _full_catalog_cache = disk
         _cset("cat:full", disk, 3600)
-        # Refresh in background if needed
         if not _catalog_loading:
             asyncio.create_task(_load_all_pages_bg())
         return disk
@@ -2826,8 +3228,8 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                     0.05 * s_trend     +
                     0.05 * s_similar
                 )
-            if s_cat == 0.0:
-                base = min(base, 0.25)
+            # No hard cap — let all 22 signals determine the final score.
+            # Items with s_cat=0 naturally score lower but aren't excluded.
         else:
             if has_history:
                 base = (
@@ -2880,7 +3282,17 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         final = min(base * stock_mult, 1.0)
 
         images, primary = _build_images(item, viewer_gender=gender)
-        variants, sizes, item_colors_list = _build_variants(item)
+        # For Shopify items, keep original sizes/colors; for Boss items, rebuild from variants
+        if str(iid).startswith("shopify-"):
+            variants = item.get("variants") or []
+            sizes = item.get("available_sizes") or []
+            item_colors_list = item.get("available_colors") or item.get("colors") or []
+            if not primary:
+                primary = item.get("primary_image_url") or ""
+            if not images:
+                images = item.get("images") or []
+        else:
+            variants, sizes, item_colors_list = _build_variants(item)
         a3d  = item.get("assets_3d") or {}
         bp   = _safe_float(item.get("base_price"))
         disc = _discount_percent(item)
@@ -2969,9 +3381,9 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
 
     scored.sort(key=lambda x: x["score"], reverse=True)
 
-    # Category diversity: interleave top items from different categories
-    # so users see a mix (dresses + jumpsuits + tops) not 20 dresses in a row
-    if top_k >= 6 and len(scored) > top_k:
+    # Category diversity: light diversification — only among top-scored items
+    # Don't force equal distribution, just avoid 50 identical items in a row
+    if False and top_k >= 6 and len(scored) > top_k:
         by_cat: Dict[str, List[Dict]] = {}
         for s in scored:
             cat_key = (s.get("category") or "other").lower().split()[0]  # first word
@@ -3455,60 +3867,11 @@ async def post_recommendations(req: RecRequest):
         override["season"] = cp.occasion.lower()
 
     # Run the ranker — fetch 500 items, return all that pass filters
-    items = await rank_catalog(user_doc, top_k=500, override=override)
+    items = await rank_catalog(user_doc, top_k=50, override=override)
 
-    # ── Post-filters ──────────────────────────────────────────────
-
-    # Category filter — keep only items matching requested categories
-    req_cats = [c.lower() for c in sp.selected_categories]
-    if req_cats:
-        _expand = {
-            "tops": ["tops", "top", "t-shirts", "t-shirt", "shirts", "shirt", "blouse", "blouses", "women tops"],
-            "pants": ["pants", "pant", "trousers", "jeans", "bottomwear", "chinos", "track-pants", "joggers", "cargo"],
-            "dresses": ["dresses", "dress", "women dresses", "gown", "maxi"],
-            "shirts": ["shirts", "shirt", "tops", "button-down"],
-            "jeans": ["jeans", "denim", "pants"],
-        }
-        allowed = set()
-        for rc in req_cats:
-            allowed.add(rc)
-            allowed.add(rc.rstrip("s") if rc.endswith("s") else rc)
-            allowed.add(rc + "s" if not rc.endswith("s") else rc)
-            allowed.update(_expand.get(rc, []))
-        cat_matched = [it for it in items if (it.get("category") or "").lower() in allowed]
-        if cat_matched:
-            items = cat_matched
-
-    # Color preference — rank color-matched items higher
-    req_colors = [c.lower() for c in sp.selected_colors]
-    if req_colors:
-        color_yes, color_no = [], []
-        for it in items:
-            ic = [c.lower() for c in (it.get("available_colors") or it.get("colors") or [])]
-            nm = (it.get("name") or "").lower()
-            if any(rc in ic or rc in nm for rc in req_colors):
-                color_yes.append(it)
-            else:
-                color_no.append(it)
-        items = color_yes + color_no
-
-    # Budget filter
-    min_p = req.budget.min_price
-    max_p = req.budget.max_price
-    if min_p > 0 or max_p < 50000:
-        items = [it for it in items
-                 if min_p <= (it.get("base_price") or 0) <= max_p]
-
-    # Favorite stores / brands — boost matching items to the top
-    fav = [s.lower() for s in req.favorite_stores]
-    if fav:
-        store_matched = [
-            it for it in items
-            if any(f in (it.get("brand") or it.get("name") or "").lower()
-                   for f in fav)
-        ]
-        if store_matched:
-            items = store_matched
+    # ── Post-filters (minimal — let the 22-signal engine rank) ─────
+    # Only remove items the user explicitly excluded/disliked.
+    # Engine returns top 50 best-scored items already ranked by 22 signals.
 
     # Remove excluded items
     if req.exclude_items:
@@ -3573,7 +3936,7 @@ async def post_recommendations(req: RecRequest):
             "category":             it.get("category") or "",
             "subcategory":          it.get("subcategory") or "",
             "gender":               it.get("gender") or "",
-            "brand":                it.get("brand") or (it.get("name") or "").split()[0] if it.get("name") else "",
+            "brand":                it.get("brand") or "",
             "base_price":           it.get("base_price") or 0,
             "sale_price":           it.get("sale_price") or it.get("base_price") or 0,
             "discount_percent":     it.get("discount_percent") or 0,
@@ -3590,6 +3953,7 @@ async def post_recommendations(req: RecRequest):
             "boosted":              (it.get("score_detail") or {}).get("dify", 0) > 0,
             "popularity_score":     it.get("popularity_score") or 0,
             "recommendation_reason": it.get("recommendation_reason") or "Recommended for you",
+            "score_detail":         it.get("score_detail") or {},
         })
 
     return {
@@ -3688,52 +4052,8 @@ async def recommendations_v2(req: RecRequestV2):
     items = await rank_catalog(user_doc, top_k=500,
                                override=override)
 
-    # Post-filter: only keep items matching requested categories
-    req_cats = [c.lower() for c in sp.selected_categories]
-    if req_cats:
-        # Expand categories for matching
-        _expand = {
-            "tops": ["tops", "top", "t-shirts", "t-shirt", "shirts", "shirt", "blouse", "blouses", "women tops"],
-            "pants": ["pants", "pant", "trousers", "jeans", "bottomwear", "chinos", "track-pants", "joggers", "cargo"],
-            "dresses": ["dresses", "dress", "women dresses", "gown", "maxi"],
-            "shirts": ["shirts", "shirt", "tops", "button-down"],
-            "jeans": ["jeans", "denim", "pants"],
-        }
-        allowed_cats = set()
-        for rc in req_cats:
-            allowed_cats.add(rc)
-            allowed_cats.add(rc.rstrip("s") if rc.endswith("s") else rc)
-            allowed_cats.add(rc + "s" if not rc.endswith("s") else rc)
-            allowed_cats.update(_expand.get(rc, []))
-        items = [it for it in items
-                 if (it.get("category") or "").lower() in allowed_cats]
-
-    # Post-filter: prefer items matching requested colors, but don't exclude if not enough
-    req_colors = [c.lower() for c in sp.selected_colors]
-    if req_colors:
-        color_matched = []
-        color_rest = []
-        for it in items:
-            item_colors = [c.lower() for c in (it.get("available_colors") or it.get("colors") or [])]
-            item_name = (it.get("name") or "").lower()
-            item_desc = (it.get("description") or "").lower()
-            if any(rc in item_colors or rc in item_name or rc in item_desc for rc in req_colors):
-                color_matched.append(it)
-            else:
-                color_rest.append(it)
-        # Color-matched items first, then fill remaining from non-matched
-        items = color_matched + color_rest
-
-    # Favorite stores filter
-    fav = [s.lower() for s in req.favorite_stores]
-    if fav:
-        store_matched = [
-            it for it in items
-            if any(f in (it.get("brand") or it.get("name") or "").lower() for f in fav)
-        ]
-        if store_matched:
-            items = store_matched
-
+    # No post-filtering — the 22-signal engine handles ranking.
+    # Matching items score higher, non-matching score lower but still appear.
     items = items[:req.top_k]
 
     recs = []
@@ -4024,10 +4344,20 @@ async def _boss_get_interactions(user_id: int, event_type: str, limit: int = 200
 
 
 def _get_user_id(email: str) -> int:
-    """Get numeric user_id from email (simple hash for Boss API)."""
-    u = _mem_users.get(email)
-    if u and u.get("boss_user_id"):
-        return u["boss_user_id"]
+    """Get numeric user_id from email — checks email-to-uid cache first."""
+    email = email.strip().lower()
+    uid = _mem_email.get(email)
+    if uid:
+        u = _mem_users.get(uid)
+        if u:
+            # Try boss_user_id, then user_id, then parse uid
+            boss_id = u.get("boss_user_id")
+            if boss_id:
+                return int(boss_id)
+            try:
+                return int(u.get("user_id", uid))
+            except (ValueError, TypeError):
+                pass
     return abs(hash(email)) % 1000000
 
 
@@ -4178,9 +4508,7 @@ async def delete_outfit(email: str, outfit_id: str):
 
 # ── Orders ────────────────────────────────────────────────────────
 
-@app.get("/api/orders/{email}", tags=["Orders"])
-async def get_orders(email: str):
-    return {"email": email, "orders": _user_orders.get(email, []), "count": len(_user_orders.get(email, []))}
+# orders GET moved below POST /api/orders
 
 # ── Claude Vision: Analyze Fashion Image ──────────────────────────
 
@@ -4364,7 +4692,7 @@ async def virtual_tryon(request: Request):
 
 
 # ── Orders ────────────────────────────────────────────────────────
-_orders_store: Dict[str, List[Dict]] = {}   # in-memory; keyed by email
+# Orders use _user_orders (shared with interaction tracking)
 
 class OrderItem(BaseModel):
     catalog_item_id: str
@@ -4405,45 +4733,47 @@ async def create_order(data: CreateOrderIn):
         "status": "confirmed",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    _orders_store.setdefault(data.email, []).append(order)
+    _user_orders.setdefault(data.email, []).append(order)
     log.info("Order %s placed for %s — %d items, total $%.0f",
              order_id, data.email, len(data.items), data.total)
     return {"order_id": order_id, "status": "confirmed", "order": order}
 
 @app.get("/api/orders/{email}", tags=["Orders"],
          summary="Get orders for a user")
-async def get_orders(email: str):
-    orders = _orders_store.get(email, [])
-    return {"orders": orders, "total": len(orders)}
+async def get_orders_by_email(email: str):
+    orders = _user_orders.get(email, [])
+    return {"email": email, "orders": orders, "count": len(orders)}
 
 
 # ── Startup / shutdown ────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    global _full_catalog_cache
-    log.info("HueIQ Engine v9.0 starting (backend: Boss PostgreSQL API)...")
+    global _full_catalog_cache, _csv_catalog_items, _shopify_is_source
+    log.info("HueIQ Engine v10.0 starting (catalog: Boss Store)...")
 
-    global _csv_catalog_items
-    # 1. Load CSV catalog FIRST — real product data with names/prices/brands
-    csv_items = _load_csv_catalog()
-    if csv_items:
-        _csv_catalog_items = csv_items
-        _full_catalog_cache = csv_items[:]
-        _cset("cat:full", csv_items, 86400)  # 24h TTL — CSV is the source of truth
-        log.info("Startup: %d items loaded from CSV catalog (primary source)", len(csv_items))
+    # 1. Load from Boss store catalog (PRIMARY source)
+    shopify_items = await _fetch_boss_store_catalog(store_id=1)
+    # Fallback to direct Shopify if Boss store catalog is empty
+    if not shopify_items:
+        log.info("Boss store catalog empty — falling back to Shopify direct API")
+        shopify_items = await _fetch_shopify_catalog()
+    if shopify_items:
+        _shopify_is_source = True
+        _full_catalog_cache = shopify_items
+        _cset("cat:full", shopify_items, 86400)
+        log.info("Startup: %d items loaded from Shopify (primary source)", len(shopify_items))
     else:
-        # Fallback to disk cache if no CSV
+        # Fallback: disk cache if Shopify is unreachable
+        log.warning("Shopify fetch failed — trying disk cache fallback")
         disk = _load_disk_cache()
         if disk:
             filtered_disk = _filter_real_items(disk)
             if filtered_disk:
                 _full_catalog_cache = filtered_disk
                 _cset("cat:full", filtered_disk, 3600)
-                log.info("Startup: %d real items ready from disk cache (%d total)", len(filtered_disk), len(disk))
-            else:
-                log.info("Startup: disk cache has %d items but 0 real — will fetch from API", len(disk))
+                log.info("Startup: %d items from disk cache fallback", len(filtered_disk))
 
-    # Connect to Boss API and refresh catalog in background
+    # Connect to Boss API for user data (auth, interactions) — NOT for catalog
     asyncio.create_task(_init())
 
 async def _keep_boss_warm():

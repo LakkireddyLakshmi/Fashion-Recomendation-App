@@ -13,11 +13,11 @@ const fieldDefs = [
   { key: "fit", label: "Preferred Fit", type: "select", options: ["Slim", "Regular", "Loose", "Oversized"] },
   { key: "styleIdentity", label: "Style Identity", type: "select", options: ["Minimal", "Street", "Athleisure", "Formal", "Casual", "Ethnic"] },
   { key: "budgetId", label: "Budget Range", type: "select", options: [
-    { value: "under1000", label: "Under ₹1K" },
-    { value: "1k_3k", label: "₹1K – 3K" },
-    { value: "3k_5k", label: "₹3K – 5K" },
-    { value: "5k_10k", label: "₹5K – 10K" },
-    { value: "above10k", label: "₹10K+" },
+    { value: "under50", label: "Under $50" },
+    { value: "50_100", label: "$50 – $100" },
+    { value: "100_200", label: "$100 – $200" },
+    { value: "200_500", label: "$200 – $500" },
+    { value: "above500", label: "$500+" },
     { value: "any", label: "Any Budget" },
   ]},
 ];

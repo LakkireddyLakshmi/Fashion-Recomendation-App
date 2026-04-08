@@ -34,10 +34,10 @@ function App() {
             "Patterns": ["multicolor"],
           };
           const categoryMap = {
-            "Minimal": ["shirt", "trousers", "blazer"],
-            "Street": ["t-shirt", "jeans", "joggers", "cargo"],
-            "Athleisure": ["t-shirt", "joggers", "shorts"],
-            "Formal": ["shirt", "blazer", "trousers"],
+            "Minimal": ["t-shirts", "tops", "trousers", "outerwear"],
+            "Street": ["t-shirts", "tops", "trousers", "outerwear", "shorts"],
+            "Athleisure": ["t-shirts", "tops", "shorts", "trousers"],
+            "Formal": ["tops", "trousers", "outerwear"],
           };
           const fitMap = {
             "Slim/Fitted": "slim",
@@ -51,12 +51,12 @@ function App() {
 
           // Budget mapping
           const budgetMap = {
-            "Under ₹1,000":       { budgetId: "under1000", budgetMin: 0,     budgetMax: 1000  },
-            "₹1,000 – ₹3,000":   { budgetId: "1k_3k",    budgetMin: 1000,  budgetMax: 3000  },
-            "₹3,000 – ₹5,000":   { budgetId: "3k_5k",    budgetMin: 3000,  budgetMax: 5000  },
-            "₹5,000 – ₹10,000":  { budgetId: "5k_10k",   budgetMin: 5000,  budgetMax: 10000 },
-            "₹10,000+":           { budgetId: "above10k",  budgetMin: 10000, budgetMax: 50000 },
-            "No Preference":       { budgetId: "any",       budgetMin: 0,     budgetMax: 50000 },
+            "Under $50":          { budgetId: "under50",   budgetMin: 0,    budgetMax: 50   },
+            "$50 – $100":         { budgetId: "50_100",    budgetMin: 50,   budgetMax: 100  },
+            "$100 – $200":        { budgetId: "100_200",   budgetMin: 100,  budgetMax: 200  },
+            "$200 – $500":        { budgetId: "200_500",   budgetMin: 200,  budgetMax: 500  },
+            "$500+":              { budgetId: "above500",  budgetMin: 500,  budgetMax: 5000 },
+            "No Preference":      { budgetId: "any",       budgetMin: 0,    budgetMax: 5000 },
           };
           const budget = budgetMap[answers.budget] || budgetMap["No Preference"];
 
