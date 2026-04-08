@@ -557,10 +557,7 @@ def _physics_profile(item: Dict) -> Optional[str]:
     return None
 
 
-# ── Load Shopify catalog (PRIMARY SOURCE) ─────────────────────────
-SHOPIFY_STORE = os.getenv("SHOPIFY_STORE", "shop-urbanity.myshopify.com")
-SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
-SHOPIFY_API_VERSION = "2024-01"
+# ── Catalog source: Boss PostgreSQL DB ────────────────────────────
 
 _KNOWN_SIZES = {"XXS","XS","S","M","L","XL","XXL","2XL","3XL","4XL","5XL",
                 "6","6.5","7","7.5","8","8.5","9","9.5","10","10.5","11","11.5","12","13","14",
@@ -750,203 +747,6 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
     return items
 
 
-async def _fetch_shopify_catalog() -> List[Dict]:
-    """Fetch ALL products from Shopify Admin API with pagination. LEGACY — kept as fallback."""
-    if not SHOPIFY_TOKEN:
-        log.warning("No SHOPIFY_ACCESS_TOKEN — skipping Shopify catalog")
-        return []
-
-    items: List[Dict] = []
-    base_url = f"https://{SHOPIFY_STORE}/admin/api/{SHOPIFY_API_VERSION}/products.json"
-    page_info = None
-    page = 0
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            while True:
-                page += 1
-                if page_info:
-                    url = f"{base_url}?limit=250&page_info={page_info}"
-                else:
-                    url = f"{base_url}?limit=250&status=active"
-
-                r = await client.get(url, headers={
-                    "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-                    "Content-Type": "application/json",
-                })
-
-                if r.status_code != 200:
-                    log.warning("Shopify API error: HTTP %d — %s", r.status_code, r.text[:200])
-                    break
-
-                data = r.json()
-                products = data.get("products", [])
-                if not products:
-                    break
-
-                for p in products:
-                    pid = str(p.get("id", ""))
-                    title = p.get("title", "")
-                    product_type = p.get("product_type", "")
-                    vendor = p.get("vendor", "")
-                    tags_str = p.get("tags", "")
-                    description = (p.get("body_html") or "")
-                    # Strip HTML tags from description
-                    import re
-                    description = re.sub(r"<[^>]+>", " ", description).strip()[:300]
-
-                    category = _shopify_category(product_type)
-                    gender = _shopify_gender(tags_str, title)
-
-                    # Parse options metadata to know which option is Color vs Size
-                    options_meta = p.get("options", [])
-                    color_opt_pos = None
-                    size_opt_pos = None
-                    for om in options_meta:
-                        nm = (om.get("name") or "").lower()
-                        pos = om.get("position", 0)
-                        if "color" in nm or "colour" in nm:
-                            color_opt_pos = pos
-                        elif "size" in nm:
-                            size_opt_pos = pos
-                    if len(items) < 3 or (color_opt_pos is None and size_opt_pos is None):
-                        log.info("DEBUG opt parse: title=%s color_pos=%s size_pos=%s options=%s",
-                                 title[:30], color_opt_pos, size_opt_pos,
-                                 [(o.get("name"), o.get("position")) for o in options_meta])
-
-                    # Parse variants for sizes, colors, prices
-                    variants = p.get("variants", [])
-                    sizes = []
-                    colors = []
-                    prices = []
-                    for v in variants:
-                        price = float(v.get("price") or 0)
-                        if price > 0:
-                            prices.append(price)
-                        # Use option metadata to map correctly
-                        for pos in [1, 2, 3]:
-                            opt = v.get(f"option{pos}")
-                            if not opt or opt == "Default Title":
-                                continue
-                            if pos == size_opt_pos:
-                                if opt not in sizes:
-                                    sizes.append(opt)
-                            elif pos == color_opt_pos:
-                                if opt.lower() not in [c.lower() for c in colors]:
-                                    colors.append(opt)
-                            elif _is_size(opt):
-                                if opt not in sizes:
-                                    sizes.append(opt)
-                            else:
-                                if opt.lower() not in [c.lower() for c in colors]:
-                                    colors.append(opt)
-
-                    base_price = min(prices) if prices else 0
-                    compare_price = float(variants[0].get("compare_at_price") or 0) if variants else 0
-                    disc = round((1 - base_price / compare_price) * 100, 1) if compare_price > base_price > 0 else 0
-
-                    # Images
-                    raw_images = p.get("images", [])
-                    image_list = []
-                    primary_url = ""
-                    for idx_img, img in enumerate(raw_images):
-                        img_url = img.get("src", "")
-                        if img_url:
-                            if not primary_url:
-                                primary_url = img_url
-                            image_list.append({
-                                "image_id": str(img.get("id", "")),
-                                "catalog_item_id": pid,
-                                "image_url": img_url,
-                                "image_type": "front" if idx_img == 0 else "back" if idx_img == 1 else "side",
-                                "color_variant": colors[0].lower() if colors else "default",
-                                "is_primary": idx_img == 0,
-                            })
-
-                    # Tags
-                    tag_list = [t.strip().lower() for t in tags_str.split(",") if t.strip() and len(t.strip()) < 30]
-                    # Remove noisy tags
-                    tag_list = [t for t in tag_list if t not in ("age_tagged", "mortar", "flash") and "catalog" not in t]
-
-                    items.append({
-                        "catalog_item_id": f"shopify-{pid}",
-                        "id": f"shopify-{pid}",
-                        "name": title,
-                        "description": description,
-                        "category": category,
-                        "subcategory": product_type,
-                        "gender": gender,
-                        "brand": vendor,
-                        "base_price": base_price,
-                        "sale_price": base_price,
-                        "discount_percent": disc,
-                        "compare_at_price": compare_price,
-                        "primary_image_url": primary_url,
-                        "images": image_list,
-                        "variants": [{"size": v.get(f"option{size_opt_pos}","") if size_opt_pos else "",
-                                      "color": v.get(f"option{color_opt_pos}","") if color_opt_pos else "",
-                                      "price": float(v.get("price",0)), "quantity": v.get("inventory_quantity",0),
-                                      "sku": v.get("sku","")} for v in variants],
-                        "available_sizes": sizes,
-                        "available_colors": [c.lower() for c in colors],
-                        "in_stock": any(v.get("inventory_quantity", 0) > 0 for v in variants) if variants else True,
-                        "style_tags": {"tags": tag_list},
-                        "extra_metadata": {
-                            "occasion": ", ".join(tag_list[:4]),
-                            "gender": gender,
-                            "product_type": product_type,
-                            "vendor": vendor,
-                        },
-                        "physics_profile": {},
-                        "stock_info": {"total_quantity": sum(v.get("inventory_quantity", 0) for v in variants)},
-                        "colors": [c.lower() for c in colors],
-                        "tags": tag_list,
-                        "created_at": p.get("created_at", ""),
-                        "shopify_handle": p.get("handle", ""),
-                    })
-                    # Debug verify first few items
-                    if len(items) <= 3:
-                        it = items[-1]
-                        log.info("VERIFY item: %s sizes=%s colors=%s",
-                                 it["name"][:30], it["available_sizes"][:3], it["available_colors"][:3])
-
-                # Pagination: check Link header for next page
-                link_header = r.headers.get("Link", "")
-                if 'rel="next"' in link_header:
-                    import re as _re
-                    # Find the URL with rel="next"
-                    parts = link_header.split(",")
-                    next_url = None
-                    for part in parts:
-                        if 'rel="next"' in part:
-                            match = _re.search(r'<([^>]+)>', part)
-                            if match:
-                                next_url = match.group(1)
-                            break
-                    if next_url:
-                        # Extract page_info from the full URL
-                        pi_match = _re.search(r'page_info=([^&]+)', next_url)
-                        if pi_match:
-                            new_page_info = pi_match.group(1)
-                            if new_page_info == page_info:
-                                break  # same page_info = infinite loop, stop
-                            page_info = new_page_info
-                        else:
-                            break
-                    else:
-                        break
-                else:
-                    break
-
-        # Filter out items with no image or no price
-        before = len(items)
-        items = [it for it in items if it.get("primary_image_url") and (it.get("base_price") or 0) > 0]
-        log.info("Shopify catalog loaded: %d products (%d with images+price) from %s (%d pages)",
-                 before, len(items), SHOPIFY_STORE, page)
-    except Exception as e:
-        log.warning("Shopify catalog fetch failed: %s", e)
-
-    return items
 
 
 # ── Load CSV catalog (Xpectrum) — LEGACY, kept as fallback ────────
@@ -4751,12 +4551,8 @@ async def startup():
     global _full_catalog_cache, _csv_catalog_items, _shopify_is_source
     log.info("HueIQ Engine v10.0 starting (catalog: Boss Store)...")
 
-    # 1. Load from Boss store catalog (PRIMARY source)
+    # 1. Load from Boss store catalog (ONLY source)
     shopify_items = await _fetch_boss_store_catalog(store_id=1)
-    # Fallback to direct Shopify if Boss store catalog is empty
-    if not shopify_items:
-        log.info("Boss store catalog empty — falling back to Shopify direct API")
-        shopify_items = await _fetch_shopify_catalog()
     if shopify_items:
         _shopify_is_source = True
         _full_catalog_cache = shopify_items
