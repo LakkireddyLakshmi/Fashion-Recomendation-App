@@ -486,8 +486,33 @@ def _gender(item: Dict) -> str:
     return "unisex"
 
 def _season_item(item: Dict) -> str:
+    """Infer season from extra_metadata, tags, name, category, or fabric."""
     em = item.get("extra_metadata") or {}
-    return (em.get("season") if isinstance(em, dict) else None) or item.get("season") or ""
+    # 1. Direct season field
+    direct = (em.get("season") if isinstance(em, dict) else None) or item.get("season") or ""
+    if direct:
+        return direct.lower()
+
+    # 2. Parse from tags
+    tags = item.get("tags") or []
+    if isinstance(tags, dict):
+        tags = tags.get("tags", [])
+    tag_text = " ".join(str(t).lower() for t in tags)
+
+    name = (item.get("name") or "").lower()
+    cat = (item.get("category") or "").lower()
+    combined = f"{tag_text} {name} {cat}"
+
+    # Season keyword detection
+    if any(k in combined for k in ["winter", "fall", "autumn", "fw2025", "fw24", "aw24", "aw25", "hoodie", "sweater", "jacket", "coat", "puffer", "fleece"]):
+        return "winter"
+    if any(k in combined for k in ["summer", "ss25", "ss24", "bikini", "swim", "tank", "shorts", "sleeveless"]):
+        return "summer"
+    if any(k in combined for k in ["spring", "light jacket", "cardigan"]):
+        return "spring"
+    if any(k in combined for k in ["monsoon", "rain"]):
+        return "monsoon"
+    return ""
 
 def _fabric(item: Dict) -> str:
     em = item.get("extra_metadata") or {}
@@ -557,7 +582,29 @@ def _physics_profile(item: Dict) -> Optional[str]:
     return None
 
 
+# ── AI-classified gender data ────────────────────────────────────
+# Load pre-classified gender from ai_classification_results.json
+# This maps shopify_product_id -> "Men"/"Women"/"Unisex"
+_ai_gender_map: Dict[str, str] = {}
+import pathlib as _pathlib
+_ai_gender_file = _pathlib.Path(__file__).parent.parent / "ai_classification_results.json"
+if _ai_gender_file.exists():
+    try:
+        with open(_ai_gender_file) as _f:
+            _raw = json.load(_f)
+            for _k, _v in _raw.items():
+                if _v in ("Men", "Women", "Unisex"):
+                    _ai_gender_map[_k] = _v.lower().rstrip("en") if _v == "Women" else _v.lower()
+                    # Normalize: "Men" -> "men", "Women" -> "women", "Unisex" -> "unisex"
+                    _ai_gender_map[_k] = {"Men": "men", "Women": "women", "Unisex": "unisex"}.get(_v, "unisex")
+        log.info("Loaded AI gender classifications for %d products", len(_ai_gender_map))
+    except Exception as _e:
+        log.warning("Failed to load AI gender file: %s", _e)
+
 # ── Catalog source: Boss PostgreSQL DB ────────────────────────────
+# Gender metafields are fetched from Shopify (Boss doesn't sync them)
+SHOPIFY_STORE = os.getenv("SHOPIFY_STORE", "shop-urbanity.myshopify.com")
+SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 
 _KNOWN_SIZES = {"XXS","XS","S","M","L","XL","XXL","2XL","3XL","4XL","5XL",
                 "6","6.5","7","7.5","8","8.5","9","9.5","10","10.5","11","11.5","12","13","14",
@@ -609,14 +656,122 @@ def _shopify_category(product_type: str) -> str:
             return val
     return pt.replace(" ", "-") if pt else "uncategorized"
 
-def _shopify_gender(tags: str, title: str) -> str:
-    """Infer gender from Shopify tags/title."""
-    combined = f"{tags} {title}".lower()
-    if any(w in combined for w in ["women", "woman", "ladies", "female", "her "]):
+def _shopify_gender(tags: str, title: str, category: str = "") -> str:
+    """Infer gender from tags, title, and category."""
+    combined = f"{tags} {title} {category}".lower()
+
+    # Strong women signals
+    if any(w in combined for w in [
+        "women", "woman", "womens", "ladies", "female",
+        "her ", "girls", "dress", "skirt", "bralette",
+        "sports bra", "legging", "crop top", "blouse",
+        "bikini", "romper", "tunic",
+    ]):
         return "women"
-    if any(w in combined for w in ["men's", "mens", "male", "his ", " men"]):
+
+    # Strong men signals
+    if any(w in combined for w in [
+        "men's", "mens ", " men", "male", "his ",
+        "boys", "boxer", "brief",
+    ]):
         return "men"
+
+    # Category-based gender inference
+    cat_lower = category.lower()
+    women_cats = ["dresses", "skirts", "bralettes", "women", "leggings"]
+    men_cats = ["boxers", "briefs"]
+    if any(c in cat_lower for c in women_cats):
+        return "women"
+    if any(c in cat_lower for c in men_cats):
+        return "men"
+
+    # Brand-based gender inference
+    men_brands = ["jordan", "supreme", "stussy", "bape", "honor the gift",
+                  "ice cream", "billionaire boys club", "paper planes",
+                  "ksubi", "pleasures", "known", "lifted anchors",
+                  "play cloths", "akoo", "born x raised", "felt",
+                  "full send", "godspeed", "inner city", "kloud",
+                  "mobius", "nobility", "preme", "royal surge",
+                  "trademark", "urbanity", "virtue", "nobero"]
+    women_brands = ["daisy street", "daze", "cones"]
+    for b in women_brands:
+        if b in combined:
+            return "women"
+    for b in men_brands:
+        if b in combined:
+            return "men"
+
+    # Title-based hints for clothing items
+    men_title = ["hoodie", "jogger", "cargo", "crew neck", "graphic tee",
+                 "trucker hat", "beanie", "snapback", "fitted hat",
+                 "sweatpant", "track pant", "polo"]
+    women_title = ["halter", "wrap dress", "midi", "maxi", "floral",
+                   "peplum", "off shoulder", "bodysuit"]
+    for w in women_title:
+        if w in combined:
+            return "women"
+    for m in men_title:
+        if m in combined:
+            return "men"
+
     return "unisex"
+
+_metafield_gender_cache: Dict[str, str] = {}  # shopify_product_id -> gender
+
+async def _fetch_shopify_metafield_gender(shopify_product_id: str, client: httpx.AsyncClient) -> str:
+    """Fetch gender metafield from Shopify for a single product (cached)."""
+    if not SHOPIFY_TOKEN or not shopify_product_id:
+        return ""
+    if shopify_product_id in _metafield_gender_cache:
+        return _metafield_gender_cache[shopify_product_id]
+    try:
+        url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products/{shopify_product_id}/metafields.json"
+        r = await client.get(url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN}, timeout=10)
+        if r.status_code != 200:
+            _metafield_gender_cache[shopify_product_id] = ""
+            return ""
+        mfs = r.json().get("metafields", [])
+        for mf in mfs:
+            if mf.get("namespace") == "custom" and mf.get("key") == "gender":
+                val = (mf.get("value") or "").strip().lower()
+                gender = ""
+                if val in ("men", "mens", "male"):
+                    gender = "men"
+                elif val in ("women", "womens", "female"):
+                    gender = "women"
+                elif val == "unisex":
+                    gender = "unisex"
+                _metafield_gender_cache[shopify_product_id] = gender
+                return gender
+        _metafield_gender_cache[shopify_product_id] = ""
+        return ""
+    except Exception:
+        return ""
+
+
+async def _prefetch_shopify_genders(shopify_ids: List[str], client: httpx.AsyncClient, batch_size: int = 10):
+    """Fetch gender metafields for all Shopify products in parallel batches."""
+    if not SHOPIFY_TOKEN:
+        return
+    to_fetch = [pid for pid in shopify_ids if pid and pid not in _metafield_gender_cache]
+    if not to_fetch:
+        return
+    log.info("Prefetching gender metafields for %d products (parallel batches of %d)", len(to_fetch), batch_size)
+    for i in range(0, len(to_fetch), batch_size):
+        batch = to_fetch[i:i+batch_size]
+        await asyncio.gather(*[_fetch_shopify_metafield_gender(pid, client) for pid in batch],
+                             return_exceptions=True)
+    # Count genders found
+    counts = {"men": 0, "women": 0, "unisex": 0, "unknown": 0}
+    for pid in shopify_ids:
+        g = _metafield_gender_cache.get(pid, "")
+        if g in counts:
+            counts[g] += 1
+        else:
+            counts["unknown"] += 1
+    log.info("Gender metafields: men=%d women=%d unisex=%d unknown=%d",
+             counts["men"], counts["women"], counts["unisex"], counts["unknown"])
+
 
 async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
     """Fetch ALL products from Boss store catalog endpoint with cursor pagination."""
@@ -657,7 +812,16 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
                     pid = str(p.get("id", ""))
                     category = _shopify_category(p.get("category") or "")
                     tags_str = ", ".join(p.get("tags") or [])
-                    gender = _shopify_gender(tags_str, title)
+
+                    # Extract Shopify product ID from garment_id
+                    # Format: "shopify_gid://shopify/Product/10106635944214"
+                    garment_id = p.get("garment_id", "")
+                    shopify_pid = ""
+                    if "Product/" in garment_id:
+                        shopify_pid = garment_id.split("Product/")[-1].strip()
+
+                    # Fallback gender from tags/title/brand (metafield overrides later)
+                    gender = _shopify_gender(tags_str, title, p.get("category") or "")
                     base_price = float(p.get("base_price") or 0)
                     thumbnail = p.get("thumbnail_url") or p.get("texture_url") or ""
 
@@ -727,6 +891,7 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
                         "created_at": p.get("created_at") or "",
                         "mesh_key": p.get("mesh_key") or "",
                         "texture_url": p.get("texture_url") or "",
+                        "_shopify_pid": shopify_pid,  # for gender metafield fetch
                     })
 
                 # Check for next page
@@ -741,6 +906,39 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
         items = [it for it in items if it.get("primary_image_url") and (it.get("base_price") or 0) > 0]
         log.info("Boss store catalog loaded: %d products (%d with images+price) from store %d (%d pages)",
                  before, len(items), store_id, page)
+
+        # Prefetch gender metafields from Shopify in parallel batches
+        if SHOPIFY_TOKEN:
+            shopify_ids = [it.get("_shopify_pid", "") for it in items if it.get("_shopify_pid")]
+            async with httpx.AsyncClient(timeout=30) as shopify_client:
+                await _prefetch_shopify_genders(shopify_ids, shopify_client, batch_size=15)
+            # Override gender from metafield + AI classification
+            overridden = 0
+            ai_applied = 0
+            for it in items:
+                pid = it.get("_shopify_pid", "")
+                # 1) Shopify metafield gender (highest priority)
+                if pid in _metafield_gender_cache and _metafield_gender_cache[pid]:
+                    it["gender"] = _metafield_gender_cache[pid]
+                    overridden += 1
+                # 2) AI-classified gender (for products still "unisex")
+                elif pid and pid in _ai_gender_map and it.get("gender", "unisex") == "unisex":
+                    it["gender"] = _ai_gender_map[pid]
+                    ai_applied += 1
+                it.pop("_shopify_pid", None)
+            log.info("Gender: %d from Shopify metafields, %d from AI classification, out of %d items",
+                     overridden, ai_applied, len(items))
+        else:
+            # No Shopify token — use AI gender only
+            ai_applied = 0
+            for it in items:
+                pid = it.get("_shopify_pid", "")
+                if pid and pid in _ai_gender_map and it.get("gender", "unisex") == "unisex":
+                    it["gender"] = _ai_gender_map[pid]
+                    ai_applied += 1
+                it.pop("_shopify_pid", None)
+            if ai_applied:
+                log.info("Gender: %d from AI classification (no Shopify token)", ai_applied)
     except Exception as e:
         log.warning("Boss store catalog fetch failed: %s", e)
 
@@ -1930,23 +2128,32 @@ def _cur_season() -> str:
     return "winter"
 
 def _season_score(item: Dict, pref_season: str) -> float:
+    # Use current season if user has no preference
     if not pref_season:
-        return 0.5   # neutral when user has no season preference
+        pref_season = _cur_season()
     s    = pref_season.lower()
+
+    # Check item's season (inferred from tags/name/fabric)
+    item_season = _season_item(item).lower()
+    if item_season == s:
+        return 1.0  # exact match
+    if not item_season:
+        return 0.5  # no season data = neutral (don't penalize)
+
     kw   = _SEASON_KW.get(s, set())
     cols = _SEASON_COL.get(s, set())
     text = (
         {t.lower() for t in _tags(item)} |
         _item_colors(item) |
         {(item.get("category") or "").lower()} |
-        {_season_item(item).lower()} |
+        {item_season} |
         {_fabric(item).lower()}
     )
-    return min(
+    return max(min(
         len(text & kw)   / max(len(kw),   1) * 0.6 +
         len(text & cols) / max(len(cols), 1) * 0.4,
         1.0
-    )
+    ), 0.3)  # minimum 0.3 instead of 0 — don't harshly penalize
 
 
 # ── TF-IDF content score ──────────────────────────────────────────
@@ -2116,6 +2323,8 @@ async def dify_boost(gender: str, color: str,
 _embedding_model = None
 _item_embeddings: Dict[str, Any] = {}     # item_id -> numpy array
 _embeddings_built = False
+_query_embedding_cache: Dict[str, Any] = {}  # query_text -> embedding vector (LRU)
+_QUERY_CACHE_MAX = 256
 
 def _get_embedding_model():
     """Lazy-load sentence transformer model (runs once, ~500MB download first time)."""
@@ -2194,13 +2403,21 @@ def _semantic_score(query_text: str, item_id: str) -> float:
         return 0.0
 
 def _semantic_scores_batch(query_text: str, item_ids: List[str]) -> Dict[str, float]:
-    """Batch semantic similarity for all items against user query."""
+    """Batch semantic similarity for all items against user query (cached)."""
     model = _get_embedding_model()
     if not model or not _item_embeddings:
         return {}
     try:
         import numpy as np
-        q_emb = model.encode([query_text], normalize_embeddings=True)[0]
+        # Cache query embeddings — same user prefs return same embedding
+        if query_text in _query_embedding_cache:
+            q_emb = _query_embedding_cache[query_text]
+        else:
+            q_emb = model.encode([query_text], normalize_embeddings=True)[0]
+            # Simple LRU: if cache full, drop oldest (first key)
+            if len(_query_embedding_cache) >= _QUERY_CACHE_MAX:
+                _query_embedding_cache.pop(next(iter(_query_embedding_cache)))
+            _query_embedding_cache[query_text] = q_emb
         scores = {}
         for iid in item_ids:
             if iid in _item_embeddings:
@@ -2615,10 +2832,12 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     """
     pj = user_doc.get("profile_data_json") or {}
 
-    gender     = _norm_gender(override.get("gender")     if override else pj.get("gender", ""))
-    colors     = override.get("colors")     if override else pj.get("preferred_colors", [])
-    categories = override.get("categories") if override else pj.get("preferred_categories", [])
-    season     = override.get("season")     if override else pj.get("preferred_season", "")
+    # If override has a specific key, use it; else fall back to profile data.
+    # This way override can selectively override some fields without wiping others.
+    gender     = _norm_gender((override or {}).get("gender") or pj.get("gender", ""))
+    colors     = (override or {}).get("colors") or pj.get("preferred_colors", []) or []
+    categories = (override or {}).get("categories") or pj.get("preferred_categories", []) or []
+    season     = (override or {}).get("season") or pj.get("preferred_season", "") or ""
     body_meas  = pj.get("body_measurements", {})
     uid        = user_doc.get("user_id", "anon")
 
@@ -2633,32 +2852,9 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     if isinstance(categories, str): categories = [categories]
 
     # Fetch catalog and Dify boost concurrently.
-    # Don't pass gender to fetch_catalog — gender scoring is done by the ranker
-    # below (s_gender). This ensures the startup pre-loaded cache is always hit.
-    catalog_task = fetch_catalog()
-
-    dify_task = None
-    if gender or colors or categories:
-        dify_task = asyncio.wait_for(
-            dify_boost(
-                gender,
-                (colors     or [""])[0],
-                (categories or [""])[0],
-                season, uid,
-            ),
-            timeout=5.0,   # 3% signal — not worth waiting longer
-        )
-
-    if dify_task:
-        catalog, dify_result = await asyncio.gather(
-            catalog_task, dify_task, return_exceptions=True
-        )
-        dify_ids = dify_result if isinstance(dify_result, set) else set()
-        if isinstance(dify_result, Exception):
-            log.debug("Dify failed/timed out — skipping boost: %s", dify_result)
-    else:
-        catalog = await catalog_task
-        dify_ids: Set[str] = set()
+    # Catalog loading (Dify AI boost removed — was failing/slow, adds no value)
+    catalog = await fetch_catalog()
+    dify_ids: Set[str] = set()
 
     # TF-IDF content scores (runs in thread pool — non-blocking)
     con_sc = await _content_scores(catalog, categories or [], colors or [], season or "")
@@ -2826,20 +3022,17 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         item_tags = {t.lower() for t in item_tags_list}
         item_text = f"{item_cat} {item_name} {item_sub} {' '.join(item_tags)}"
 
-        # ── Category score (graduated: exact > partial > tag) ─────────
-        _cat_hits = 0.0
+        # ── Category score (sharper: exact=1.0, partial=0.3, tag=0.1) ──
+        _cat_best = 0.0
         for cl_variants in cat_variant_sets:
-            best = 0.0
             for cv in cl_variants:
                 if item_cat and item_cat == cv:
-                    best = max(best, 3.0); break          # can't do better
+                    _cat_best = max(_cat_best, 1.0); break  # exact match
                 elif item_cat and (cv in item_cat or item_cat in cv):
-                    best = max(best, 2.5)
+                    _cat_best = max(_cat_best, 0.3)         # partial match (much lower)
                 elif cv in item_text:
-                    best = max(best, 1.5)
-            _cat_hits += best
-        # Normalize by (num_categories × 3) so matching all = 1.0
-        s_cat = min(_cat_hits / (len(cats_list) * 3.0), 1.0) if cats_list else 0.5
+                    _cat_best = max(_cat_best, 0.1)         # tag match (minimal)
+        s_cat = _cat_best if cats_list else 0.5
 
         # ── Core scores ───────────────────────────────────────────────
         s_color  = _color_score(item, colors_list)
@@ -2851,9 +3044,20 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
 
         # ── Signal 8: Brand affinity ─────────────────────────────────
         item_brand = (item.get("brand") or "").lower()
+        item_name_lower = (item.get("name") or "").lower()
         s_brand = 0.0
-        if item_brand and history_brands:
-            s_brand = min(history_brands.get(item_brand, 0) / max_brand_aff, 1.0)
+        if history_brands:
+            # Try exact match first
+            if item_brand and item_brand in history_brands:
+                s_brand = min(history_brands[item_brand] / max_brand_aff, 1.0)
+            else:
+                # Fuzzy match: favorite brand name appears in item brand or name
+                for fb, fb_weight in history_brands.items():
+                    if not fb:
+                        continue
+                    if fb in item_brand or fb in item_name_lower or item_brand in fb:
+                        s_brand = max(s_brand, min(fb_weight / max_brand_aff, 1.0) * 0.9)
+                        break
 
         # ── Signal 9: Price affinity ──────────────────────────────────
         bp_item = item.get("base_price") or 0
@@ -2864,19 +3068,32 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
             import math
             s_price = math.exp(-2.0 * (ratio - 1.0) ** 2)
 
-        # ── Signal 10: Behavior boost (collaborative) ─────────────────
+        # ── Signal 10: Behavior boost (based on user history) ─────────
         s_behavior = 0.0
         if history_ids:
             if iid in history_ids:
                 s_behavior = 0.0   # don't re-recommend what user already saw
             else:
-                # Multi-factor: category affinity + brand affinity from history
+                # Multi-factor: category + brand + color affinity from history
                 cat_aff = history_cats.get(item_cat, 0)
                 brand_aff = history_brands.get(item_brand, 0) if item_brand else 0
+
                 max_cat_aff = max(history_cats.values()) if history_cats else 1
                 cat_score = min(cat_aff / max_cat_aff, 1.0) if max_cat_aff > 0 else 0.0
                 brand_score = min(brand_aff / max_brand_aff, 1.0) if max_brand_aff > 0 else 0.0
-                s_behavior = 0.6 * cat_score + 0.4 * brand_score
+
+                # Color affinity: do item colors match any color from history items?
+                color_score = 0.0
+                if history_item_objs:
+                    hist_colors = set()
+                    for hi in history_item_objs:
+                        for c in (hi.get("available_colors") or hi.get("colors") or []):
+                            hist_colors.add(str(c).lower())
+                    this_item_colors = {str(c).lower() for c in (item.get("available_colors") or item.get("colors") or [])}
+                    if hist_colors and this_item_colors & hist_colors:
+                        color_score = 1.0
+
+                s_behavior = 0.5 * cat_score + 0.3 * brand_score + 0.2 * color_score
 
         # ── Signal 11: Recency boost ──────────────────────────────────
         # Newer items get a slight boost (decays over 90 days)
@@ -3079,7 +3296,33 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                 )
         # Stock multiplier: out-of-stock items score at most 60% of base
         stock_mult = 0.6 + 0.4 * s_stock
-        final = min(base * stock_mult, 1.0)
+
+        # Perfect-match bonus — multiplicative boost for clear winners
+        perfect_bonus = 1.0
+        if s_cat >= 1.0:         # exact category match
+            perfect_bonus *= 1.40  # strong boost
+        elif s_cat >= 0.3:       # partial category match
+            perfect_bonus *= 1.15
+        if s_color >= 0.9:       # exact color match
+            perfect_bonus *= 1.20
+        if s_cat >= 1.0 and s_color >= 0.9:  # both perfect = hero combo
+            perfect_bonus *= 1.15
+        if s_brand > 0.7 and item_brand:
+            perfect_bonus *= 1.10
+        if s_similar > 0.7:
+            perfect_bonus *= 1.08
+
+        # Category penalty — when user explicitly chose categories,
+        # heavily deprioritize items that don't match ANY category
+        # This ensures t-shirts show when user asks for t-shirts
+        category_penalty = 1.0
+        if cats_list:
+            if s_cat < 0.1:
+                category_penalty = 0.25  # 75% penalty for zero-match
+            elif s_cat < 0.3:
+                category_penalty = 0.6   # 40% penalty for weak partial match
+
+        final = min(base * stock_mult * perfect_bonus * category_penalty, 1.0)
 
         images, primary = _build_images(item, viewer_gender=gender)
         # For Shopify items, keep original sizes/colors; for Boss items, rebuild from variants
@@ -3144,27 +3387,31 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                 "repeat_purchase":round(s_repeat,     3),
             },
             "recommendation_reason": (
-                "Perfect match for your style"                          if s_cat > 0.8 and s_color > 0.8           else
-                "Completes your outfit perfectly"                       if s_outfit > 0.8 and history_item_objs    else
-                "People with similar taste love this"                   if s_collab > 0.6                          else
-                "Similar to items you've purchased"                     if s_similar > 0.7                         else
-                "Buy again - your go-to style"                          if s_repeat > 0.6                          else
-                f"Because you like {item_brand.title()}"                if s_brand > 0.7 and item_brand            else
-                "Trending fast right now"                               if s_trend > 0.7                           else
-                "Goes great with items you own"                         if s_outfit > 0.6 and history_item_objs    else
-                "Similar to items you've liked"                         if s_behavior > 0.6                        else
-                f"Matches your {colors_list[0]} colour preference"      if s_color > 0.6 and colors_list           else
-                "Great fit for your body type"                          if s_fit > 0.7 and body_meas               else
-                "Your size is available"                                if s_size_avail > 0.9 and user_size        else
-                f"Perfect for {item_occasion.split(',')[0].strip()}"    if s_occasion > 0.7 and item_occasion      else
-                "Trending right now"                                    if s_popularity > 0.5                      else
-                "New arrival"                                           if s_recency > 0.8                         else
-                f"{round(disc)}% OFF deal"                              if disc > 20                               else
-                "Customers also bought this"                            if s_collab > 0.3                          else
-                "AI-powered pick for you"                               if s_dify > 0                              else
-                f"Top pick for {season}"                                if s_season > 0.4 and season               else
-                f"Recommended in {item_cat or 'your style'}"            if s_cat > 0.5                             else
-                "Trending in your style"
+                # Strongest signals — combine category + color for best match
+                f"Perfect {colors_list[0]} {item_cat}"                  if s_cat >= 1.0 and s_color > 0.6 and colors_list and item_cat else
+                f"Exact match for {item_cat}"                           if s_cat >= 1.0 and item_cat              else
+                f"Great {colors_list[0]} pick"                          if s_color > 0.7 and colors_list           else
+                # Behavioral signals
+                f"Because you like {item_brand.title()}"                if s_brand > 0.5 and item_brand            else
+                "Similar to items you've purchased"                     if s_similar > 0.5                         else
+                "Based on your recent browsing"                         if s_behavior > 0.4                        else
+                # Category + color even at lower thresholds
+                f"Matches your {colors_list[0]} preference"             if s_color > 0.4 and colors_list           else
+                f"Fits your {item_cat} style"                           if s_cat > 0.3 and item_cat                else
+                # Fit and size
+                "Great fit for your body type"                          if s_fit > 0.6 and body_meas               else
+                "Available in your size"                                if s_size_avail > 0.8 and user_size        else
+                # Occasion
+                f"Perfect for {item_occasion.split(',')[0].strip()}"    if s_occasion > 0.6 and item_occasion      else
+                # Popularity and trends
+                "Trending now"                                          if s_popularity > 0.4                      else
+                "Rising fast"                                           if s_trend > 0.5                           else
+                "New arrival"                                           if s_recency > 0.7                         else
+                # Deals
+                f"{round(disc)}% OFF"                                    if disc > 20                               else
+                # Default — specific category
+                f"Recommended in {item_cat}"                            if item_cat                                else
+                "Curated for you"
             ),
             # Pricing helpers
             "sale_price":       _safe_float(item.get("sale_price")),
@@ -3567,6 +3814,50 @@ async def save_profile_compat(
 
 
 # ── Recommendations ───────────────────────────────────────────────
+# ── Top/Bottom-wear filter ────────────────────────────────────────
+# Recommendations are restricted to apparel only — no accessories,
+# footwear, bags, jewelry, or one-piece items (dresses, jumpsuits).
+_TOPWEAR_KEYWORDS = (
+    "shirt", "t-shirt", "tshirt", "tee", "blouse", "kurta", "kurti",
+    "blazer", "jacket", "coat", "sweater", "hoodie", "pullover",
+    "cardigan", "shrug", "tunic", "topwear",
+)
+_BOTTOMWEAR_KEYWORDS = (
+    "pant", "trouser", "jean", "short", "skirt", "chino", "slack",
+    "jogger", "cargo", "legging", "palazzo", "trackpant", "bottomwear",
+    "bottom",
+)
+_EXCLUDE_KEYWORDS = (
+    "accessor", "shoe", "footwear", "sneaker", "boot", "sandal",
+    "slipper", "loafer", "heel", "bag", "handbag", "backpack", "purse",
+    "wallet", "watch", "jewelry", "jewellery", "necklace", "earring",
+    "bracelet", "ring", "belt", "tie", " cap", "hat", "scarf", "stole",
+    "sunglass", "glove", "sock", "dress", "gown", "saree", "sari",
+    "lehenga", "jumpsuit", "romper", "onesie",
+)
+
+def _is_top_or_bottom_wear(item: Dict[str, Any]) -> bool:
+    """True if item is top-wear or bottom-wear (excludes accessories,
+    footwear, bags, dresses, jumpsuits, etc.)."""
+    cat  = (item.get("category") or "").lower().strip()
+    sub  = (item.get("subcategory") or "").lower().strip()
+    name = (item.get("name") or "").lower()
+    combined = f" {cat} {sub} {name} "
+
+    for kw in _EXCLUDE_KEYWORDS:
+        if kw in combined:
+            return False
+
+    for kw in _TOPWEAR_KEYWORDS + _BOTTOMWEAR_KEYWORDS:
+        if kw in combined:
+            return True
+
+    # Allow standalone "top"/"tops" category (avoid matching "laptop" etc.)
+    if cat in ("top", "tops") or sub in ("top", "tops"):
+        return True
+    return False
+
+
 @app.get("/api/recommendations", tags=["Recommendations"],
          summary="Get recommendations using saved profile")
 async def get_recommendations(
@@ -3594,8 +3885,14 @@ async def get_recommendations(
     if category: override["categories"] = [category]
     if season:   override["season"]     = season
 
-    items = await rank_catalog(user, top_k=effective_k,
+    # Fetch extra items so we have enough after filtering out
+    # accessories / footwear / dresses
+    items = await rank_catalog(user, top_k=max(effective_k * 3, 60),
                                override=override if override else None)
+
+    # Restrict to top-wear and bottom-wear only
+    items = [it for it in items if _is_top_or_bottom_wear(it)]
+    items = items[:effective_k]
 
     if not include_breakdown:
         for item in items:
@@ -3667,7 +3964,15 @@ async def post_recommendations(req: RecRequest):
         override["season"] = cp.occasion.lower()
 
     # Run the ranker — fetch 500 items, return all that pass filters
-    items = await rank_catalog(user_doc, top_k=50, override=override)
+    items = await rank_catalog(user_doc, top_k=500, override=override)
+
+    # Restrict to top-wear and bottom-wear only (exclude accessories,
+    # footwear, dresses, jumpsuits, etc.)
+    items = [it for it in items if _is_top_or_bottom_wear(it)]
+
+    # Quality threshold: only include items scoring > 0.3
+    items = [it for it in items if it.get("score", 0) >= 0.3]
+    items = items[:50]
 
     # ── Post-filters (minimal — let the 22-signal engine rank) ─────
     # Only remove items the user explicitly excluded/disliked.
@@ -3852,8 +4157,13 @@ async def recommendations_v2(req: RecRequestV2):
     items = await rank_catalog(user_doc, top_k=500,
                                override=override)
 
-    # No post-filtering — the 22-signal engine handles ranking.
-    # Matching items score higher, non-matching score lower but still appear.
+    # Restrict to top-wear and bottom-wear only (exclude accessories,
+    # footwear, dresses, jumpsuits, etc.)
+    items = [it for it in items if _is_top_or_bottom_wear(it)]
+
+    # Quality threshold: only return items with score > 0.3
+    # (below this, items are poor matches — don't pad results)
+    items = [it for it in items if it.get("score", 0) >= 0.3]
     items = items[:req.top_k]
 
     recs = []
@@ -3905,6 +4215,10 @@ async def trending(
     No auth required. Items sorted by total stock availability.
     """
     items = await fetch_catalog()
+
+    # Restrict to top-wear and bottom-wear only (exclude accessories,
+    # footwear, dresses, jumpsuits, etc.)
+    items = [it for it in items if _is_top_or_bottom_wear(it)]
 
     # Apply gender / category / color filters post-fetch
     # (fetch_catalog returns the full catalog cache; filtering is done here)

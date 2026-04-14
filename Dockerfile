@@ -8,7 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir sentence-transformers python-multipart
 
 COPY fashion_ai/ ./fashion_ai/
-COPY catalog_for_xpectrum.csv .
 
 EXPOSE 8000
 
