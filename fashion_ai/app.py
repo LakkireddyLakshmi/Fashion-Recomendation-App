@@ -12,7 +12,7 @@ CHANGES in this version:
 """
 
 from __future__ import annotations
-import asyncio, hashlib, json, logging, os, time, uuid
+import asyncio, hashlib, json, logging, math, os, random, re, time, uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -37,7 +37,8 @@ try:
 except ImportError:
     JWT_OK = False
 
-load_dotenv(override=True)
+# Load .env from the fashion_ai/ folder (not project root)
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("hueiq")
@@ -126,8 +127,7 @@ async def _refresh_boss_token() -> bool:
                 try:
                     env_path = os.path.join(os.path.dirname(__file__), ".env")
                     env_text = open(env_path, encoding="utf-8").read()
-                    import re as _re2
-                    env_text = _re2.sub(r"BOSS_TOKEN=.*", f"BOSS_TOKEN={new_token}", env_text)
+                    env_text = re.sub(r"BOSS_TOKEN=.*", f"BOSS_TOKEN={new_token}", env_text)
                     open(env_path, "w", encoding="utf-8").write(env_text)
                     log.info("BOSS_TOKEN saved to .env")
                 except Exception as _e:
@@ -182,8 +182,8 @@ async def current_user(
 def _norm_gender(g: str) -> str:
     """Normalize to catalog storage values: 'men' or 'women'."""
     g = (g or "").lower().strip()
-    if g in ("men", "male", "man", "m"):               return "men"
-    if g in ("female", "women", "woman", "f", "w"):    return "women"
+    if g in ("men", "male", "man", "m", "boy", "boys"):       return "men"
+    if g in ("female", "women", "woman", "f", "w", "girl", "girls"):  return "women"
     return g
 
 
@@ -447,43 +447,19 @@ def _tags(item: Dict) -> List[str]:
     return out
 
 def _gender(item: Dict) -> str:
+    """Return gender ONLY from real Shopify metafield data.
+    No heuristics, no guessing — if Shopify has no gender tag, return empty.
+    The hard filter in rank_catalog then drops items without real gender.
+    """
     em = item.get("extra_metadata") or {}
     explicit = (
         item.get("gender") or
         (em.get("gender") if isinstance(em, dict) else None) or
         ""
-    ).lower()
-    if explicit and explicit != "unisex":
-        return explicit
-    # Infer gender from name + category when not explicitly set
-    name = (item.get("name") or "").lower()
-    cat  = (item.get("category") or "").lower()
-    # Normalize curly quotes/apostrophes to straight
-    text = f"{name} {cat}".replace("\u2019", "'").replace("\u2018", "'")
-
-    # Check women FIRST — "women's" contains "men's" so order matters
-    women_kw = (
-        "women", "woman", "womens", "women's", "ladies", "girls", "female",
-        "miss chase", "vero moda", "sassafras", "tokyo talkies",
-        "blouse", "kurta", "anarkali", "lehenga", "saree",
-        "dress", "dresses", "skirt", "skirts", "jumpsuit", "top", "tops",
-        "blouse", "bra", "lingerie", "bikini", "gown", "frock",
-    )
-    is_women = any(k in text for k in women_kw)
-    if is_women:
-        return "women"
-
-    men_kw = (
-        " men ", " men's", "mens ", "for men", "boys ", " male",
-        "highlander", "peter england", "ben martin", "majestic man",
-        "levi's men", "symbol men", "bewakoof x streetwear men",
-        "shirt", "tshirt", "t-shirt", "trouser", "trousers",
-        "blazer", "suit", "kurta men", "dhoti", "sherwani",
-    )
-    is_men = any(k in text for k in men_kw)
-    if is_men:
-        return "men"
-    return "unisex"
+    ).lower().strip()
+    if not explicit:
+        return ""  # ← empty → item gets filtered out of recommendations
+    return _norm_gender(explicit) or explicit
 
 def _season_item(item: Dict) -> str:
     """Infer season from extra_metadata, tags, name, category, or fabric."""
@@ -519,14 +495,27 @@ def _fabric(item: Dict) -> str:
     return (em.get("fabric") if isinstance(em, dict) else None) or item.get("fabric") or ""
 
 def _item_colors(item: Dict) -> Set[str]:
-    """Collect all color_variants from images[] and variants[]."""
+    """Collect all colors from available_colors, colors, images[], and variants[]."""
     colors: Set[str] = set()
+    # Top-level color lists
+    for c in (item.get("available_colors") or item.get("colors") or []):
+        if c:
+            # Colors like "Heather/Black" or "Black/vivid Sulfur" → split
+            for part in str(c).replace("/", " ").split():
+                colors.add(part.lower().strip())
+    # Images & variants
     for img in (item.get("images") or []):
         if isinstance(img, dict) and img.get("color_variant"):
             colors.add(img["color_variant"].lower())
     for v in (item.get("variants") or []):
         if isinstance(v, dict) and v.get("color"):
-            colors.add(v["color"].lower())
+            for part in str(v["color"]).replace("/", " ").split():
+                colors.add(part.lower().strip())
+    # extra_metadata.color
+    em = item.get("extra_metadata") or {}
+    if isinstance(em, dict) and em.get("color"):
+        for part in str(em["color"]).replace("/", " ").split():
+            colors.add(part.lower().strip())
     return colors
 
 def _in_stock(item: Dict) -> bool:
@@ -581,25 +570,6 @@ def _physics_profile(item: Dict) -> Optional[str]:
         return phys.lower() or None
     return None
 
-
-# ── AI-classified gender data ────────────────────────────────────
-# Load pre-classified gender from ai_classification_results.json
-# This maps shopify_product_id -> "Men"/"Women"/"Unisex"
-_ai_gender_map: Dict[str, str] = {}
-import pathlib as _pathlib
-_ai_gender_file = _pathlib.Path(__file__).parent.parent / "ai_classification_results.json"
-if _ai_gender_file.exists():
-    try:
-        with open(_ai_gender_file) as _f:
-            _raw = json.load(_f)
-            for _k, _v in _raw.items():
-                if _v in ("Men", "Women", "Unisex"):
-                    _ai_gender_map[_k] = _v.lower().rstrip("en") if _v == "Women" else _v.lower()
-                    # Normalize: "Men" -> "men", "Women" -> "women", "Unisex" -> "unisex"
-                    _ai_gender_map[_k] = {"Men": "men", "Women": "women", "Unisex": "unisex"}.get(_v, "unisex")
-        log.info("Loaded AI gender classifications for %d products", len(_ai_gender_map))
-    except Exception as _e:
-        log.warning("Failed to load AI gender file: %s", _e)
 
 # ── Catalog source: Boss PostgreSQL DB ────────────────────────────
 # Gender metafields are fetched from Shopify (Boss doesn't sync them)
@@ -718,49 +688,94 @@ def _shopify_gender(tags: str, title: str, category: str = "") -> str:
 
 _metafield_gender_cache: Dict[str, str] = {}  # shopify_product_id -> gender
 
+# Persist gender cache to disk so cold starts skip the ~4-min Shopify
+# rate-limited prefetch. Container Apps restarts wipe RAM but keep the
+# image filesystem; we use /tmp which survives the process but not the
+# container — for true durability the path can be swapped to a mounted
+# volume. Even per-container persistence saves repeat fetches when a
+# replica restarts within the same revision.
+_GENDER_CACHE_FILE = os.path.join(os.path.dirname(__file__), "_gender_cache.json")
+
+def _load_gender_cache() -> None:
+    global _metafield_gender_cache
+    try:
+        if os.path.exists(_GENDER_CACHE_FILE):
+            with open(_GENDER_CACHE_FILE, "r", encoding="utf-8") as f:
+                _metafield_gender_cache = json.load(f)
+            log.info("Gender cache loaded from disk: %d entries", len(_metafield_gender_cache))
+    except Exception as e:
+        log.warning("Failed to load gender cache: %s", e)
+
+def _save_gender_cache() -> None:
+    try:
+        with open(_GENDER_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_metafield_gender_cache, f)
+    except Exception as e:
+        log.warning("Failed to save gender cache: %s", e)
+
+_load_gender_cache()
+
 async def _fetch_shopify_metafield_gender(shopify_product_id: str, client: httpx.AsyncClient) -> str:
-    """Fetch gender metafield from Shopify for a single product (cached)."""
+    """Fetch gender metafield from Shopify with retry on 429 rate limit."""
     if not SHOPIFY_TOKEN or not shopify_product_id:
         return ""
     if shopify_product_id in _metafield_gender_cache:
         return _metafield_gender_cache[shopify_product_id]
-    try:
-        url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products/{shopify_product_id}/metafields.json"
-        r = await client.get(url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN}, timeout=10)
-        if r.status_code != 200:
+    url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products/{shopify_product_id}/metafields.json"
+    headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
+    # Retry up to 4 times on 429 with exponential backoff
+    for attempt in range(4):
+        try:
+            r = await client.get(url, headers=headers, timeout=15)
+            if r.status_code == 429:
+                # Rate limited — backoff: 1s, 2s, 4s, 8s
+                retry_after = float(r.headers.get("Retry-After", "1"))
+                await asyncio.sleep(max(retry_after, 2 ** attempt))
+                continue
+            if r.status_code != 200:
+                _metafield_gender_cache[shopify_product_id] = ""
+                return ""
+            mfs = r.json().get("metafields", [])
+            for mf in mfs:
+                if mf.get("namespace") == "custom" and mf.get("key") == "gender":
+                    val = (mf.get("value") or "").strip().lower()
+                    gender = ""
+                    if val in ("men", "mens", "male"):
+                        gender = "men"
+                    elif val in ("women", "womens", "female"):
+                        gender = "women"
+                    elif val == "unisex":
+                        gender = "unisex"
+                    _metafield_gender_cache[shopify_product_id] = gender
+                    return gender
             _metafield_gender_cache[shopify_product_id] = ""
             return ""
-        mfs = r.json().get("metafields", [])
-        for mf in mfs:
-            if mf.get("namespace") == "custom" and mf.get("key") == "gender":
-                val = (mf.get("value") or "").strip().lower()
-                gender = ""
-                if val in ("men", "mens", "male"):
-                    gender = "men"
-                elif val in ("women", "womens", "female"):
-                    gender = "women"
-                elif val == "unisex":
-                    gender = "unisex"
-                _metafield_gender_cache[shopify_product_id] = gender
-                return gender
-        _metafield_gender_cache[shopify_product_id] = ""
-        return ""
-    except Exception:
-        return ""
+        except Exception:
+            await asyncio.sleep(1)
+    # Exhausted retries — mark as unknown (will retry on next startup)
+    return ""
 
 
-async def _prefetch_shopify_genders(shopify_ids: List[str], client: httpx.AsyncClient, batch_size: int = 10):
-    """Fetch gender metafields for all Shopify products in parallel batches."""
+async def _prefetch_shopify_genders(shopify_ids: List[str], client: httpx.AsyncClient, batch_size: int = 2):
+    """Fetch gender metafields with Shopify rate-limit compliance.
+    Shopify allows ~2 requests/second (standard plan). Small batches + sleep.
+    """
     if not SHOPIFY_TOKEN:
         return
     to_fetch = [pid for pid in shopify_ids if pid and pid not in _metafield_gender_cache]
     if not to_fetch:
         return
-    log.info("Prefetching gender metafields for %d products (parallel batches of %d)", len(to_fetch), batch_size)
+    log.info("Prefetching gender metafields for %d products (rate-limited, ~2/sec)", len(to_fetch))
     for i in range(0, len(to_fetch), batch_size):
         batch = to_fetch[i:i+batch_size]
         await asyncio.gather(*[_fetch_shopify_metafield_gender(pid, client) for pid in batch],
                              return_exceptions=True)
+        # Respect Shopify's 2 req/sec rate limit — sleep 1 sec after each batch of 2
+        await asyncio.sleep(1.0)
+        if (i // batch_size) % 50 == 0 and i > 0:
+            log.info("  Shopify metafield progress: %d/%d fetched", i, len(to_fetch))
+    # Persist to disk so the next cold start can skip this 4-min loop
+    _save_gender_cache()
     # Count genders found
     counts = {"men": 0, "women": 0, "unisex": 0, "unknown": 0}
     for pid in shopify_ids:
@@ -779,8 +794,13 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
     cursor = None
     page = 0
 
-    # Get a store auth token
-    boss_store_token = os.getenv("BOSS_STORE_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwidXNlcl90eXBlIjoic3RvcmUiLCJleHAiOjE3NzU1NTgzOTV9.pRapRcguDI9QBAEZnDCK3cPrYFyqjN9CSl2aRIAuD_4")
+    # Use auto-refreshed BOSS_TOKEN (refreshed via _refresh_boss_token).
+    # Falls back to BOSS_STORE_TOKEN env var or hardcoded token (expires 2026-04-24).
+    boss_store_token = BOSS_TOKEN or os.getenv("BOSS_STORE_TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyIiwidXNlcl90eXBlIjoic3RvcmUiLCJleHAiOjE3NzU1NTgzOTV9.pRapRcguDI9QBAEZnDCK3cPrYFyqjN9CSl2aRIAuD_4")
+    if _is_token_expired(boss_store_token):
+        log.warning("Store token expired — refreshing via admin login")
+        if await _refresh_boss_token():
+            boss_store_token = BOSS_TOKEN
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -795,6 +815,14 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
                     "Content-Type": "application/json",
                 })
 
+                if r.status_code == 401:
+                    log.warning("Boss store catalog 401 — refreshing token and retrying")
+                    if await _refresh_boss_token():
+                        boss_store_token = BOSS_TOKEN
+                        r = await client.get(url, headers={
+                            "Authorization": f"Bearer {boss_store_token}",
+                            "Content-Type": "application/json",
+                        })
                 if r.status_code != 200:
                     log.warning("Boss store catalog error: HTTP %d", r.status_code)
                     break
@@ -820,8 +848,9 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
                     if "Product/" in garment_id:
                         shopify_pid = garment_id.split("Product/")[-1].strip()
 
-                    # Fallback gender from tags/title/brand (metafield overrides later)
-                    gender = _shopify_gender(tags_str, title, p.get("category") or "")
+                    # Gender ONLY from Shopify metafields — no guessing.
+                    # Set empty here; _prefetch_shopify_genders() populates it later.
+                    gender = ""
                     base_price = float(p.get("base_price") or 0)
                     thumbnail = p.get("thumbnail_url") or p.get("texture_url") or ""
 
@@ -904,41 +933,56 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
         # Filter out items with no image or no price
         before = len(items)
         items = [it for it in items if it.get("primary_image_url") and (it.get("base_price") or 0) > 0]
-        log.info("Boss store catalog loaded: %d products (%d with images+price) from store %d (%d pages)",
-                 before, len(items), store_id, page)
+
+        # Filter out non-apparel items (accessories, bags) — KEEP footwear/shoes
+        # (v2 endpoint serves 1 top + 1 bottom + 1 shoe; other endpoints filter
+        # shoes back out via _sort_by_tier(clothes_only=True)).
+        before_cloth = len(items)
+        EXCLUDE_CATEGORIES = {
+            "accessories", "accessories - bags", "accessories - headwear",
+            "accessories - socks", "accessories - wallets", "wallets",
+            "unclassified", "bags", "headwear", "socks",
+            # Underwear / intimates — never show as part of an outfit
+            "bottoms - boxers", "boxers", "underwear", "intimates",
+            "bottoms - briefs", "briefs",
+        }
+        def _is_clothing(item):
+            cat   = (item.get("subcategory") or item.get("category") or "").lower().strip()
+            title = (item.get("title") or item.get("name") or "").lower()
+            if cat in EXCLUDE_CATEGORIES:
+                return False
+            if cat.startswith("accessories"):
+                return False
+            # Title-based safety net: any "boxer brief" / "underwear" item
+            # mis-categorised as a bottom should still be filtered out.
+            if "boxer" in title or "underwear" in title:
+                return False
+            return True
+        items = [it for it in items if _is_clothing(it)]
+
+        log.info("Boss store catalog loaded: %d products (%d with images+price, %d clothing only) from store %d (%d pages)",
+                 before, before_cloth, len(items), store_id, page)
 
         # Prefetch gender metafields from Shopify in parallel batches
         if SHOPIFY_TOKEN:
             shopify_ids = [it.get("_shopify_pid", "") for it in items if it.get("_shopify_pid")]
-            async with httpx.AsyncClient(timeout=30) as shopify_client:
-                await _prefetch_shopify_genders(shopify_ids, shopify_client, batch_size=15)
-            # Override gender from metafield + AI classification
+            # Long timeout per client; batch_size=2 (Shopify rate limit = 2 req/sec)
+            async with httpx.AsyncClient(timeout=60) as shopify_client:
+                await _prefetch_shopify_genders(shopify_ids, shopify_client, batch_size=2)
+            # Boss DB provides gender directly — only Shopify metafield can override
             overridden = 0
-            ai_applied = 0
             for it in items:
                 pid = it.get("_shopify_pid", "")
-                # 1) Shopify metafield gender (highest priority)
                 if pid in _metafield_gender_cache and _metafield_gender_cache[pid]:
                     it["gender"] = _metafield_gender_cache[pid]
                     overridden += 1
-                # 2) AI-classified gender (for products still "unisex")
-                elif pid and pid in _ai_gender_map and it.get("gender", "unisex") == "unisex":
-                    it["gender"] = _ai_gender_map[pid]
-                    ai_applied += 1
                 it.pop("_shopify_pid", None)
-            log.info("Gender: %d from Shopify metafields, %d from AI classification, out of %d items",
-                     overridden, ai_applied, len(items))
+            log.info("Gender: %d overridden from Shopify metafields, %d items use Boss DB gender",
+                     overridden, len(items) - overridden)
         else:
-            # No Shopify token — use AI gender only
-            ai_applied = 0
+            # No Shopify token — trust Boss DB gender directly
             for it in items:
-                pid = it.get("_shopify_pid", "")
-                if pid and pid in _ai_gender_map and it.get("gender", "unisex") == "unisex":
-                    it["gender"] = _ai_gender_map[pid]
-                    ai_applied += 1
                 it.pop("_shopify_pid", None)
-            if ai_applied:
-                log.info("Gender: %d from AI classification (no Shopify token)", ai_applied)
     except Exception as e:
         log.warning("Boss store catalog fetch failed: %s", e)
 
@@ -966,38 +1010,8 @@ def _load_csv_catalog() -> List[Dict]:
         log.warning("CSV catalog not found — skipping CSV load")
         return []
 
-    # ── Load images from Boss API disk cache ──────────────────────
-    # Boss items have real product images (Azure blob) but bad metadata.
-    # CSV items have good metadata but no images.  We match by category.
+    # Disk cache removed — CSV items use their own images only
     cat_images: Dict[str, List[Dict]] = defaultdict(list)
-    _img_cache_path = os.path.join(os.path.dirname(__file__), "_catalog_cache.json")
-    try:
-        if os.path.exists(_img_cache_path):
-            with open(_img_cache_path, encoding="utf-8") as f:
-                boss_items = json.load(f)
-            for bi in boss_items:
-                imgs = bi.get("images") or []
-                if not imgs:
-                    continue
-                # Get the first valid image URL
-                img_url = ""
-                img_list = []
-                for img in imgs:
-                    url = img.get("image_url") or img.get("url") or ""
-                    if url:
-                        if not img_url:
-                            img_url = url
-                        img_list.append(img)
-                if img_url:
-                    boss_cat = (bi.get("category") or "").lower().strip()
-                    cat_images[boss_cat].append({
-                        "primary_url": img_url,
-                        "images":      img_list,
-                    })
-            log.info("Loaded images from disk cache: %d categories, %d total image sets",
-                     len(cat_images), sum(len(v) for v in cat_images.values()))
-    except Exception as e:
-        log.warning("Could not load images from disk cache: %s", e)
 
     # Category mapping: CSV category -> Boss category (for image lookup)
     # CSV has specific categories, Boss uses broader ones
@@ -1195,35 +1209,6 @@ _DEMO_CATALOG: List[Dict] = [
      "extra_metadata": {"gender": "women", "season": "summer", "fabric": "cotton"},
      "style_tags": {"tags": ["casual", "trendy", "top"]}, "variants": []},
 ]
-_DISK_CACHE_PATH = os.path.join(os.path.dirname(__file__), "_catalog_cache.json")
-_DISK_CACHE_MAX_AGE = 7 * 24 * 3600   # 7 days — seed cache is always valid; background task refreshes it
-
-def _load_disk_cache() -> List[Dict]:
-    """Load catalog from disk cache. Returns [] if missing or too old."""
-    try:
-        if not os.path.exists(_DISK_CACHE_PATH):
-            return []
-        age = time.time() - os.path.getmtime(_DISK_CACHE_PATH)
-        if age > _DISK_CACHE_MAX_AGE:
-            log.info("Disk cache is %.0fh old — will re-fetch", age / 3600)
-            return []
-        with open(_DISK_CACHE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        log.info("Loaded %d items from disk cache (%.0f min old)", len(data), age / 60)
-        return data
-    except Exception as e:
-        log.warning("Disk cache load failed: %s", e)
-        return []
-
-def _save_disk_cache(items: List[Dict]) -> None:
-    """Write catalog to disk cache in the background."""
-    try:
-        with open(_DISK_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(items, f)
-        log.info("Disk cache saved: %d items → %s", len(items), _DISK_CACHE_PATH)
-    except Exception as e:
-        log.warning("Disk cache save failed: %s", e)
-
 async def _fetch_page(skip: int, cat: Optional[str] = None) -> List[Dict]:
     """Fetch a single catalog page from Boss API."""
     c = await _boss_client()
@@ -1409,21 +1394,11 @@ async def _load_all_pages_bg():
             if any(len(pg) < PAGE_SIZE for pg in pages):
                 break
 
-        # Save to disk so next server restart is instant
-        # Only save if we actually fetched something (don't overwrite good cache with [])
-        if _full_catalog_cache:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, _save_disk_cache, _full_catalog_cache)
-        elif not all_items:
-            # Boss API returned NOTHING at all (cold start / unreachable).
-            # Don't overwrite whatever is already in _full_catalog_cache (disk data or previous load).
-            # Only fall back to demo if we truly have nothing at all.
-            if not _full_catalog_cache:
-                log.warning("Boss API unreachable — using %d demo items as fallback", len(_DEMO_CATALOG))
-                _full_catalog_cache = _DEMO_CATALOG[:]
-                _cset("cat:full", _full_catalog_cache, 300)   # short TTL so real data replaces it quickly
-            else:
-                log.warning("Boss API unreachable — keeping %d existing cached items", len(_full_catalog_cache))
+        # Disk cache removed — fresh fetch from Boss API on every restart
+        if not _full_catalog_cache and not all_items:
+            log.warning("Boss API unreachable — using %d demo items as fallback", len(_DEMO_CATALOG))
+            _full_catalog_cache = _DEMO_CATALOG[:]
+            _cset("cat:full", _full_catalog_cache, 300)   # short TTL so real data replaces it quickly
         log.info("Background fetch complete: %d total, %d real in %.1fs",
                  len(all_items), len(_full_catalog_cache), time.time() - t0)
     except Exception as e:
@@ -1467,16 +1442,7 @@ async def fetch_catalog(
             asyncio.create_task(_load_all_pages_bg())
         return _full_catalog_cache
 
-    # 3. Disk cache (fast — avoids re-downloading on restart)
-    disk = _load_disk_cache()
-    if disk:
-        _full_catalog_cache = disk
-        _cset("cat:full", disk, 3600)
-        if not _catalog_loading:
-            asyncio.create_task(_load_all_pages_bg())
-        return disk
-
-    # 4. Nothing cached — quick-fetch first page for instant results
+    # 3. Nothing cached — quick-fetch first page for instant results
     try:
         t0 = time.time()
         first_page = await _fetch_page(0,
@@ -2003,23 +1969,27 @@ def _color_score(item: Dict, pref_colors: List[str]) -> float:
     if not pref_colors: return 1.0   # no preference = all colors equally good
     item_cols = _item_colors(item)
     if not item_cols: return 0.5    # neutral if item has no color data
-    pref_set = {c.lower() for c in pref_colors}
+    pref_set = {c.lower().strip() for c in pref_colors}
 
-    # Family-level match (primary): "green" matches "emerald", "olive", "sage" etc.
+    # Exact match (highest priority): "black" in ["black","heather"] → 1.0
+    if pref_set & item_cols:
+        return 1.0
+
+    # Partial match (substring): "blue" matches "navy blue" or "light-blue"
+    for p in pref_set:
+        for ic in item_cols:
+            if p in ic or ic in p:
+                return 0.9
+
+    # Family-level match: "green" → "emerald", "olive", "sage"; "blue" → "navy"
     pref_families = {_color_family(c) for c in pref_set}
     item_families = {_color_family(ic) for ic in item_cols}
-    family_match  = len(pref_families & item_families) / max(len(pref_families), 1)
+    if pref_families & item_families:
+        overlap = len(pref_families & item_families) / max(len(pref_families), 1)
+        return 0.5 + 0.3 * overlap   # 0.5 to 0.8 depending on overlap
 
-    # Exact/partial name match (secondary)
-    exact   = len(pref_set & item_cols) / max(len(pref_set), 1)
-    partial = sum(
-        any(p in ic or ic in p for ic in item_cols)
-        for p in pref_set
-    ) / max(len(pref_set), 1)
-    name_match = min(exact * 0.7 + partial * 0.3, 1.0)
-
-    # Family is the dominant signal; exact name match is a bonus
-    return min(family_match * 0.75 + name_match * 0.25, 1.0)
+    # No match at all
+    return 0.1
 
 
 # ── Fit score (physics_profile × body_measurements) ───────────────
@@ -2514,7 +2484,6 @@ _interaction_log: List[Dict] = []  # global interaction timeline
 
 def _log_interaction_ts(item_id: str, event: str):
     """Log timestamped interaction for trend detection."""
-    from datetime import datetime, timezone
     _interaction_log.append({
         "item_id": item_id,
         "event": event,
@@ -2530,7 +2499,6 @@ def _trend_velocity() -> Dict[str, float]:
     the last 24h vs the previous 7 days.
     Returns item_id -> velocity score (0-1).
     """
-    from datetime import datetime, timezone, timedelta
     if not _interaction_log:
         return {}
 
@@ -2670,7 +2638,6 @@ def _cosine_sim(v1: Dict[str, float], v2: Dict[str, float]) -> float:
     if not common:
         return 0.0
     dot = sum(v1[k] * v2[k] for k in common)
-    import math
     mag1 = math.sqrt(sum(v * v for v in v1.values()))
     mag2 = math.sqrt(sum(v * v for v in v2.values()))
     if mag1 == 0 or mag2 == 0:
@@ -2751,7 +2718,6 @@ def _session_context_boost() -> Dict[str, float]:
     Time-of-day and day-of-week context.
     Morning = workwear/formal. Evening = party/casual. Weekend = casual/street.
     """
-    from datetime import datetime
     now = datetime.now()
     hour = now.hour
     weekday = now.weekday()  # 0=Mon, 6=Sun
@@ -2774,6 +2740,71 @@ def _session_context_boost() -> Dict[str, float]:
     return boosts
 
 
+# ── Occasion → Category preference multipliers ───────────────────
+# When user picks an occasion, these multipliers shift which categories
+# surface. Formal occasions penalize t-shirts/shorts, boost trousers/tops.
+# Casual occasions keep everything neutral. Gym/beach favors shorts.
+_OCCASION_CATEGORY = {
+    # Formal / dressy — penalize t-shirts/shorts hard, lift trousers/tops
+    "wedding":    {"trousers": 1.60, "knits": 1.45, "tops": 1.40, "outerwear": 1.30, "t-shirts": 0.25, "shorts": 0.08},
+    "formal":     {"trousers": 1.60, "knits": 1.45, "tops": 1.40, "outerwear": 1.30, "t-shirts": 0.25, "shorts": 0.08},
+    "office":     {"trousers": 1.55, "tops": 1.45, "knits": 1.40, "outerwear": 1.25, "t-shirts": 0.35, "shorts": 0.08},
+    "work":       {"trousers": 1.55, "tops": 1.45, "knits": 1.40, "outerwear": 1.25, "t-shirts": 0.35, "shorts": 0.08},
+    "workwear":   {"trousers": 1.55, "tops": 1.45, "knits": 1.40, "outerwear": 1.25, "t-shirts": 0.35, "shorts": 0.08},
+    "business":   {"trousers": 1.55, "tops": 1.45, "knits": 1.40, "outerwear": 1.25, "t-shirts": 0.35, "shorts": 0.08},
+    "interview":  {"trousers": 1.55, "tops": 1.45, "knits": 1.40, "outerwear": 1.25, "t-shirts": 0.25, "shorts": 0.08},
+    "date":       {"trousers": 1.30, "outerwear": 1.25, "knits": 1.20, "tops": 1.15, "t-shirts": 0.75, "shorts": 0.40},
+    "dinner":     {"trousers": 1.35, "outerwear": 1.25, "knits": 1.25, "tops": 1.20, "t-shirts": 0.60, "shorts": 0.20},
+
+    # Party / night out
+    "party":      {"outerwear": 1.30, "knits": 1.15, "tops": 1.15, "t-shirts": 1.00, "trousers": 1.10, "shorts": 0.50},
+    "evening":    {"outerwear": 1.30, "knits": 1.20, "tops": 1.15, "trousers": 1.20, "t-shirts": 0.85, "shorts": 0.40},
+    "club":       {"outerwear": 1.25, "knits": 1.15, "tops": 1.10, "t-shirts": 1.00, "trousers": 1.05, "shorts": 0.60},
+
+    # Casual / daily
+    "casual":     {"t-shirts": 1.15, "outerwear": 1.05, "trousers": 1.0, "tops": 1.0, "knits": 1.0, "shorts": 0.95},
+    "daily":      {"t-shirts": 1.10, "trousers": 1.05, "outerwear": 1.0, "tops": 1.0, "shorts": 0.90},
+    "weekend":    {"t-shirts": 1.15, "outerwear": 1.05, "trousers": 1.0, "shorts": 1.05, "tops": 0.95, "knits": 0.95},
+    "brunch":     {"t-shirts": 1.10, "trousers": 1.05, "tops": 1.10, "outerwear": 1.0, "shorts": 1.0},
+    "outing":     {"t-shirts": 1.10, "trousers": 1.05, "outerwear": 1.05, "tops": 1.0, "shorts": 1.05},
+    "streetwear": {"t-shirts": 1.20, "outerwear": 1.15, "trousers": 1.05, "shorts": 1.0, "tops": 0.95, "knits": 0.90},
+
+    # Active / sport — boost shorts hard, penalize graphic t-shirts (no athletic ones in catalog)
+    "gym":        {"shorts": 3.00, "t-shirts": 0.35, "trousers": 0.50, "tops": 0.40, "outerwear": 0.20, "knits": 0.10},
+    "sport":      {"shorts": 2.80, "t-shirts": 0.40, "trousers": 0.60, "outerwear": 0.35, "tops": 0.50, "knits": 0.15},
+    "workout":    {"shorts": 3.00, "t-shirts": 0.35, "trousers": 0.50, "tops": 0.40, "outerwear": 0.20, "knits": 0.10},
+    "yoga":       {"shorts": 2.80, "t-shirts": 0.45, "trousers": 1.00, "tops": 0.70, "outerwear": 0.25, "knits": 0.20},
+    "running":    {"shorts": 3.00, "t-shirts": 0.40, "trousers": 0.50, "outerwear": 0.35, "tops": 0.45, "knits": 0.10},
+
+    # Beach / vacation
+    "beach":      {"shorts": 3.20, "t-shirts": 0.55, "outerwear": 0.15, "tops": 0.50, "knits": 0.10, "trousers": 0.30},
+    "vacation":   {"t-shirts": 1.15, "shorts": 1.60, "outerwear": 0.70, "trousers": 0.80, "tops": 1.0, "knits": 0.75},
+    "travel":     {"t-shirts": 1.10, "outerwear": 1.15, "trousers": 1.05, "shorts": 1.0, "knits": 1.0, "tops": 1.0},
+    "shopping":   {"t-shirts": 1.15, "outerwear": 1.05, "trousers": 1.0, "tops": 1.0, "knits": 1.0, "shorts": 0.95},
+    "event":      {"trousers": 1.4, "knits": 1.3, "tops": 1.3, "outerwear": 1.2, "t-shirts": 0.4, "shorts": 0.15},
+}
+
+def _occasion_category_mult(occasion: str, category: str) -> float:
+    """Return multiplier for (occasion, category) pair. Default 1.0 (no change).
+    Frontend sends "Work / Office" — try the full string, then each segment so
+    we still hit single-word keys like "office"."""
+    if not occasion:
+        return 1.0
+    occ = occasion.lower().strip()
+    cat = (category or "").lower().strip()
+    if " - " in cat:
+        cat = cat.split(" - ")[-1].strip()
+    candidates = [occ]
+    for sep in ("/", "&", "-", ","):
+        if sep in occ:
+            candidates.extend(p.strip() for p in occ.split(sep))
+    candidates.extend(occ.split())
+    for k in candidates:
+        if k in _OCCASION_CATEGORY:
+            return _OCCASION_CATEGORY[k].get(cat, 0.85)
+    return 1.0
+
+
 # ── Exploration / Serendipity ────────────────────────────────────
 def _exploration_candidates(scored: List[Dict], top_k: int) -> List[Dict]:
     """
@@ -2781,7 +2812,6 @@ def _exploration_candidates(scored: List[Dict], top_k: int) -> List[Dict]:
     the user hasn't explicitly asked for, to help discover new styles.
     Amazon calls this "You might also like".
     """
-    import random
     if len(scored) < 10:
         return scored
 
@@ -2838,6 +2868,10 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     colors     = (override or {}).get("colors") or pj.get("preferred_colors", []) or []
     categories = (override or {}).get("categories") or pj.get("preferred_categories", []) or []
     season     = (override or {}).get("season") or pj.get("preferred_season", "") or ""
+    user_styles = [s.lower() for s in (
+        (override or {}).get("style_preferences") or pj.get("style_preferences", []) or []
+    )]
+    user_mood = ((override or {}).get("mood") or pj.get("mood") or "").lower()
     body_meas  = pj.get("body_measurements", {})
     uid        = user_doc.get("user_id", "anon")
 
@@ -2854,7 +2888,7 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     # Fetch catalog and Dify boost concurrently.
     # Catalog loading (Dify AI boost removed — was failing/slow, adds no value)
     catalog = await fetch_catalog()
-    dify_ids: Set[str] = set()
+    # Dify AI boost removed — was failing/slow, adds no value
 
     # TF-IDF content scores (runs in thread pool — non-blocking)
     con_sc = await _content_scores(catalog, categories or [], colors or [], season or "")
@@ -2895,7 +2929,9 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     user_build     = explicit_build if explicit_build in ("slim","athletic","plus","average") \
                      else _infer_build(body_meas)
 
-    colors_list  = colors or []
+    # Expand abstract palette names ("Bold" → red/orange/yellow, "Monochrome"
+    # → black/white/gray) so colour scoring can actually distinguish them.
+    colors_list  = _expand_user_colors(colors or [])
     cats_list    = categories or []
 
     # Semantic query for embedding similarity
@@ -2934,6 +2970,7 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     # ── Build behavior profile from history ──────────────────────
     # Analyze browsed/liked/purchased items to extract brand + price + category affinity
     history_ids = browsing_ids | liked_ids | purchase_ids
+    has_history = bool(history_ids)          # function-scope (used after loop)
     history_brands: Dict[str, float] = {}    # brand -> affinity score
     history_cats: Dict[str, float] = {}      # category -> affinity score
     history_prices: List[float] = []
@@ -3007,12 +3044,21 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
             continue
         seen.add(iid)
 
-        # ── Early gender filter (skip before any heavy computation) ──
+        # ── Hard filters: skip items with missing gender or no image ──
         ig = _gender(item)
+        if not ig:
+            continue  # no gender tag at all → drop
         if gender and ig != "unisex" and ig != gender:
+            continue  # wrong gender → drop
+        # Image required — no point showing a card with no picture
+        has_image = bool(
+            item.get("primary_image_url") or
+            (item.get("images") or []) or
+            any((v or {}).get("image_url") or (v or {}).get("image")
+                for v in (item.get("variants") or []))
+        )
+        if not has_image:
             continue
-
-        s_gender = 1.0  # wrong-gender already skipped above
 
         # ── Per-item text fields (computed once, reused below) ────────
         item_cat  = (item.get("category") or "").lower()
@@ -3039,7 +3085,6 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         s_fit    = _fit_score_prebuilt(item, user_build)
         s_season = _season_score(item, season or "")
         s_con    = con_sc.get(iid, 0.0)
-        s_dify   = 0.85 if iid in dify_ids else 0.0
         s_stock  = _stock_score(item)
 
         # ── Signal 8: Brand affinity ─────────────────────────────────
@@ -3064,8 +3109,6 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         s_price = 0.5   # neutral default
         if avg_price > 0 and bp_item > 0:
             ratio = bp_item / avg_price
-            # Gaussian-like: peaks at 1.0 when price = avg, drops smoothly
-            import math
             s_price = math.exp(-2.0 * (ratio - 1.0) ** 2)
 
         # ── Signal 10: Behavior boost (based on user history) ─────────
@@ -3101,7 +3144,6 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         created = item.get("created_at") or ""
         if created:
             try:
-                from datetime import datetime, timezone
                 if "+" in created or created.endswith("Z"):
                     ct = datetime.fromisoformat(created.replace("Z", "+00:00"))
                 else:
@@ -3139,7 +3181,7 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         # ── Signal 13: Occasion match ─────────────────────────────────
         # Match item's occasion tags with user's mood/occasion
         s_occasion = 0.5
-        user_occasion = (override.get("season") or "").lower() if override else ""
+        user_occasion = (override.get("occasion") or "").lower() if override else ""
         user_mood = ""
         if override:
             user_mood = (override.get("mood") or "").lower()
@@ -3183,6 +3225,11 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         # ── Signal 19: Semantic similarity (deep embeddings) ──────────
         s_semantic = sem_scores.get(iid, 0.0)
 
+        # ── Signal 22: User-style match (NEW — high weight) ───────────
+        s_style = _style_score(item, user_styles)
+        # ── Signal 23: Mood match (NEW) ─────────────────────────────
+        s_mood  = _mood_score(item, user_mood)
+
         # ── Signal 20: Outfit compatibility ───────────────────────────
         s_outfit = _outfit_compatibility(item, history_item_objs) if history_item_objs else 0.5
 
@@ -3199,97 +3246,97 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
         # ── Weighted score (22 signals) ───────────────────────────────
         has_history = bool(history_ids)
         if strict_cats:
+            # Gender is enforced by the early hard-filter at the top of the loop
+            # (wrong-gender items are skipped entirely). Not scored here.
             if has_history:
                 base = (
-                    0.15 * s_cat       +   #  1. category match
-                    0.08 * s_color     +   #  2. color preference
-                    0.05 * s_fit       +   #  3. body fit
+                    0.20 * s_style     +   #  0. user-style match (NEW, high weight)
+                    0.13 * s_cat       +   #  1. category match
+                    0.07 * s_color     +   #  2. color preference
+                    0.04 * s_fit       +   #  3. body fit
                     0.02 * s_season    +   #  4. seasonal
                     0.02 * s_con       +   #  5. TF-IDF content
-                    0.02 * s_gender    +   #  6. gender
-                    0.01 * s_dify      +   #  7. AI boost
-                    0.05 * s_brand     +   #  8. brand affinity
-                    0.03 * s_price     +   #  9. price affinity
-                    0.06 * s_behavior  +   # 10. behavior
-                    0.02 * s_recency   +   # 11. recency
-                    0.04 * s_size_avail+   # 12. size availability
-                    0.03 * s_occasion  +   # 13. occasion match
-                    0.03 * s_popularity+   # 14. popularity
-                    0.02 * s_discount  +   # 15. discount
-                    0.08 * s_collab    +   # 16. collaborative filtering
-                    0.06 * s_similar   +   # 17. item-to-item similarity
-                    0.03 * s_session   +   # 18. session context
-                    0.08 * s_semantic  +   # 19. semantic embedding
-                    0.05 * s_outfit    +   # 20. outfit compatibility
-                    0.04 * s_trend     +   # 21. trend velocity
-                    0.03 * s_repeat        # 22. repeat purchase
+                    0.04 * s_brand     +   #  6. brand affinity
+                    0.02 * s_price     +   #  7. price affinity
+                    0.05 * s_behavior  +   #  8. behavior
+                    0.02 * s_recency   +   #  9. recency
+                    0.03 * s_size_avail+   # 10. size availability
+                    0.02 * s_occasion  +   # 11. occasion match
+                    0.02 * s_popularity+   # 12. popularity
+                    0.02 * s_discount  +   # 13. discount
+                    0.06 * s_collab    +   # 14. collaborative filtering
+                    0.05 * s_similar   +   # 15. item-to-item similarity
+                    0.03 * s_session   +   # 16. session context
+                    0.09 * s_semantic  +   # 17. semantic embedding
+                    0.04 * s_outfit    +   # 18. outfit compatibility
+                    0.03 * s_trend     +   # 19. trend velocity
+                    0.02 * s_repeat        # 20. repeat purchase
                 )
             else:
                 base = (
-                    0.22 * s_cat       +
-                    0.14 * s_color     +
-                    0.07 * s_fit       +
-                    0.04 * s_season    +
-                    0.03 * s_con       +
-                    0.02 * s_gender    +
-                    0.02 * s_dify      +
+                    0.24 * s_style     +   #  0. user-style match (still dominant)
+                    0.14 * s_color     +   #     palette match
+                    0.13 * s_mood      +   #  BOOSTED 0.08 → 0.13: 6-way differentiation
+                    0.10 * s_fit       +   #  BOOSTED 0.05 → 0.10: body type matters
+                    0.08 * s_cat       +
+                    0.07 * s_size_avail+   #  BOOSTED 0.03 → 0.07: exact-size fit
+                    0.05 * s_occasion  +
+                    0.02 * s_season    +
+                    0.02 * s_con       +
+                    0.02 * s_brand     +
                     0.02 * s_recency   +
-                    0.04 * s_size_avail+
-                    0.03 * s_occasion  +
-                    0.03 * s_popularity+
+                    0.02 * s_popularity+
                     0.02 * s_discount  +
-                    0.04 * s_session   +
-                    0.04 * s_similar   +
-                    0.10 * s_semantic  +
-                    0.04 * s_outfit    +
-                    0.05 * s_trend     +
-                    0.05 * s_similar
+                    0.01 * s_session   +
+                    0.01 * s_similar   +
+                    0.03 * s_semantic  +
+                    0.01 * s_outfit    +
+                    0.01 * s_trend     +
+                    0.01 * s_repeat
                 )
-            # No hard cap — let all 22 signals determine the final score.
-            # Items with s_cat=0 naturally score lower but aren't excluded.
         else:
             if has_history:
                 base = (
-                    0.10 * s_cat       +
-                    0.08 * s_color     +
-                    0.05 * s_fit       +
-                    0.03 * s_season    +
-                    0.03 * s_con       +
-                    0.02 * s_gender    +
-                    0.01 * s_dify      +
-                    0.06 * s_brand     +
-                    0.03 * s_price     +
-                    0.06 * s_behavior  +
+                    0.20 * s_style     +
+                    0.09 * s_cat       +
+                    0.07 * s_color     +
+                    0.04 * s_fit       +
+                    0.02 * s_season    +
+                    0.02 * s_con       +
+                    0.05 * s_brand     +
+                    0.02 * s_price     +
+                    0.05 * s_behavior  +
                     0.02 * s_recency   +
-                    0.03 * s_size_avail+
-                    0.03 * s_occasion  +
-                    0.03 * s_popularity+
+                    0.02 * s_size_avail+
+                    0.02 * s_occasion  +
+                    0.02 * s_popularity+
                     0.02 * s_discount  +
-                    0.10 * s_collab    +
-                    0.08 * s_similar   +
+                    0.08 * s_collab    +
+                    0.07 * s_similar   +
                     0.03 * s_session   +
-                    0.08 * s_semantic  +
-                    0.04 * s_outfit    +
-                    0.04 * s_trend     +
-                    0.03 * s_repeat
+                    0.09 * s_semantic  +
+                    0.03 * s_outfit    +
+                    0.03 * s_trend     +
+                    0.02 * s_repeat
                 )
             else:
                 base = (
-                    0.18 * s_cat       +
+                    0.24 * s_style     +
                     0.14 * s_color     +
-                    0.08 * s_fit       +
-                    0.05 * s_season    +
-                    0.05 * s_con       +
-                    0.03 * s_gender    +
-                    0.02 * s_dify      +
-                    0.03 * s_recency   +
-                    0.04 * s_size_avail+
-                    0.03 * s_occasion  +
-                    0.03 * s_popularity+
+                    0.13 * s_mood      +   # boosted
+                    0.10 * s_fit       +   # boosted
+                    0.08 * s_cat       +
+                    0.07 * s_size_avail+   # boosted
+                    0.05 * s_occasion  +
+                    0.02 * s_season    +
+                    0.02 * s_con       +
+                    0.02 * s_brand     +
+                    0.02 * s_recency   +
+                    0.02 * s_popularity+
                     0.02 * s_discount  +
-                    0.04 * s_session   +
+                    0.01 * s_session   +
                     0.04 * s_similar   +
-                    0.10 * s_semantic  +
+                    0.12 * s_semantic  +
                     0.04 * s_outfit    +
                     0.05 * s_trend     +
                     0.03 * s_repeat
@@ -3322,7 +3369,13 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
             elif s_cat < 0.3:
                 category_penalty = 0.6   # 40% penalty for weak partial match
 
-        final = min(base * stock_mult * perfect_bonus * category_penalty, 1.0)
+        # Occasion × category multiplier — strong bias based on user's occasion.
+        # e.g. wedding/office → boost trousers/tops, penalize t-shirts/shorts.
+        # e.g. gym/beach → boost shorts, penalize outerwear/knits.
+        user_occ_for_mult = (override.get("occasion") or "").lower() if override else ""
+        occasion_mult = _occasion_category_mult(user_occ_for_mult, item_cat)
+
+        final = min(base * stock_mult * perfect_bonus * category_penalty * occasion_mult, 1.0)
 
         images, primary = _build_images(item, viewer_gender=gender)
         # For Shopify items, keep original sizes/colors; for Boss items, rebuild from variants
@@ -3366,10 +3419,8 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                 "category":       round(s_cat,        3),
                 "color":          round(s_color,      3),
                 "fit":            round(s_fit,        3),
-                "gender":         round(s_gender,     3),
                 "season":         round(s_season,     3),
                 "content_tfidf":  round(s_con,        3),
-                "ai_boost":       round(s_dify,       3),
                 "brand_affinity": round(s_brand,      3),
                 "price_affinity": round(s_price,      3),
                 "behavior":       round(s_behavior,   3),
@@ -3814,9 +3865,12 @@ async def save_profile_compat(
 
 
 # ── Recommendations ───────────────────────────────────────────────
-# ── Top/Bottom-wear filter ────────────────────────────────────────
-# Recommendations are restricted to apparel only — no accessories,
-# footwear, bags, jewelry, or one-piece items (dresses, jumpsuits).
+# ── Apparel category tiers ────────────────────────────────────────
+# Items are grouped into tiers so results can be sorted in order:
+# top-wear → bottom-wear → footwear → everything else.
+# Hard-excluded categories (bags, jewelry, watches, belts, etc.) and
+# one-piece garments that don't fit the top/bottom model (dresses,
+# jumpsuits, sarees) return tier = -1 and are filtered out.
 _TOPWEAR_KEYWORDS = (
     "shirt", "t-shirt", "tshirt", "tee", "blouse", "kurta", "kurti",
     "blazer", "jacket", "coat", "sweater", "hoodie", "pullover",
@@ -3827,41 +3881,448 @@ _BOTTOMWEAR_KEYWORDS = (
     "jogger", "cargo", "legging", "palazzo", "trackpant", "bottomwear",
     "bottom",
 )
+_FOOTWEAR_KEYWORDS = (
+    "shoe", "footwear", "sneaker", "boot", "sandal", "slipper",
+    "loafer", "heel", "flip-flop", "flipflop", "espadrille", "mule",
+)
 _EXCLUDE_KEYWORDS = (
-    "accessor", "shoe", "footwear", "sneaker", "boot", "sandal",
-    "slipper", "loafer", "heel", "bag", "handbag", "backpack", "purse",
-    "wallet", "watch", "jewelry", "jewellery", "necklace", "earring",
-    "bracelet", "ring", "belt", "tie", " cap", "hat", "scarf", "stole",
-    "sunglass", "glove", "sock", "dress", "gown", "saree", "sari",
-    "lehenga", "jumpsuit", "romper", "onesie",
+    "accessor", "bag", "handbag", "backpack", "purse", "wallet",
+    "watch", "jewelry", "jewellery", "necklace", "earring", "bracelet",
+    "ring", "belt", "tie ", "scarf", "stole", "sunglass", "glove",
+    "sock", "dress", "gown", "saree", "sari", "lehenga", "jumpsuit",
+    "romper", "onesie",
 )
 
-def _is_top_or_bottom_wear(item: Dict[str, Any]) -> bool:
-    """True if item is top-wear or bottom-wear (excludes accessories,
-    footwear, bags, dresses, jumpsuits, etc.)."""
+# Lower tier = higher sort priority. -1 means drop the item entirely.
+_TIER_TOP, _TIER_BOTTOM, _TIER_SHOES, _TIER_OTHER = 0, 1, 2, 3
+
+def _apparel_tier(item: Dict[str, Any]) -> int:
+    """Classify an item into a sort tier. -1 means exclude.
+
+    Category is the authoritative signal and is checked BEFORE name-level
+    keywords — otherwise a shoe named "Blazer Mid '77" or "Dunk Low Cargo
+    Khaki" would leak into top-wear / bottom-wear tiers just because its
+    name happens to contain a garment keyword.
+    """
     cat  = (item.get("category") or "").lower().strip()
     sub  = (item.get("subcategory") or "").lower().strip()
     name = (item.get("name") or "").lower()
-    combined = f" {cat} {sub} {name} "
+    combined_cat = f" {cat} {sub} "
+    combined_all = f" {cat} {sub} {name} "
 
+    # 1. Category-first classification — trust the structured taxonomy.
+    #    If category clearly identifies the item, return immediately.
+    #    This prevents name-level exclude keywords from wrongly dropping
+    #    items like "6 Rings Graphic Tee" (matched "ring") or
+    #    "Tie Dye Hoodie" (matched "tie ").
+    if "footwear" in combined_cat or "shoe" in combined_cat:
+        return _TIER_SHOES
+    if "top" in combined_cat or "shirt" in combined_cat or "outerwear" in combined_cat:
+        return _TIER_TOP
+    if "bottom" in combined_cat or "pant" in combined_cat:
+        return _TIER_BOTTOM
+
+    # 2. Hard exclusions — only checked when category didn't resolve.
+    #    Run against category+name to catch accessories, bags, dresses, etc.
     for kw in _EXCLUDE_KEYWORDS:
-        if kw in combined:
-            return False
+        if kw in combined_all:
+            return -1
 
-    for kw in _TOPWEAR_KEYWORDS + _BOTTOMWEAR_KEYWORDS:
-        if kw in combined:
-            return True
-
-    # Allow standalone "top"/"tops" category (avoid matching "laptop" etc.)
+    # 3. Name-level fallback (for items with generic/missing category)
+    for kw in _TOPWEAR_KEYWORDS:
+        if kw in combined_all:
+            return _TIER_TOP
     if cat in ("top", "tops") or sub in ("top", "tops"):
-        return True
-    return False
+        return _TIER_TOP
+    for kw in _BOTTOMWEAR_KEYWORDS:
+        if kw in combined_all:
+            return _TIER_BOTTOM
+    for kw in _FOOTWEAR_KEYWORDS:
+        if kw in combined_all:
+            return _TIER_SHOES
+
+    return _TIER_OTHER
+
+
+def _sort_by_tier(items: List[Dict[str, Any]],
+                  clothes_only: bool = False) -> List[Dict[str, Any]]:
+    """Drop excluded items, then sort by (tier ascending, score descending)
+    so results read top-wear → bottom-wear → shoes → other.
+
+    clothes_only=True additionally drops footwear and everything in
+    _TIER_OTHER, leaving only top-wear and bottom-wear. Used for the
+    top-N "for you" recommendation list, which should be garments only.
+    """
+    tagged = []
+    for it in items:
+        tier = _apparel_tier(it)
+        if tier < 0:
+            continue
+        if clothes_only and tier not in (_TIER_TOP, _TIER_BOTTOM):
+            continue
+        tagged.append((tier, -float(it.get("score", 0) or 0), it))
+    tagged.sort(key=lambda x: (x[0], x[1]))
+    return [t[2] for t in tagged]
+
+
+# ── Outfit coordination (Phase 2) ───────────────────────────────────
+# Score how well two items pair as part of one outfit. Used by the v2
+# endpoint after picking the anchor top — bottoms and shoes are then
+# re-ranked by (their own score) × (compatibility with the anchor).
+_NEUTRAL_COLORS = {
+    "black", "white", "grey", "gray", "ivory", "cream", "off-white",
+    "beige", "tan", "khaki", "stone", "sand", "taupe", "camel",
+    "navy", "charcoal", "brown", "denim", "indigo",
+}
+
+def _outfit_color_compat(a: Dict, b: Dict) -> float:
+    """0.5–1.0. Neutrals match anything; matching colors > clashing bolds."""
+    ca = {c for c in _item_colors(a) if c}
+    cb = {c for c in _item_colors(b) if c}
+    if not ca or not cb:
+        return 0.85  # missing color data — assume neutral pass
+    a_neutral = ca <= _NEUTRAL_COLORS
+    b_neutral = cb <= _NEUTRAL_COLORS
+    if a_neutral and b_neutral:
+        return 1.0      # all neutrals — guaranteed to work
+    if a_neutral or b_neutral:
+        return 0.95     # one bold, one neutral — classic combo
+    if ca & cb:
+        return 0.90     # share a color — analogous palette
+    return 0.55         # two different bold colors — likely clash
+
+def _outfit_formality(item: Dict) -> int:
+    """Return formality tier: 0 athletic, 1 casual, 2 smart-casual, 3 formal."""
+    cat = (item.get("category") or "").lower()
+    name = (item.get("name") or "").lower()
+    tags_text = " ".join(str(t).lower() for t in (item.get("tags") or _tags(item)))
+    text = f"{cat} {name} {tags_text}"
+    if any(k in text for k in ("athletic", "active", "sport", "gym",
+                               "running", "yoga", "training", "track")):
+        return 0
+    if any(k in text for k in ("formal", "tuxedo", "suit", "dress shirt",
+                               "oxford", "blazer", "dressy", "evening")):
+        return 3
+    if any(k in text for k in ("chino", "loafer", "polo", "button-down",
+                               "knit", "wool", "cardigan")):
+        return 2
+    return 1  # casual default — t-shirts, jeans, sneakers, hoodies
+
+def _outfit_formality_compat(a: Dict, b: Dict) -> float:
+    diff = abs(_outfit_formality(a) - _outfit_formality(b))
+    return [1.0, 0.85, 0.55, 0.25][min(diff, 3)]
+
+def _outfit_match_score(a: Dict, b: Dict) -> float:
+    """Combined pairwise compatibility score (0.1–1.0).
+    Color is weighted highest because clashing colors are the most visible
+    outfit error; formality consistency next; style overlap as a tie-break."""
+    return (
+        _outfit_color_compat(a, b) ** 1.5
+        * _outfit_formality_compat(a, b) ** 1.2
+    )
+
+
+# ── User-style → item match ─────────────────────────────────────────
+# The 21-signal engine scored category, color, fit, season, etc. but had
+# no signal for "style preference" — Casual / Sporty / Formal / Streetwear
+# all collapsed to the same #1 item. This function maps each user-selected
+# style to a keyword set and rewards items whose tags / category / title
+# contain those keywords.
+_STYLE_KEYWORDS = {
+    "casual":     {"casual", "daily", "weekend", "everyday", "lifestyle", "tee", "t-shirt"},
+    "streetwear": {"streetwear", "street", "urban", "graphic", "hype", "limited", "drop"},
+    "casual / streetwear": {"casual", "streetwear", "street", "urban", "graphic", "lifestyle"},
+    "sporty":     {"sport", "athletic", "active", "gym", "training", "performance",
+                   "running", "workout", "tech", "dri-fit", "dri fit", "fleece"},
+    "athleisure": {"athletic", "active", "sport", "lifestyle", "tech", "fleece"},
+    "formal":     {"formal", "dress", "dressy", "suit", "blazer", "evening", "tuxedo",
+                   "knit", "wool", "oxford", "loafer"},
+    "smart casual": {"chino", "loafer", "polo", "knit", "button-down", "wool"},
+    "minimalist": {"minimal", "essential", "basic", "clean", "solid", "monochrome"},
+    "minimal":    {"minimal", "essential", "basic", "clean", "solid", "monochrome"},
+    "minimal / clean": {"minimal", "clean", "essential", "basic", "solid", "monochrome", "neutral"},
+    "clean":      {"clean", "minimal", "essential", "solid"},
+    "vintage":    {"vintage", "retro", "throwback", "classic", "heritage"},
+    "preppy":     {"polo", "chino", "preppy", "oxford", "blazer", "cardigan"},
+    "bohemian":   {"boho", "bohemian", "flowy", "relaxed", "earthy", "natural"},
+    "y2k":        {"y2k", "2000s", "rhinestone", "low-rise", "metallic"},
+    "trendy":     {"trendy", "trending", "drop", "limited", "fw2025", "ss25", "new",
+                   "hype", "graphic", "statement"},
+    "trendy / fashion-forward": {"trendy", "drop", "limited", "fw2025", "ss25", "new",
+                                  "hype", "graphic", "statement", "fashion"},
+    "fashion-forward": {"trendy", "drop", "limited", "fw2025", "ss25", "new", "hype",
+                        "fashion", "statement"},
+    # Frontend palette names — these are the EXACT 5 styles the app sends.
+    "formal / business": {"formal", "dress", "dressy", "suit", "blazer", "evening",
+                          "knit", "wool", "oxford", "loafer", "business", "polo",
+                          "button-down", "chino"},
+    "athleisure / sport": {"athletic", "active", "sport", "gym", "training",
+                           "performance", "running", "workout", "tech", "dri-fit",
+                           "fleece", "lifestyle", "tank"},
+    "business":   {"formal", "dress", "blazer", "knit", "wool", "oxford", "polo",
+                   "chino", "button-down", "business"},
+    "edgy":       {"edgy", "punk", "leather", "studded", "ripped", "distressed",
+                   "moto", "biker"},
+    "elegant":    {"elegant", "refined", "luxe", "luxury", "polished", "sophisticated"},
+    "boho":       {"boho", "bohemian", "flowy", "relaxed", "earthy", "natural"},
+    "smart":      {"chino", "loafer", "polo", "knit", "button-down", "wool"},
+}
+
+# Palette name → concrete color set. The engine's _color_score matches user
+# colors against item colors, but inputs like "Bold" or "Monochrome" aren't
+# real colors — without this map, every palette pref scores identically and
+# changing palette had zero effect on outfits.
+_PALETTE_EXPANSION = {
+    "monochrome":  {"black", "white", "grey", "gray", "charcoal", "ivory", "off-white"},
+    "bold":        {"red", "orange", "yellow", "pink", "magenta", "fuchsia", "neon",
+                    "bright", "vivid", "lime", "cobalt", "electric"},
+    "earth tones": {"brown", "tan", "beige", "khaki", "olive", "rust", "mustard",
+                    "terracotta", "camel", "stone", "sand", "cream"},
+    "earth":       {"brown", "tan", "beige", "khaki", "olive", "rust", "stone"},
+    "neutral":     {"black", "white", "grey", "gray", "beige", "tan", "navy", "khaki",
+                    "ivory", "cream", "stone"},
+    "neutrals":    {"black", "white", "grey", "gray", "beige", "tan", "navy", "khaki"},
+    "pastel":      {"pink", "lavender", "mint", "peach", "baby blue", "lilac", "blush"},
+    "pastels":     {"pink", "lavender", "mint", "peach", "baby blue", "lilac"},
+    "jewel tones": {"emerald", "ruby", "sapphire", "amethyst", "teal", "burgundy",
+                    "deep red", "deep blue", "deep green", "purple"},
+    "metallic":    {"silver", "gold", "metallic", "rose gold", "bronze"},
+    "dark":        {"black", "navy", "charcoal", "burgundy", "dark", "deep"},
+    "light":       {"white", "ivory", "cream", "pastel", "light"},
+    "warm":        {"red", "orange", "yellow", "brown", "tan", "rust", "coral"},
+    "cool":        {"blue", "green", "purple", "teal", "navy"},
+}
+
+def _expand_user_colors(user_colors: List[str]) -> List[str]:
+    """Expand abstract palette names ("Bold", "Monochrome") into the concrete
+    color names that the catalog actually tags items with. Pass-through for
+    literal colors so e.g. "Black" still works alongside "Monochrome"."""
+    expanded: List[str] = []
+    for c in user_colors:
+        key = (c or "").lower().strip()
+        if not key:
+            continue
+        palette = _PALETTE_EXPANSION.get(key)
+        if palette:
+            expanded.extend(palette)
+        else:
+            expanded.append(key)
+    seen, out = set(), []
+    for c in expanded:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+def _style_score(item: Dict, user_styles: List[str]) -> float:
+    """0.0 to 1.0. How well does the item match the user's selected styles?
+    Stricter baseline (0.1 not 0.3) so non-matching items lose heavily and
+    matching items dominate — surfaces more variety as inputs change."""
+    if not user_styles:
+        return 0.5
+    cat = (item.get("category") or "").lower()
+    sub = (item.get("subcategory") or "").lower()
+    name = (item.get("name") or item.get("title") or "").lower()
+    tags_text = " ".join(str(t).lower() for t in (item.get("tags") or []))
+    item_text = f"{cat} {sub} {name} {tags_text}"
+
+    best = 0.0
+    for style in user_styles:
+        keywords = _STYLE_KEYWORDS.get(style.strip().lower())
+        if not keywords:
+            continue
+        hits = sum(1 for k in keywords if k in item_text)
+        score = min(1.0, hits * 0.45 + (0.15 if hits >= 1 else 0))
+        best = max(best, score)
+    return best if best > 0 else 0.1  # stricter — items that don't match the style sink hard
+
+
+# ── Mood → item match (NEW signal) ──────────────────────────────────
+# Frontend ships 6 moods (Chill, Confident, Adventurous, Romantic,
+# Professional, Fun) but the engine ignored them. Now they shift scores
+# subtly so two users with identical style/color/occasion but different
+# moods can diverge.
+_MOOD_KEYWORDS = {
+    "chill":        {"relaxed", "easy", "comfy", "cozy", "fleece", "knit", "lounge"},
+    "confident":    {"bold", "statement", "graphic", "hype", "drop", "limited",
+                     "oversized", "logo"},
+    "adventurous":  {"outdoor", "technical", "tech", "performance", "trail", "all-terrain",
+                     "windbreaker", "rugged", "utility"},
+    "romantic":     {"soft", "elegant", "dressy", "knit", "satin", "silk", "lace",
+                     "feminine", "blush"},
+    "professional": {"formal", "business", "polished", "knit", "wool", "blazer",
+                     "oxford", "chino", "button-down", "polo"},
+    "fun":          {"graphic", "fun", "playful", "colorful", "print", "printed",
+                     "neon", "rainbow", "hype"},
+}
+
+def _mood_score(item: Dict, mood: str) -> float:
+    if not mood:
+        return 0.5
+    keywords = _MOOD_KEYWORDS.get(mood.strip().lower())
+    if not keywords:
+        return 0.5
+    cat = (item.get("category") or "").lower()
+    name = (item.get("name") or item.get("title") or "").lower()
+    tags_text = " ".join(str(t).lower() for t in (item.get("tags") or []))
+    text = f"{cat} {name} {tags_text}"
+    hits = sum(1 for k in keywords if k in text)
+    return min(1.0, hits * 0.40 + (0.15 if hits >= 1 else 0)) if hits else 0.25
+
+
+# ── Shoe sub-type × occasion ────────────────────────────────────────
+# The 21-signal engine doesn't differentiate shoes by occasion, so the
+# same neutral slide kept winning for every Female user. Detect sub-type
+# from the title and apply an occasion-specific multiplier.
+
+def _shoe_subtype(item: Dict) -> str:
+    title = (item.get("title") or item.get("name") or "").lower()
+    cat   = (item.get("category") or "").lower()
+    text  = f"{title} {cat}"
+    if any(k in text for k in ("slide", "flip flop", "thong sandal")):
+        return "slide"
+    if "sandal" in text:
+        return "sandal"
+    if any(k in text for k in ("boot", "chelsea")):
+        return "boot"
+    if any(k in text for k in ("heel", "pump", "stiletto", "wedge")):
+        return "heel"
+    if any(k in text for k in ("oxford", "loafer", "derby", "brogue", "dress shoe")):
+        return "dress"
+    return "sneaker"  # safe default — most of the catalog is sneakers
+
+_OCCASION_SHOE = {
+    "wedding":    {"dress": 2.0, "heel": 1.8, "boot": 0.6, "sneaker": 0.4, "sandal": 0.2, "slide": 0.1},
+    "formal":     {"dress": 2.0, "heel": 1.8, "boot": 0.6, "sneaker": 0.4, "sandal": 0.2, "slide": 0.1},
+    "office":     {"dress": 1.7, "heel": 1.4, "boot": 1.0, "sneaker": 0.7, "sandal": 0.2, "slide": 0.1},
+    "work":       {"dress": 1.7, "heel": 1.4, "boot": 1.0, "sneaker": 0.7, "sandal": 0.2, "slide": 0.1},
+    "interview":  {"dress": 1.9, "heel": 1.5, "boot": 0.8, "sneaker": 0.3, "sandal": 0.1, "slide": 0.05},
+    "business":   {"dress": 1.7, "heel": 1.4, "boot": 1.0, "sneaker": 0.7, "sandal": 0.2, "slide": 0.1},
+    "date":       {"heel": 1.5, "boot": 1.4, "sneaker": 1.0, "dress": 1.1, "sandal": 0.7, "slide": 0.4},
+    "dinner":     {"heel": 1.5, "dress": 1.3, "boot": 1.2, "sneaker": 0.8, "sandal": 0.5, "slide": 0.2},
+    "party":      {"heel": 1.6, "boot": 1.4, "sneaker": 1.3, "dress": 1.2, "sandal": 0.5, "slide": 0.3},
+    "evening":    {"heel": 1.6, "dress": 1.4, "boot": 1.2, "sneaker": 0.7, "sandal": 0.5, "slide": 0.2},
+    "club":       {"heel": 1.6, "boot": 1.4, "sneaker": 1.2, "sandal": 0.4, "slide": 0.3},
+
+    "casual":     {"sneaker": 1.5, "slide": 1.0, "sandal": 1.0, "boot": 1.0, "heel": 0.6, "dress": 0.6},
+    "daily":      {"sneaker": 1.5, "slide": 1.0, "sandal": 1.0, "boot": 1.0, "heel": 0.6, "dress": 0.6},
+    "weekend":    {"sneaker": 1.5, "slide": 1.2, "sandal": 1.1, "boot": 1.0, "heel": 0.5, "dress": 0.4},
+    "brunch":     {"sneaker": 1.3, "sandal": 1.2, "slide": 1.1, "boot": 1.0, "heel": 1.0, "dress": 0.7},
+    "outing":     {"sneaker": 1.4, "sandal": 1.1, "slide": 1.0, "boot": 1.0, "heel": 0.7, "dress": 0.6},
+    "streetwear": {"sneaker": 2.0, "boot": 1.2, "slide": 0.8, "sandal": 0.6, "heel": 0.3, "dress": 0.3},
+
+    "gym":        {"sneaker": 2.5, "slide": 0.5, "sandal": 0.3, "boot": 0.1, "heel": 0.05, "dress": 0.05},
+    "sport":      {"sneaker": 2.5, "slide": 0.5, "sandal": 0.3, "boot": 0.1, "heel": 0.05, "dress": 0.05},
+    "workout":    {"sneaker": 2.5, "slide": 0.5, "sandal": 0.3, "boot": 0.1, "heel": 0.05, "dress": 0.05},
+    "running":    {"sneaker": 2.5, "slide": 0.4, "sandal": 0.3, "boot": 0.1, "heel": 0.05, "dress": 0.05},
+    "yoga":       {"sneaker": 1.8, "slide": 1.0, "sandal": 0.7, "boot": 0.2, "heel": 0.1, "dress": 0.1},
+
+    "beach":      {"sandal": 2.5, "slide": 2.5, "sneaker": 0.6, "boot": 0.05, "heel": 0.1, "dress": 0.1},
+    "vacation":   {"sandal": 1.8, "slide": 1.6, "sneaker": 1.2, "boot": 0.5, "heel": 0.7, "dress": 0.5},
+    "travel":     {"sneaker": 1.7, "slide": 1.0, "sandal": 0.9, "boot": 1.0, "heel": 0.4, "dress": 0.5},
+}
+
+def _occ_keys(occasion: str) -> List[str]:
+    """Yield each segment of an occasion string in priority order so that
+    "Work / Office" picks up "work / office" → "work" → "office" against
+    single-word map keys. Frontend sends slashed/multi-word occasions."""
+    if not occasion:
+        return []
+    s = occasion.lower().strip()
+    keys = [s]
+    for sep in ("/", "&", "-", ","):
+        if sep in s:
+            keys.extend(p.strip() for p in s.split(sep))
+    keys.extend(s.split())
+    seen = []
+    for k in keys:
+        if k and k not in seen:
+            seen.append(k)
+    return seen
+
+def _occasion_shoe_mult(occasion: str, item: Dict) -> float:
+    for k in _occ_keys(occasion):
+        if k in _OCCASION_SHOE:
+            return _OCCASION_SHOE[k].get(_shoe_subtype(item), 0.7)
+    return 1.0
+
+
+# ── Occasion → category hard-excludes ───────────────────────────────
+# The soft multiplier in _OCCASION_CATEGORY isn't enough — items with
+# strong color/style scores were still beating the occasion penalty.
+# This is a hard filter applied BEFORE Phase 2 outfit picking.
+_OCCASION_EXCLUDE_CATS = {
+    # Formal/dress — drop casual + winter outerwear + fleece (no Nuptse jackets at weddings)
+    "wedding":   {"shorts", "tank", "jogger", "sweatpant", "athletic", "active",
+                  "outerwear", "puffer", "down", "nuptse", "windbreaker", "fleece",
+                  "hoodie", "crewneck"},
+    "formal":    {"shorts", "tank", "jogger", "sweatpant", "athletic", "active",
+                  "t-shirt", "outerwear", "puffer", "down", "windbreaker", "fleece",
+                  "hoodie"},
+    "interview": {"shorts", "tank", "jogger", "sweatpant", "athletic", "active",
+                  "t-shirt", "hoodie", "outerwear", "puffer", "down", "fleece",
+                  "crewneck"},
+    "office":    {"shorts", "tank", "jogger", "sweatpant", "athletic", "active",
+                  "puffer", "down", "nuptse", "fleece", "hoodie"},
+    "work":      {"shorts", "tank", "jogger", "sweatpant", "athletic", "active",
+                  "puffer", "down", "nuptse", "fleece", "hoodie"},
+    "business":  {"shorts", "tank", "jogger", "sweatpant", "athletic", "active",
+                  "t-shirt", "puffer", "down", "fleece", "hoodie"},
+
+    # Date / dinner — drop overly-casual + outerwear-as-anchor
+    "date":      {"shorts", "tank", "jogger", "sweatpant", "athletic", "active", "puffer"},
+    "dinner":    {"shorts", "tank", "jogger", "sweatpant", "athletic", "active", "puffer"},
+
+    # Active occasions — drop dressy / heavy items
+    "gym":       {"knit", "blazer", "outerwear", "jacket", "puffer", "down", "nuptse",
+                  "jean", "denim", "skirt", "trouser"},
+    "sport":     {"knit", "blazer", "outerwear", "jacket", "puffer", "down", "nuptse",
+                  "jean", "denim", "skirt", "trouser"},
+    "workout":   {"knit", "blazer", "outerwear", "jacket", "puffer", "down", "nuptse",
+                  "jean", "denim", "skirt", "trouser"},
+    "running":   {"knit", "blazer", "outerwear", "jacket", "puffer", "down", "nuptse",
+                  "jean", "denim", "skirt", "trouser"},
+    "yoga":      {"blazer", "puffer", "down", "jean", "denim", "trouser"},
+
+    # Beach / vacation — drop heavy + dressy
+    "beach":     {"knit", "jean", "denim", "blazer", "outerwear", "jacket", "puffer",
+                  "down", "nuptse", "skirt", "trouser", "fleece"},
+    "vacation":  {"blazer", "puffer", "down", "nuptse"},
+}
+
+# Match a token as a whole word (so "knit" hits "Cameron Knit Black" but not
+# "knitwear"; "jean" hits "Slim Wax Denim Jean" but not other strings).
+_WORD_BOUNDARY = re.compile(r"[a-z0-9]+")
+
+def _occasion_excludes(item: Dict, occasion: str) -> bool:
+    """True if this item should be HARD-DROPPED for the given occasion."""
+    if not occasion:
+        return False
+    excludes = None
+    for k in _occ_keys(occasion):
+        if k in _OCCASION_EXCLUDE_CATS:
+            excludes = _OCCASION_EXCLUDE_CATS[k]
+            break
+    if not excludes:
+        return False
+    cat  = (item.get("category") or "").lower()
+    sub  = (item.get("subcategory") or "").lower()
+    name = (item.get("name") or item.get("title") or "").lower()
+    tags_text = " ".join(str(t).lower() for t in (item.get("tags") or []))
+    words = set(_WORD_BOUNDARY.findall(f"{cat} {sub} {name} {tags_text}"))
+    # Match as whole word OR as plural ("knits" → "knit" check):
+    return any(
+        x in words
+        or x + "s" in words
+        or (x.endswith("s") and x.rstrip("s") in words)
+        for x in excludes
+    )
 
 
 @app.get("/api/recommendations", tags=["Recommendations"],
          summary="Get recommendations using saved profile")
 async def get_recommendations(
-    top_k:    int            = Query(20, ge=1, le=500),
+    top_k:    int            = Query(10, ge=1, le=500),
     limit:    int            = Query(0,  ge=0, le=500),   # alias
     gender:   Optional[str]  = Query(None),
     color:    Optional[str]  = Query(None),
@@ -3887,11 +4348,11 @@ async def get_recommendations(
 
     # Fetch extra items so we have enough after filtering out
     # accessories / footwear / dresses
-    items = await rank_catalog(user, top_k=max(effective_k * 3, 60),
+    items = await rank_catalog(user, top_k=max(effective_k * 4, 80),
                                override=override if override else None)
 
-    # Restrict to top-wear and bottom-wear only
-    items = [it for it in items if _is_top_or_bottom_wear(it)]
+    # Clothes only (top-wear + bottom-wear), sorted top → bottom
+    items = _sort_by_tier(items, clothes_only=True)
     items = items[:effective_k]
 
     if not include_breakdown:
@@ -3961,34 +4422,30 @@ async def post_recommendations(req: RecRequest):
     if req.gender:
         override["gender"] = _norm_gender(req.gender)
     if cp.occasion:
-        override["season"] = cp.occasion.lower()
+        override["occasion"] = cp.occasion.lower()
 
     # Run the ranker — fetch 500 items, return all that pass filters
     items = await rank_catalog(user_doc, top_k=500, override=override)
 
-    # Restrict to top-wear and bottom-wear only (exclude accessories,
-    # footwear, dresses, jumpsuits, etc.)
-    items = [it for it in items if _is_top_or_bottom_wear(it)]
+    # Clothes only (top-wear + bottom-wear), sorted top → bottom.
+    # Excludes accessories, footwear, dresses, jumpsuits, etc.
+    items = _sort_by_tier(items, clothes_only=True)
 
-    # Quality threshold: only include items scoring > 0.3
-    items = [it for it in items if it.get("score", 0) >= 0.3]
-    items = items[:50]
+    # Quality threshold: lowered to 0.15 to ensure good variety
+    items = [it for it in items if it.get("score", 0) >= 0.15]
 
-    # ── Post-filters (minimal — let the 22-signal engine rank) ─────
-    # Only remove items the user explicitly excluded/disliked.
-    # Engine returns top 50 best-scored items already ranked by 22 signals.
-
-    # Remove excluded items
+    # Remove excluded/disliked BEFORE capping to 10 so we always return 10
     if req.exclude_items:
         ex = set(req.exclude_items)
         items = [it for it in items
                  if (it.get("catalog_item_id") or it.get("id") or "") not in ex]
-
-    # Remove disliked items
     if req.disliked_items:
         dl = set(req.disliked_items)
         items = [it for it in items
                  if (it.get("catalog_item_id") or it.get("id") or "") not in dl]
+
+    # Cap at 10 — top-10 "for you" list
+    items = items[:10]
 
     # Boost liked items so they float higher
     if req.liked_items:
@@ -4031,6 +4488,54 @@ async def post_recommendations(req: RecRequest):
     items.sort(key=lambda x: x.get("score", 0), reverse=True)
 
     # ── Build rich response ───────────────────────────────────────
+    def _product_type(item):
+        """Classify product into specific type: shirts, t-shirts, polos, tanks, hoodies, etc."""
+        name = (item.get("name") or "").lower()
+        sub = (item.get("subcategory") or "").lower()
+        tags = " ".join(item.get("tags") or []).lower() + " " + " ".join(item.get("style_tags") or []).lower()
+        combined = f"{name} {sub} {tags}"
+
+        # TOPS — specific first
+        if "polo" in name or "polo" in tags:
+            return "polos"
+        if "tank" in name or "tank" in tags or "sleeveless" in name:
+            return "tanks"
+        if "button" in name or ("shirt" in name and "t-shirt" not in name and "tshirt" not in name and "sweatshirt" not in name):
+            return "shirts"
+        if "bomber" in name:
+            return "bombers"
+        if "jacket" in sub or "jacket" in name or "coat" in name or "blazer" in name:
+            return "jackets"
+        if "hoodie" in sub or "hoodie" in name or "hood" in name:
+            return "hoodies"
+        if "crewneck" in sub or "crew neck" in name or "crewneck" in name or "sweatshirt" in name:
+            return "sweatshirts"
+        if "knit" in sub or ("knit" in name and "trouser" not in name) or "sweater" in name or "cardigan" in name:
+            return "knits"
+        if "t-shirt" in sub or "tee" in name or "tshirt" in combined or "t-shirt" in name:
+            return "t-shirts"
+        if "top" in sub or "tops" in sub:
+            return "tops"
+
+        # BOTTOMS
+        if "shorts" in sub or "short" in name:
+            return "shorts"
+        if "boxer" in sub or "boxer" in name or "brief" in name:
+            return "boxers"
+        if "jean" in name or "denim" in name or "denim" in tags:
+            return "jeans"
+        if "jogger" in name or "sweatpant" in name or "track pant" in name or "sweats" in name:
+            return "joggers"
+        if "cargo" in name or "cargo" in tags:
+            return "cargo"
+        if "trouser" in name or "chino" in name or "slack" in name:
+            return "trousers"
+        if "pant" in sub or "pant" in name:
+            return "pants"  # generic
+
+        # Fallback
+        return sub.split(" - ")[-1].strip().lower() if " - " in sub else sub
+
     recs = []
     for it in items:
         iid = it.get("catalog_item_id") or it.get("id") or ""
@@ -4040,6 +4545,7 @@ async def post_recommendations(req: RecRequest):
             "description":          it.get("description") or "",
             "category":             it.get("category") or "",
             "subcategory":          it.get("subcategory") or "",
+            "product_type":         _product_type(it),
             "gender":               it.get("gender") or "",
             "brand":                it.get("brand") or "",
             "base_price":           it.get("base_price") or 0,
@@ -4095,107 +4601,170 @@ async def post_recommendations(req: RecRequest):
     }
 
 
-# ── V2: Clean recommendation API (exact spec for external integration) ──
+# ── V2: Boss API-compatible flat payload ──────────────────────────
+# Matches the exact payload format the frontend sends to api.hueiq.ai.
 
 class RecRequestV2(BaseModel):
-    user_id:              int
-    session_id:           Optional[str]        = None
-    gender:               Optional[str]        = None
-    style_preferences:    StylePreferences     = Field(default_factory=StylePreferences)
-    fit_preferences:      FitPreferences       = Field(default_factory=FitPreferences)
-    body_measurements:    BodyMeasurementsIn   = Field(default_factory=BodyMeasurementsIn)
-    context_preferences:  ContextPreferences   = Field(default_factory=ContextPreferences)
-    favorite_stores:      List[str]            = Field(default_factory=list)
-    top_k:                int                  = Field(default=10, ge=1, le=500)
+    session_id:          Optional[str]  = ""
+    gender:              Optional[str]  = ""
+    race:                Optional[str]  = ""   # photo-detected race — differentiates the outfit
+    selected_styles:     List[str]      = Field(default_factory=list)
+    selected_colors:     List[str]      = Field(default_factory=list)
+    selected_categories: List[str]      = Field(default_factory=list)
+    fit_preference:      Optional[str]  = ""
+    body_type:           Optional[str]  = ""
+    size:                Optional[str]  = ""
+    pants_size:          Optional[str]  = ""
+    shoe_size:           Optional[str]  = ""
+    mood:                Optional[str]  = ""
+    occasion:            Optional[str]  = ""
+    favorite_stores:     List[str]      = Field(default_factory=list)
+    top_k:               int            = Field(default=20, ge=1, le=100)
+
 
 @app.post("/api/v2/recommendations", tags=["Recommendations"],
-          summary="V2 — clean recommendation API for external integration")
+          summary="V2 — flat payload, 21-signal scored, clothes-only")
 async def recommendations_v2(req: RecRequestV2):
     """
-    Clean recommendation endpoint matching the exact external spec.
-    Input:  user_id, session_id, style/fit/body/context preferences, favorite_stores, top_k
-    Output: catalog_item_id + score + boosted only (no rich item data)
+    Accepts the flat payload format used by hueiq-main-site frontend.
+    Returns items in Boss API format: {items, total, source}.
+    Applies: 21-signal scoring + clothes-only + gender + image filters.
     """
-    sp = req.style_preferences
-    fp = req.fit_preferences
-    bm = req.body_measurements
-    cp = req.context_preferences
-
-    gender = _norm_gender(req.gender or "") if req.gender else ""
-
     user_doc: Dict[str, Any] = {
-        "user_id": str(req.user_id),
+        "user_id": "guest",
         "name":    "",
         "email":   "",
         "profile_data_json": {
-            "gender":               gender,
-            "preferred_colors":     [c.lower() for c in sp.selected_colors],
-            "preferred_categories": [c.lower() for c in sp.selected_categories],
+            "gender":               _norm_gender(req.gender or ""),
+            "preferred_colors":     [c.lower() for c in req.selected_colors],
+            "preferred_categories": [c.lower() for c in req.selected_categories],
             "preferred_season":     "",
-            "style_preferences":    [s.lower() for s in sp.selected_styles],
+            "style_preferences":    [s.lower() for s in req.selected_styles],
             "body_measurements": {
-                "height":      bm.height or 0,
-                "weight":      bm.weight or 0,
-                "chest":       bm.chest or 0,
-                "waist":       bm.waist or 0,
-                "build":       (fp.body_type or "").lower(),
-                "shirt_size":  fp.size or "",
-                "pants_size":  fp.pants_size or "",
+                "build":      (req.body_type or "").lower(),
+                "shirt_size": req.size or "",
+                "pants_size": req.pants_size or "",
             },
         },
     }
 
     override: Dict[str, Any] = {
-        "favorite_stores": req.favorite_stores,
+        "favorite_stores": [s.lower() for s in req.favorite_stores],
     }
-    if gender:
-        override["gender"] = gender
-    if cp.occasion:
-        override["season"] = cp.occasion.lower()
+    if req.gender:
+        override["gender"] = _norm_gender(req.gender)
+    if req.occasion:
+        override["occasion"] = req.occasion.lower()
+    if req.mood:
+        override["mood"] = req.mood.lower()
+    if req.selected_styles:
+        override["style_preferences"] = [s.lower() for s in req.selected_styles]
 
-    # Fetch more items to have enough after filtering
-    items = await rank_catalog(user_doc, top_k=500,
-                               override=override)
+    # Score with 22+ signals
+    items = await rank_catalog(user_doc, top_k=500, override=override)
 
-    # Restrict to top-wear and bottom-wear only (exclude accessories,
-    # footwear, dresses, jumpsuits, etc.)
-    items = [it for it in items if _is_top_or_bottom_wear(it)]
+    # Keep only apparel + footwear (drop accessories, bags, dresses, socks, belts)
+    items = [it for it in items if _apparel_tier(it) in (_TIER_TOP, _TIER_BOTTOM, _TIER_SHOES)]
 
-    # Quality threshold: only return items with score > 0.3
-    # (below this, items are poor matches — don't pad results)
-    items = [it for it in items if it.get("score", 0) >= 0.3]
-    items = items[:req.top_k]
+    # Hard-exclude categories that don't belong with the requested occasion
+    # (no shorts at a wedding, no blazers at the gym, etc.)
+    if req.occasion:
+        items = [it for it in items if not _occasion_excludes(it, req.occasion)]
 
-    recs = []
+    # ── Outfit coordination (Phase 2) ──────────────────────────────
+    # 1. Anchor on the highest-scoring top — that's our "hero" piece.
+    # 2. Pick the bottom that maximises score × match-with-top.
+    # 3. Pick the shoe that maximises score × match-with-top × match-with-bottom.
+    # The result is three items that look like one outfit, not three best-of
+    # picks that happen to share a gender.
+    tops_pool    = sorted([it for it in items if _apparel_tier(it) == _TIER_TOP],
+                          key=lambda x: x.get("score", 0), reverse=True)
+    bottoms_pool = [it for it in items if _apparel_tier(it) == _TIER_BOTTOM]
+    shoes_pool   = [it for it in items if _apparel_tier(it) == _TIER_SHOES]
+
+    # Top-5 deterministic spread: rank by score, take the top 5 candidates
+    # in each tier, then pick one using a hash of the user's full input set.
+    # Same user with same inputs ALWAYS gets the same outfit (deterministic,
+    # no randomness). But two users whose inputs differ in any field hash to
+    # different positions in the top-5 → catalog reach 5× wider than top-1.
+    occ_lower = (req.occasion or "").lower().strip()
+    seed_str = "|".join([
+        req.session_id or "",
+        req.gender or "",
+        req.race or "",                       # ← race now varies which top-5 pick is chosen
+        ",".join(req.selected_styles or []),
+        ",".join(req.selected_colors or []),
+        req.fit_preference or "",
+        req.body_type or "",
+        req.size or "",
+        req.pants_size or "",
+        req.shoe_size or "",
+        req.mood or "",
+        req.occasion or "",
+    ])
+    seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
+
+    def _topk_pick(pool, scorer, k: int = 5, salt: int = 0):
+        if not pool:
+            return None
+        ranked = sorted(pool, key=scorer, reverse=True)[:k]
+        idx = (seed + salt) % len(ranked)
+        return ranked[idx]
+
+    # 1. Anchor on the highest-scoring top (top-5 hash spread for variety).
+    top = _topk_pick(tops_pool, lambda x: x.get("score", 0), salt=0)
+
+    # 2. Bottom: own score × how well it pairs with the anchor top (colour +
+    #    formality). This is what makes the three pieces read as one outfit
+    #    instead of three independent best-scorers (which is what caused the
+    #    black-top + red-bottom + tan-shoe clashes).
+    if top:
+        bottom = _topk_pick(
+            bottoms_pool,
+            lambda b: b.get("score", 0) * _outfit_match_score(top, b),
+            salt=1,
+        )
+    else:
+        bottom = _topk_pick(bottoms_pool, lambda x: x.get("score", 0), salt=1)
+
+    # 3. Shoe: own score × occasion fit × pairing with BOTH top and bottom.
+    def _shoe_scorer(s):
+        sc = s.get("score", 0) * _occasion_shoe_mult(occ_lower, s)
+        if top:
+            sc *= _outfit_match_score(top, s)
+        if bottom:
+            sc *= _outfit_match_score(bottom, s)
+        return sc
+    shoe = _topk_pick(shoes_pool, _shoe_scorer, salt=2)
+
+    items = [it for it in (top, bottom, shoe) if it]
+
+    # Build Boss API-compatible response shape
+    out = []
     for it in items:
-        iid = it.get("catalog_item_id") or it.get("id") or ""
-        recs.append({
-            "catalog_item_id": iid,
-            "score":           round(it.get("score", 0), 2),
-            "boosted":         (it.get("score_detail") or {}).get("dify", 0) > 0,
+        iid = str(it.get("catalog_item_id") or it.get("id") or "")
+        primary = (it.get("primary_image_url") or
+                   ((it.get("images") or [{}])[0].get("image_url", "") if it.get("images") else ""))
+        out.append({
+            "id":              iid,
+            "garment_id":      iid,
+            "store_id":        0,
+            "title":           it.get("name") or "",
+            "description":     it.get("description") or "",
+            "category":        it.get("category") or "",
+            "base_price":      float(it.get("base_price") or 0),
+            "thumbnail_url":   primary,
+            "size_options":    it.get("available_sizes") or [],
+            "tags":            it.get("style_tags") or it.get("tags") or [],
+            "mesh_key":        (it.get("assets_3d") or {}).get("mesh_key", ""),
+            "texture_url":     primary,
+            "extra_metadata":  None,
         })
 
     return {
-        "recommendations": recs,
-        "session_id":      req.session_id or "",
-        "preferences_used": {
-            "gender":           req.gender or "",
-            "styles":           sp.selected_styles,
-            "color_preferences": sp.selected_colors,
-            "categories":       sp.selected_categories,
-            "fit_preference":   fp.fit_preference or "",
-            "body_type":        fp.body_type or "",
-            "size":             fp.size or "",
-            "pants_size":       fp.pants_size or "",
-            "shoe_size":        fp.shoe_size or "",
-            "height":           bm.height or 0,
-            "chest":            bm.chest or 0,
-            "waist":            bm.waist or 0,
-            "weight":           bm.weight or 0,
-            "mood":             cp.mood or "",
-            "occasion":         cp.occasion or "",
-            "favorite_stores":  req.favorite_stores,
-        },
+        "items":  out,
+        "total":  len(out),
+        "source": "hueiq_21_signal_engine",
     }
 
 
@@ -4205,7 +4774,7 @@ async def recommendations_v2(req: RecRequestV2):
 @app.get("/api/recommendations/trending", tags=["Recommendations"],
          summary="Public trending — no login needed")
 async def trending(
-    limit:    int           = Query(20, ge=1, le=3000),
+    limit:    int           = Query(10, ge=1, le=3000),
     gender:   Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     color:    Optional[str] = Query(None),
@@ -4216,9 +4785,24 @@ async def trending(
     """
     items = await fetch_catalog()
 
-    # Restrict to top-wear and bottom-wear only (exclude accessories,
-    # footwear, dresses, jumpsuits, etc.)
-    items = [it for it in items if _is_top_or_bottom_wear(it)]
+    # Always apply clothes_only for default feed (top-wear + bottom-wear).
+    # Only allow shoes/accessories through when EXPLICITLY browsing that
+    # category (e.g. category="shoes").
+    _shoe_cats = {"shoes", "footwear", "sneakers"}
+    _acc_cats = {"accessories", "bags", "jewelry", "watches"}
+    browsing_non_clothing = category and category.lower().strip() in (_shoe_cats | _acc_cats)
+    if not browsing_non_clothing:
+        items = _sort_by_tier(items, clothes_only=True)
+
+    # Drop items missing gender tag OR image — never show them
+    def _has_image(it):
+        return bool(
+            it.get("primary_image_url") or
+            (it.get("images") or []) or
+            any((v or {}).get("image_url") or (v or {}).get("image")
+                for v in (it.get("variants") or []))
+        )
+    items = [it for it in items if _gender(it) and _has_image(it)]
 
     # Apply gender / category / color filters post-fetch
     # (fetch_catalog returns the full catalog cache; filtering is done here)
@@ -4330,7 +4914,7 @@ async def trending(
          summary="[Compat] Recommendations by email URL param (uses JWT identity)")
 async def recommendations_by_email(
     email:             str,
-    limit:             int            = Query(24, ge=1, le=500),
+    limit:             int            = Query(10, ge=1, le=500),
     top_k:             int            = Query(0,  ge=0, le=500),
     include_breakdown: bool           = Query(False),
     gender:            Optional[str]  = Query(None),
@@ -4779,9 +5363,9 @@ async def image_search(file: UploadFile = File(...), limit: int = Query(12, ge=1
     except Exception as e:
         log.warning("Image search failed: %s", e)
 
-    # Final fallback: return trending items
+    # Final fallback: return trending clothes (no shoes/accessories)
     items = await fetch_catalog()
-    import random
+    items = _sort_by_tier(items, clothes_only=True)
     sample = random.sample(items, min(limit, len(items))) if items else []
     return {"items": sample, "total": len(sample), "fallback": True}
 
@@ -4860,30 +5444,30 @@ async def get_orders_by_email(email: str):
 
 
 # ── Startup / shutdown ────────────────────────────────────────────
+async def _load_catalog_bg():
+    """Background task: load Boss catalog + Shopify metafields without blocking
+    uvicorn startup. Container needs to bind port 8000 within ~30s for the
+    health probe; the Shopify rate limit (2 req/s × ~500 items) takes ~4 min,
+    so this MUST run in the background."""
+    global _full_catalog_cache, _shopify_is_source
+    try:
+        shopify_items = await _fetch_boss_store_catalog(store_id=1)
+        if shopify_items:
+            _shopify_is_source = True
+            _full_catalog_cache = shopify_items
+            _cset("cat:full", shopify_items, 86400)
+            log.info("Startup: %d items loaded from Shopify (primary source)", len(shopify_items))
+        else:
+            log.warning("Boss API catalog fetch failed at startup — will retry in background")
+    except Exception as e:
+        log.error("Catalog background load failed: %s", e)
+
 @app.on_event("startup")
 async def startup():
-    global _full_catalog_cache, _csv_catalog_items, _shopify_is_source
     log.info("HueIQ Engine v10.0 starting (catalog: Boss Store)...")
-
-    # 1. Load from Boss store catalog (ONLY source)
-    shopify_items = await _fetch_boss_store_catalog(store_id=1)
-    if shopify_items:
-        _shopify_is_source = True
-        _full_catalog_cache = shopify_items
-        _cset("cat:full", shopify_items, 86400)
-        log.info("Startup: %d items loaded from Shopify (primary source)", len(shopify_items))
-    else:
-        # Fallback: disk cache if Shopify is unreachable
-        log.warning("Shopify fetch failed — trying disk cache fallback")
-        disk = _load_disk_cache()
-        if disk:
-            filtered_disk = _filter_real_items(disk)
-            if filtered_disk:
-                _full_catalog_cache = filtered_disk
-                _cset("cat:full", filtered_disk, 3600)
-                log.info("Startup: %d items from disk cache fallback", len(filtered_disk))
-
-    # Connect to Boss API for user data (auth, interactions) — NOT for catalog
+    # Catalog load + Shopify prefetch run in background — do NOT await
+    # (would block uvicorn from binding port → health probe fails)
+    asyncio.create_task(_load_catalog_bg())
     asyncio.create_task(_init())
 
 async def _keep_boss_warm():
@@ -4916,12 +5500,15 @@ async def _init():
     else:
         log.info("BOSS_TOKEN is valid")
 
-    # Scout: immediately fetch real items from known skip positions (skip=2800+)
-    # so users see real products within ~10s instead of waiting 2 min
-    if not _full_catalog_cache:
-        asyncio.create_task(_scout_real_items())
-    # Full background load: fetch all pages from skip=0 for complete catalog
-    asyncio.create_task(_load_all_pages_bg())
+    # Scout/page-load only run when Shopify is NOT the source. With Shopify
+    # enabled, `_load_catalog_bg` is the authoritative loader (fetches
+    # gender metafields too); racing the Boss-only scout against it would
+    # populate `_full_catalog_cache` with gender-less items first and block
+    # all recommendations for the ~4-min Shopify rate-limited window.
+    if not SHOPIFY_TOKEN:
+        if not _full_catalog_cache:
+            asyncio.create_task(_scout_real_items())
+        asyncio.create_task(_load_all_pages_bg())
     # Keep Boss API warm — ping every 4 min to prevent Azure scale-to-zero
     asyncio.create_task(_keep_boss_warm())
 
