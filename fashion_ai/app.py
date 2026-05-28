@@ -828,11 +828,24 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
                     break
 
                 data = r.json()
-                page_items = data.get("items", [])
+                # Defensive: Boss API normally returns {items, next_cursor}, but on
+                # some edge pages it has returned a bare list — handle both shapes.
+                if isinstance(data, list):
+                    page_items = data
+                    next_cursor_val = None
+                elif isinstance(data, dict):
+                    page_items = data.get("items", []) or []
+                    next_cursor_val = data.get("next_cursor")
+                else:
+                    log.warning("Boss store catalog: unexpected response type %s", type(data).__name__)
+                    break
                 if not page_items:
                     break
+                # also defensive: each item should be a dict
+                page_items = [p for p in page_items if isinstance(p, dict)]
 
                 for p in page_items:
+                  try:
                     title = p.get("title") or ""
                     if not title:
                         continue
@@ -856,12 +869,21 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
 
                     # Parse size_options for sizes and colors
                     size_options = p.get("size_options") or {}
+                    # Defensive: API sometimes returns list of variants, sometimes dict
+                    if isinstance(size_options, list):
+                        variants_iter = [(str(i), v) for i, v in enumerate(size_options) if isinstance(v, dict)]
+                    elif isinstance(size_options, dict):
+                        variants_iter = [(k, v) for k, v in size_options.items() if isinstance(v, dict)]
+                    else:
+                        variants_iter = []
                     sizes = []
                     colors = []
-                    for variant_id, variant in size_options.items():
+                    for variant_id, variant in variants_iter:
                         selected = variant.get("selectedOptions") or []
+                        if not isinstance(selected, list):
+                            continue
                         for opt in selected:
-                            if not opt:
+                            if not isinstance(opt, dict):
                                 continue
                             name = (opt.get("name") or "").lower()
                             value = opt.get("value") or ""
@@ -922,11 +944,15 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
                         "texture_url": p.get("texture_url") or "",
                         "_shopify_pid": shopify_pid,  # for gender metafield fetch
                     })
+                  except Exception as item_err:
+                    # One bad item shouldn't kill the whole catalog load. Skip and continue.
+                    log.warning("Boss catalog: skipped item due to %s: %s",
+                                type(item_err).__name__, item_err)
+                    continue
 
-                # Check for next page
-                next_cursor = data.get("next_cursor")
-                if next_cursor and next_cursor != cursor:
-                    cursor = next_cursor
+                # Check for next page (use cursor captured earlier — safe for both shapes)
+                if next_cursor_val and next_cursor_val != cursor:
+                    cursor = next_cursor_val
                 else:
                     break
 
@@ -984,7 +1010,8 @@ async def _fetch_boss_store_catalog(store_id: int = 1) -> List[Dict]:
             for it in items:
                 it.pop("_shopify_pid", None)
     except Exception as e:
-        log.warning("Boss store catalog fetch failed: %s", e)
+        import traceback
+        log.warning("Boss store catalog fetch failed: %s\n%s", e, traceback.format_exc())
 
     return items
 
@@ -4619,7 +4646,11 @@ class RecRequestV2(BaseModel):
     mood:                Optional[str]  = ""
     occasion:            Optional[str]  = ""
     favorite_stores:     List[str]      = Field(default_factory=list)
-    top_k:               int            = Field(default=20, ge=1, le=100)
+    top_k:               int            = Field(default=20, ge=1, le=200)
+    # When true, return the full 21-signal ranked pool (up to top_k items)
+    # instead of building a single 3-piece outfit. Used by the frontend
+    # "Other Looks" row, which needs a real candidate set to filter from.
+    flat_list:           bool           = Field(default=False)
 
 
 @app.post("/api/v2/recommendations", tags=["Recommendations"],
@@ -4670,6 +4701,43 @@ async def recommendations_v2(req: RecRequestV2):
     # (no shorts at a wedding, no blazers at the gym, etc.)
     if req.occasion:
         items = [it for it in items if not _occasion_excludes(it, req.occasion)]
+
+    # ── flat_list mode ─────────────────────────────────────────────
+    # Skip the outfit-picker step and return the full ranked pool. The
+    # frontend "Other Looks" row needs a real candidate set (dozens, not 3)
+    # so it can filter by subtype + colour locally without starving.
+    if req.flat_list:
+        flat_items = items[: max(1, req.top_k)]
+        flat_out = []
+        for it in flat_items:
+            iid = str(it.get("catalog_item_id") or it.get("id") or "")
+            primary = (it.get("primary_image_url") or
+                       ((it.get("images") or [{}])[0].get("image_url", "") if it.get("images") else ""))
+            flat_out.append({
+                "id":              iid,
+                "garment_id":      iid,
+                "store_id":        0,
+                "title":           it.get("name") or "",
+                "description":     it.get("description") or "",
+                "category":        it.get("category") or "",
+                "base_price":      float(it.get("base_price") or 0),
+                "thumbnail_url":   primary,
+                "size_options":    it.get("available_sizes") or [],
+                "tags":            it.get("style_tags") or it.get("tags") or [],
+                # Raw colour strings so the frontend can match an item's actual
+                # colour even when its title has no colour word (e.g. a black
+                # "Non Distress Slim Denim"). The frontend maps these through
+                # its own 9-family scheme — we keep the strings raw on purpose.
+                "colors":          it.get("available_colors") or it.get("colors") or [],
+                "mesh_key":        (it.get("assets_3d") or {}).get("mesh_key", ""),
+                "texture_url":     primary,
+                "extra_metadata":  None,
+            })
+        return {
+            "items":  flat_out,
+            "total":  len(flat_out),
+            "source": "hueiq_21_signal_engine_flat",
+        }
 
     # ── Outfit coordination (Phase 2) ──────────────────────────────
     # 1. Anchor on the highest-scoring top — that's our "hero" piece.
