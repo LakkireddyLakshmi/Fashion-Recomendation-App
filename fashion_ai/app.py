@@ -2386,6 +2386,69 @@ def _build_embeddings(catalog: List[Dict]):
         log.warning("Embedding build failed: %s", e)
     _embeddings_built = True
 
+
+# ── Image-validity audit ───────────────────────────────────────────
+# About 7% of catalog items have valid-looking thumbnail URLs whose actual
+# files are 404 on Shopify's CDN. Endpoints can't tell that from the URL
+# string, so dead items leak into recommendations as broken thumbnails. We
+# HEAD-check every primary image ONCE per container lifetime (parallel,
+# bounded concurrency) and remember the dead ids; all consumers skip them.
+_DEAD_IMAGE_IDS: Set[str] = set()
+_image_validation_done: bool = False
+_image_validation_lock: Optional[asyncio.Lock] = None
+
+def _primary_image_url(item: Dict[str, Any]) -> str:
+    u = item.get("primary_image_url") or ""
+    if u:
+        return u
+    for img in (item.get("images") or []):
+        if isinstance(img, dict):
+            v = img.get("image_url") or img.get("src") or ""
+            if v:
+                return v
+    return ""
+
+async def _ensure_dead_image_set(catalog: List[Dict[str, Any]]) -> None:
+    """One-time HEAD-check of catalog image URLs. Populates _DEAD_IMAGE_IDS
+    so recommendation paths can exclude items whose images 404. Idempotent."""
+    global _DEAD_IMAGE_IDS, _image_validation_done, _image_validation_lock
+    if _image_validation_done:
+        return
+    if _image_validation_lock is None:
+        _image_validation_lock = asyncio.Lock()
+    async with _image_validation_lock:
+        if _image_validation_done:
+            return
+        sem = asyncio.Semaphore(20)
+        dead: Set[str] = set()
+
+        async def _check(it: Dict[str, Any]) -> None:
+            iid = str(it.get("catalog_item_id") or it.get("id") or "")
+            url = _primary_image_url(it)
+            if not iid or not url:
+                return
+            async with sem:
+                try:
+                    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+                        r = await client.head(url)
+                        # 404/403 (and any 4xx that isn't auth/throttling) = dead
+                        if r.status_code in (404, 403, 410):
+                            dead.add(iid)
+                except Exception:
+                    # Network/timeout errors are NOT counted as dead — being
+                    # conservative here keeps the catalog from shrinking due to
+                    # transient blips. Real 404s are what we filter out.
+                    pass
+
+        t0 = time.time()
+        log.info("Validating catalog image URLs (%d items)...", len(catalog))
+        await asyncio.gather(*(_check(it) for it in catalog))
+        _DEAD_IMAGE_IDS = dead
+        _image_validation_done = True
+        log.info("Image validation: %d dead of %d (%.1fs)",
+                 len(dead), len(catalog), time.time() - t0)
+
+
 def _semantic_score(query_text: str, item_id: str) -> float:
     """Compute semantic similarity between query and item using embeddings."""
     model = _get_embedding_model()
@@ -2915,6 +2978,9 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
     # Fetch catalog and Dify boost concurrently.
     # Catalog loading (Dify AI boost removed — was failing/slow, adds no value)
     catalog = await fetch_catalog()
+    # One-time HEAD-check of every image URL so dead-link items (~7% of the
+    # catalog) never reach the shopper as broken thumbnails.
+    await _ensure_dead_image_set(catalog)
     # Dify AI boost removed — was failing/slow, adds no value
 
     # TF-IDF content scores (runs in thread pool — non-blocking)
@@ -3085,6 +3151,10 @@ async def rank_catalog(user_doc: Dict, top_k: int = 500,
                 for v in (item.get("variants") or []))
         )
         if not has_image:
+            continue
+        # Pre-validated: the URL exists but Shopify returns 404 for the file.
+        # Drop these so the shopper never sees an icon placeholder.
+        if iid in _DEAD_IMAGE_IDS:
             continue
 
         # ── Per-item text fields (computed once, reused below) ────────
@@ -4833,6 +4903,138 @@ async def recommendations_v2(req: RecRequestV2):
         "items":  out,
         "total":  len(out),
         "source": "hueiq_21_signal_engine",
+    }
+
+
+# ── Item-to-item similarity ──────────────────────────────────────
+# "Show me catalog pieces that look like THIS designer item" — ranks by
+# cosine similarity of the deep item embedding, which encodes name,
+# category, brand, description, colours, tags, occasion and fit. So a clean
+# black slim no-branding denim returns other clean black slim denims, not a
+# busy/distressed/graphic pair that merely shares the colour.
+class SimilarItemsRequest(BaseModel):
+    item_title:     str            = ""              # designer piece to anchor on
+    item_id:        Optional[str]  = ""              # optional explicit catalog id
+    gender:         Optional[str]  = ""
+    slot:           Optional[str]  = ""              # "Top" | "Bottom" | "Shoes"
+    exclude_titles: List[str]      = Field(default_factory=list)
+    top_k:          int            = Field(default=12, ge=1, le=100)
+
+
+@app.post("/api/v2/similar_items", tags=["Recommendations"],
+          summary="Catalog items most similar (colour + design) to a given item")
+async def similar_items(req: SimilarItemsRequest):
+    import numpy as np
+
+    catalog = await fetch_catalog()
+    _build_embeddings(catalog)
+    # One-time HEAD-check (idempotent) so we never rank dead-image items.
+    await _ensure_dead_image_set(catalog)
+
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+    # 1. Locate the anchor item in the catalog (by id, then exact title, then
+    #    fuzzy contains). This is the designer's actual piece.
+    anchor = None
+    if req.item_id:
+        for it in catalog:
+            if str(it.get("catalog_item_id") or it.get("id") or "") == req.item_id:
+                anchor = it
+                break
+    if anchor is None and req.item_title:
+        tgt = _norm(req.item_title)
+        for it in catalog:
+            if _norm(it.get("name")) == tgt:
+                anchor = it
+                break
+        if anchor is None and tgt:
+            for it in catalog:
+                n = _norm(it.get("name"))
+                if n and (tgt in n or n in tgt):
+                    anchor = it
+                    break
+
+    # 2. Anchor embedding — from the prebuilt table, else encode the title text.
+    anchor_emb = None
+    if anchor is not None:
+        aid = str(anchor.get("catalog_item_id") or anchor.get("id") or "")
+        anchor_emb = _item_embeddings.get(aid)
+    if anchor_emb is None and req.item_title:
+        model = _get_embedding_model()
+        if model:
+            try:
+                anchor_emb = model.encode([req.item_title], normalize_embeddings=True)[0]
+            except Exception:
+                anchor_emb = None
+    if anchor_emb is None:
+        return {"items": [], "total": 0, "source": "similar_items", "matched_anchor": None}
+
+    # 3. Restrict to the same slot/tier (a Top alt must be a top) and gender.
+    slot_map = {"Top": _TIER_TOP, "Bottom": _TIER_BOTTOM, "Shoes": _TIER_SHOES}
+    want_tier = slot_map.get(req.slot) if req.slot in slot_map else (
+        _apparel_tier(anchor) if anchor is not None else None)
+    ng = _norm_gender(req.gender) if req.gender else None
+    anchor_name_norm = _norm(anchor.get("name")) if anchor is not None else _norm(req.item_title)
+    exclude = {_norm(t) for t in (req.exclude_titles or [])}
+    exclude.add(anchor_name_norm)
+
+    # 4. Cosine-rank every embedded catalog item against the anchor.
+    scored: List[Tuple[float, Dict]] = []
+    for it in catalog:
+        iid = str(it.get("catalog_item_id") or it.get("id") or "")
+        emb = _item_embeddings.get(iid)
+        if emb is None:
+            continue
+        if iid in _DEAD_IMAGE_IDS:
+            continue
+        if want_tier is not None and _apparel_tier(it) != want_tier:
+            continue
+        g = _gender(it)
+        if ng and g and _norm_gender(g) != ng:
+            continue
+        if _norm(it.get("name")) in exclude:
+            continue
+        sim = float(np.dot(anchor_emb, emb))
+        scored.append((sim, it))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    out = []
+    for sim, it in scored[: req.top_k]:
+        iid = str(it.get("catalog_item_id") or it.get("id") or "")
+        primary = (it.get("primary_image_url") or
+                   ((it.get("images") or [{}])[0].get("image_url", "") if it.get("images") else ""))
+        out.append({
+            "id":            iid,
+            "garment_id":    iid,
+            "store_id":      0,
+            "title":         it.get("name") or "",
+            "description":   it.get("description") or "",
+            "category":      it.get("category") or "",
+            "base_price":    float(it.get("base_price") or 0),
+            "thumbnail_url": primary,
+            "size_options":  it.get("available_sizes") or [],
+            "tags":          it.get("style_tags") or it.get("tags") or [],
+            "colors":        it.get("available_colors") or it.get("colors") or [],
+            "similarity":    round(sim, 4),
+            "mesh_key":      (it.get("assets_3d") or {}).get("mesh_key", ""),
+            "texture_url":   primary,
+            "extra_metadata": None,
+        })
+
+    # The anchor's own colours, so the frontend can prefer same-colour AND
+    # same-family matches (the designer item's title often has no colour word).
+    anchor_colors = []
+    if anchor is not None:
+        anchor_colors = anchor.get("available_colors") or anchor.get("colors") or []
+
+    return {
+        "items":          out,
+        "total":          len(out),
+        "source":         "similar_items",
+        "matched_anchor": (anchor.get("name") if anchor is not None else None),
+        "anchor_colors":  anchor_colors,
     }
 
 
